@@ -1,12 +1,12 @@
 /**
  * Skill 分类
  */
-export type SkillCategory = 'resume' | 'jd' | 'communication' | 'analysis';
+export type SkillCategory = "resume" | "jd" | "communication" | "analysis";
 
 /**
  * 支持的平台
  */
-export type Platform = 'claude-code' | 'cursor' | 'continue';
+export type Platform = "claude-code" | "cursor" | "continue";
 
 /**
  * Skill 元数据

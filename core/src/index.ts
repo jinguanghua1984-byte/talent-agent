@@ -4,7 +4,7 @@
 export const VERSION = "0.1.0";
 
 // Types
-export * from './types/index';
+export * from "./types/index";
 
 // Skills
-export * from './skills/index';
+export * from "./skills/index";

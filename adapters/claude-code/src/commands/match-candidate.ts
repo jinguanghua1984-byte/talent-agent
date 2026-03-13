@@ -4,8 +4,8 @@
  */
 
 export const matchCandidateCommand = {
-  name: 'match-candidate',
-  description: '候选人-JD 匹配分析',
+  name: "match-candidate",
+  description: "候选人-JD 匹配分析",
   prompt: `你是一位专业的猎头顾问。请分析候选人与职位的匹配度。
 
 你将收到：

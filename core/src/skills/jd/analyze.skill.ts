@@ -1,5 +1,5 @@
-import { defineSkill } from '../base.ts';
-import { skillRegistry } from '../registry.ts';
+import { defineSkill } from "../base.ts";
+import { skillRegistry } from "../registry.ts";
 
 // 内联 prompt 模板，避免 ?raw 导入在 tsup 构建时的问题
 const jdAnalyzePrompt = `# JD 分析
@@ -47,13 +47,13 @@ const jdAnalyzePrompt = `# JD 分析
  * 从职位描述中提取结构化的招聘要求
  */
 export const jdAnalyzeSkill = defineSkill()
-  .id('jd-analyze')
-  .name('JD 分析')
-  .description('分析职位描述（JD），提取职位要求、职责、薪资范围等关键信息')
-  .version('1.0.0')
-  .category('jd')
-  .platforms('claude-code', 'cursor', 'continue')
-  .tags('JD', '职位描述', '分析', '招聘')
+  .id("jd-analyze")
+  .name("JD 分析")
+  .description("分析职位描述（JD），提取职位要求、职责、薪资范围等关键信息")
+  .version("1.0.0")
+  .category("jd")
+  .platforms("claude-code", "cursor", "continue")
+  .tags("JD", "职位描述", "分析", "招聘")
   .prompt(jdAnalyzePrompt)
   .build();
 

@@ -4,8 +4,8 @@
  */
 
 export const analyzeJdCommand = {
-  name: 'analyze-jd',
-  description: '分析职位描述，提取招聘要求',
+  name: "analyze-jd",
+  description: "分析职位描述，提取招聘要求",
   prompt: `你是一位专业的猎头顾问。请分析用户提供的职位描述（JD），提取关键招聘信息。
 
 请按以下格式输出：

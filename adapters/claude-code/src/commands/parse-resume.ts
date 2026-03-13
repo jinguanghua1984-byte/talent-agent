@@ -4,8 +4,8 @@
  */
 
 export const parseResumeCommand = {
-  name: 'parse-resume',
-  description: '解析简历，提取候选人关键信息',
+  name: "parse-resume",
+  description: "解析简历，提取候选人关键信息",
   prompt: `你是一位专业的猎头顾问。请解析用户提供的简历内容，提取结构化的候选人信息。
 
 请按以下格式输出：

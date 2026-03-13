@@ -3,11 +3,11 @@
  */
 export interface JobRequirement {
   /** 要求类型：必须/优先 */
-  type: 'required' | 'preferred';
+  type: "required" | "preferred";
   /** 要求内容 */
   content: string;
   /** 分类 */
-  category?: 'skill' | 'experience' | 'education' | 'certification' | 'other';
+  category?: "skill" | "experience" | "education" | "certification" | "other";
 }
 
 /**

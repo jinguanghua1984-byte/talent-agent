@@ -1,5 +1,5 @@
-import { defineSkill } from '../base.ts';
-import { skillRegistry } from '../registry.ts';
+import { defineSkill } from "../base.ts";
+import { skillRegistry } from "../registry.ts";
 
 // 内联 prompt 模板，避免 ?raw 导入在 tsup 构建时的问题
 const resumeParsePrompt = `# 简历解析
@@ -57,13 +57,13 @@ const resumeParsePrompt = `# 简历解析
  * 从简历文本中提取结构化的候选人信息
  */
 export const resumeParseSkill = defineSkill()
-  .id('resume-parse')
-  .name('简历解析')
-  .description('解析简历文本，提取候选人的关键信息，包括工作经历、教育背景、技能等')
-  .version('1.0.0')
-  .category('resume')
-  .platforms('claude-code', 'cursor', 'continue')
-  .tags('简历', '解析', '候选人')
+  .id("resume-parse")
+  .name("简历解析")
+  .description("解析简历文本，提取候选人的关键信息，包括工作经历、教育背景、技能等")
+  .version("1.0.0")
+  .category("resume")
+  .platforms("claude-code", "cursor", "continue")
+  .tags("简历", "解析", "候选人")
   .prompt(resumeParsePrompt)
   .build();
 

@@ -1,4 +1,4 @@
-import type { Skill, SkillMeta } from '../types/skill.ts';
+import type { Skill, SkillMeta } from "../types/skill.ts";
 
 /**
  * Skill 构建器
@@ -32,12 +32,12 @@ export class SkillBuilder {
     return this;
   }
 
-  category(category: Skill['category']): this {
+  category(category: Skill["category"]): this {
     this.skill.category = category;
     return this;
   }
 
-  platforms(...platforms: Skill['platforms']): this {
+  platforms(...platforms: Skill["platforms"]): this {
     this.skill.platforms = platforms;
     return this;
   }
@@ -53,13 +53,13 @@ export class SkillBuilder {
   }
 
   build(): Skill {
-    if (!this.skill.id) throw new Error('Skill id is required');
-    if (!this.skill.name) throw new Error('Skill name is required');
-    if (!this.skill.description) throw new Error('Skill description is required');
-    if (!this.skill.version) throw new Error('Skill version is required');
-    if (!this.skill.category) throw new Error('Skill category is required');
-    if (!this.skill.platforms) throw new Error('Skill platforms is required');
-    if (!this.skill.prompt) throw new Error('Skill prompt is required');
+    if (!this.skill.id) throw new Error("Skill id is required");
+    if (!this.skill.name) throw new Error("Skill name is required");
+    if (!this.skill.description) throw new Error("Skill description is required");
+    if (!this.skill.version) throw new Error("Skill version is required");
+    if (!this.skill.category) throw new Error("Skill category is required");
+    if (!this.skill.platforms) throw new Error("Skill platforms is required");
+    if (!this.skill.prompt) throw new Error("Skill prompt is required");
 
     return this.skill as Skill;
   }

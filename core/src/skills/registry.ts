@@ -1,4 +1,4 @@
-import type { Skill } from '../types/skill.ts';
+import type { Skill } from "../types/skill.ts";
 
 /**
  * Skill 注册表
@@ -34,14 +34,14 @@ class SkillRegistry {
   /**
    * 按分类获取 Skills
    */
-  getByCategory(category: Skill['category']): Skill[] {
+  getByCategory(category: Skill["category"]): Skill[] {
     return this.getAll().filter((s) => s.category === category);
   }
 
   /**
    * 按平台获取 Skills
    */
-  getByPlatform(platform: Skill['platforms'][number]): Skill[] {
+  getByPlatform(platform: Skill["platforms"][number]): Skill[] {
     return this.getAll().filter((s) => s.platforms.includes(platform));
   }
 

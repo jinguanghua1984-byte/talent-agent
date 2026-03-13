@@ -1,4 +1,4 @@
-import type { Skill } from './skill';
+import type { Skill } from "./skill";
 
 /**
  * Agent 元数据

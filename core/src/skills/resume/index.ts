@@ -1,1 +1,1 @@
-export * from './parse.skill.ts';
+export * from "./parse.skill.ts";
