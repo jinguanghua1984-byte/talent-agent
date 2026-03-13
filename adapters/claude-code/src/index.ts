@@ -4,6 +4,7 @@
  */
 
 import { skillRegistry, resumeParseSkill, jdAnalyzeSkill } from '@talent-agent/core';
+export * from './commands/index';
 
 // 确保所有 skills 已注册
 void resumeParseSkill;
