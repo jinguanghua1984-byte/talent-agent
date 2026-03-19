@@ -18,6 +18,7 @@
     }
   ],
   "skills": ["./skills"],
+  "agents": ["./agents"],
   "repository": {
     "type": "git",
     "url": "https://github.com/your-org/talent-agent"

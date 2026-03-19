@@ -1,0 +1,54 @@
+{
+  "skill_name": "maimai-scraper",
+  "evals": [
+    {
+      "id": 1,
+      "name": "basic-search-export",
+      "prompt": "帮我从脉脉搜索 Java 后端开发工程师，工作地点在上海，3-5年经验，学历本科以上。筛选规则：近三年跳槽不超过2次。抓取前2页候选人并导出到Excel。",
+      "expected_output": "生成包含候选人信息的 Excel 文件，文件名格式为 candidates_脉脉_时间戳.xlsx，包含统计概览和候选人详情两个 Sheet",
+      "assertions": [
+        {
+          "type": "file_exists",
+          "description": "Excel 文件已生成"
+        },
+        {
+          "type": "sheet_exists",
+          "description": "包含统计概览 Sheet"
+        },
+        {
+          "type": "sheet_exists",
+          "description": "包含候选人详情 Sheet"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "multi-condition-search",
+      "prompt": "在脉脉上找产品经理，要求：北京或深圳，5年以上经验，硕士学历优先，期望薪资 30K-50K。筛选：有知名互联网公司经历，跳槽稳定。导出结果。",
+      "expected_output": "完成多条件搜索，应用筛选规则，生成 Excel 报告",
+      "assertions": [
+        {
+          "type": "file_exists",
+          "description": "Excel 文件已生成"
+        },
+        {
+          "type": "content_contains",
+          "description": "统计概览包含淘汰原因分布",
+          "value": "淘汰原因"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "slash-command-trigger",
+      "prompt": "/maimai-scraper",
+      "expected_output": "触发 maimai-scraper 技能，开始执行脉脉候选人抓取流程",
+      "assertions": [
+        {
+          "type": "behavior",
+          "description": "正确触发技能，询问用户搜索条件"
+        }
+      ]
+    }
+  ]
+}

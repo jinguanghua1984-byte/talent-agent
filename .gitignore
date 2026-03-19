@@ -5,3 +5,13 @@ dist/
 .vscode/
 .idea/
 *.tsbuildinfo
+
+# Config files with secrets
+ov.conf
+
+# agent-browser session data
+.agent-browser/
+*.key
+
+# Download directory
+docs/download/

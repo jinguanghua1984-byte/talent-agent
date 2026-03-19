@@ -8,3 +8,6 @@ export * from "./types/index";
 
 // Skills
 export * from "./skills/index";
+
+// Agents
+export * from "./agents/index";
