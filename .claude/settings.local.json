@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm -rf ~/.claude/plugins/cache/boaeugene-plugins/claude-memory-plugin/1.0.0)",
+      "Bash(cp -r ~/.claude/plugins/marketplaces/boaeugene-plugins/plugins/claude-memory-plugin ~/.claude/plugins/cache/boaeugene-plugins/claude-memory-plugin/1.0.0)"
+    ]
+  }
+}
