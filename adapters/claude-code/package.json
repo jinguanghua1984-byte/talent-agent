@@ -9,7 +9,8 @@
     "dev": "tsup src/index.ts --format esm --dts --watch"
   },
   "dependencies": {
-    "@talent-agent/core": "workspace:*"
+    "@talent-agent/core": "workspace:*",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "tsup": "^8.3.0",
