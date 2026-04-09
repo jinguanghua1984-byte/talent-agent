@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Job Description Schema",
+  "description": "Schema for validating job description data",
+  "type": "object",
+  "required": [
+    "id",
+    "company",
+    "title",
+    "created_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for the job description"
+    },
+    "company": {
+      "type": "string",
+      "description": "Company name"
+    },
+    "title": {
+      "type": "string",
+      "description": "Job title/position"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Creation timestamp"
+    },
+    "department": {
+      "type": "string",
+      "description": "Department or division"
+    },
+    "description": {
+      "type": "string",
+      "description": "Detailed job description"
+    },
+    "job_type": {
+      "type": "string",
+      "enum": ["全职", "兼职", "兼顾", "顾问"],
+      "description": "Employment type"
+    },
+    "experience": {
+      "type": "string",
+      "description": "Experience requirements"
+    },
+    "min_education": {
+      "type": "string",
+      "enum": ["不限", "大专", "本科", "硕士", "博士"],
+      "description": "Minimum education requirement"
+    },
+    "salary_range": {
+      "type": "string",
+      "description": "Salary range information"
+    },
+    "location": {
+      "type": "string",
+      "description": "Job location"
+    }
+  }
+}

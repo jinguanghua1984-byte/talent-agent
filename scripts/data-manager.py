@@ -29,9 +29,22 @@ import sys
 from collections import defaultdict
 from datetime import date
 
+# 尝试导入 jsonschema，如果没有则使用手动验证
+try:
+    import jsonschema
+    HAS_JSONSCHEMA = True
+except ImportError:
+    HAS_JSONSCHEMA = False
+
 # 项目根目录（使用 CWD，支持测试时切换到临时目录）
 def get_project_root():
     return os.getcwd()
+
+
+# 获取 JSON Schema 文件路径
+def get_schema_path(entity_type):
+    """获取实体类型的 JSON Schema 文件路径。"""
+    return os.path.join(get_project_root(), "schemas", f"{entity_type}.schema.json")
 
 # 数据目录路径（延迟计算，支持 CWD 变化）
 def get_data_dirs():
@@ -513,6 +526,32 @@ def _validate_entity(entity_type, filepath):
         return [f"JSON 解析失败: {filepath}: {e}"]
 
     fname = os.path.basename(filepath)
+
+    if HAS_JSONSCHEMA:
+        # 使用 JSON Schema 验证
+        schema_path = get_schema_path(entity_type)
+        if os.path.exists(schema_path):
+            try:
+                schema = read_json(schema_path)
+                jsonschema.validate(instance=data, schema=schema)
+            except jsonschema.ValidationError as e:
+                errors.append(f"{fname}: {e.message}")
+            except jsonschema.SchemaError as e:
+                errors.append(f"{fname}: Schema 错误: {e}")
+        else:
+            errors.append(f"{fname}: Schema 文件不存在: {schema_path}")
+            # 回退到基本验证
+            return _validate_entity_basic(entity_type, filepath, fname, data)
+    else:
+        # 手动验证（兼容模式）
+        errors.extend(_validate_entity_basic(entity_type, filepath, fname, data))
+
+    return errors
+
+
+def _validate_entity_basic(entity_type, filepath, fname, data):
+    """手动验证单个实体的基本字段。"""
+    errors = []
 
     # 检查必需字段
     required = REQUIRED_FIELDS.get(entity_type, [])
