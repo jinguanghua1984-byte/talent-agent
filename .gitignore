@@ -6,12 +6,14 @@ dist/
 .idea/
 *.tsbuildinfo
 
-# Config files with secrets
-ov.conf
-
 # agent-browser session data
 .agent-browser/
 *.key
 
 # Download directory
 docs/download/
+
+# TypeScript compiled output in skills
+adapters/claude-code/skills/**/*.js
+adapters/claude-code/skills/**/*.d.ts
+!adapters/claude-code/skills/**/references/**/*.js
