@@ -215,28 +215,35 @@ AI 审查策略的完整性，标注建议（非决定）：
 
 ### Token 消耗追踪
 
-**方案：基于 Claude Code OpenTelemetry 遥测**
+**方案：基于 Claude Code OpenTelemetry 遥测 + 轻量级 Python 接收器**
 
-Skill 通过读取 collector 输出文件获取 token 数据。接口定义：
+Token Tracker 由 `scripts/token-tracker.py` 实现（纯 Python stdlib，零外部依赖）。接收 Claude Code 的 OTEL `api_request` 事件，提取 token 数据写入 `data/token-tracker/tokens.jsonl`。
 
-```typescript
-interface TokenRecord {
-  timestamp: string;
-  prompt_id: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_creation_tokens: number;
-  cost_usd: number;
-  model: string;
-}
+**启动 Token Tracker（需常驻运行）：**
+
+```bash
+python scripts/token-tracker.py
+# 可选参数: --port 4318 --output data/token-tracker/tokens.jsonl
 ```
 
-**归因方式：** 每个 AI turn 对应一个 `prompt_id`。Skill 在执行搜索前后记录当前 turn 的 prompt_id，从 collector 输出中按 prompt_id 聚合 token 消耗，归因到对应的策略元素。
+**Claude Code 环境变量（一次性配置）：**
 
-**降级方案：** 如果 OpenTelemetry 未配置，归因表中 Token 列显示「未配置」，成本分析跳过。不使用代理指标。
+```bash
+export CLAUDE_CODE_ENABLE_TELEMETRY=1
+export OTEL_LOGS_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+```
 
-**前置任务：** Token Tracker 需要 OTEL 环境配置和本地 Collector 部署（独立任务，由华哥配合实施）。当前版本仅预留接口，未配置时优雅降级。
+**输出文件格式（`data/token-tracker/tokens.jsonl`，每行一个 JSON）：**
+
+```json
+{"timestamp": "1712736000000000000", "prompt_id": "uuid", "input_tokens": 8432, "output_tokens": 1203, "cache_read_tokens": 5000, "cache_creation_tokens": 2000, "cost_usd": 0.0523, "model": "claude-sonnet-4-6"}
+```
+
+**归因方式：** 每个 AI turn 对应一个 `prompt_id`。Skill 在执行搜索前后记录当前 turn 的 prompt_id，从 tokens.jsonl 中按 prompt_id 聚合 token 消耗，归因到对应的策略元素。
+
+**降级方案：** 如果 `data/token-tracker/tokens.jsonl` 不存在或为空，归因表中 Token 列显示「未配置」，成本分析跳过。不使用代理指标。
 
 ### 信息提取
 
@@ -543,6 +550,12 @@ Universal 规则（跨模板共性）
 
 岗位感知影响策略生成的渠道选择。仅作推荐，用户可随时忽略。
 
-### Token Tracker 前置任务
+### Token Tracker 部署
 
-Token Tracker 依赖 OpenTelemetry 环境配置和本地 Collector 部署，为独立任务（由华哥配合实施）。当前版本预留接口，未配置时所有 Token 相关列显示「未配置」，成本分析跳过。
+Token Tracker 已实现为 `scripts/token-tracker.py`（零外部依赖）。部署步骤：
+
+1. **启动接收器**：在独立终端运行 `python scripts/token-tracker.py`
+2. **配置环境变量**：在启动 Claude Code 的终端设置 4 个 OTEL 环境变量（见上方「Token 消耗追踪」章节）
+3. **验证**：执行一次对话后，检查 `data/token-tracker/tokens.jsonl` 是否有数据
+
+未部署时，所有 Token 相关列显示「未配置」，成本分析跳过。
