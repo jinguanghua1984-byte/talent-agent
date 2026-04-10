@@ -188,46 +188,34 @@ data/search-strategies/
 
 ### 4.2 Token 消耗追踪
 
-**方案：基于 Claude Code OpenTelemetry 遥测**
+**方案：基于 Claude Code OpenTelemetry 遥测 + 轻量级 Python 接收器**
 
 Claude Code 原生支持 OpenTelemetry 导出，每次 API 请求自动上报 `input_tokens` / `output_tokens` / `cost_usd`。
 
 **环境配置（一次性）：**
 
 ```bash
-# 启用 Claude Code 遥测
 export CLAUDE_CODE_ENABLE_TELEMETRY=1
-export OTEL_METRICS_EXPORTER=otlp
-export OTEL_EXPORTER_OTLP_PROTOCOL=grpc
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-
-# 可选：增强追踪（Beta）
-export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1
-export OTEL_TRACES_EXPORTER=otlp
+export OTEL_LOGS_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 ```
 
-**本地 Collector：** 使用轻量级 collector（如 [Alloy](https://grafana.com/docs/alloy/latest/)）将 token 数据写入本地 JSONL 文件，供 Skill 读取。
+**本地接收器：** `scripts/token-tracker.py`，纯 Python stdlib 实现的 OTLP HTTP 接收器，零外部依赖。接收 Claude Code 的 `api_request` 事件，提取 token 数据写入 `data/token-tracker/tokens.jsonl`。
 
-**Token Tracker 接口：** Skill 通过读取 collector 输出文件获取 token 数据，接口定义：
+启动命令：`python scripts/token-tracker.py`（可选 `--port 4318 --output data/token-tracker/tokens.jsonl`）
 
-```typescript
-interface TokenRecord {
-  timestamp: string;
-  prompt_id: string;       // 关联同一用户 prompt 下的所有 API 请求
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_creation_tokens: number;
-  cost_usd: number;
-  model: string;
-}
+**Token Tracker 接口：** Skill 通过读取 `data/token-tracker/tokens.jsonl` 获取 token 数据，每行一个 JSON 对象：
+
+```json
+{"timestamp": "1712736000000000000", "prompt_id": "uuid", "input_tokens": 8432, "output_tokens": 1203, "cache_read_tokens": 5000, "cache_creation_tokens": 2000, "cost_usd": 0.0523, "model": "claude-sonnet-4-6"}
 ```
 
-**归因方式：** 每个 AI turn 对应一个 `prompt_id`，Skill 在执行搜索前后记录当前 turn 的 prompt_id，从 collector 输出中按 prompt_id 聚合 token 消耗，归因到对应的策略元素。prompt_id 获取方式待实现时验证，如不可用则退化为按时间窗口归因。
+**归因方式：** 每个 AI turn 对应一个 `prompt_id`，Skill 在执行搜索前后记录当前 turn 的 prompt_id，从 tokens.jsonl 中按 prompt_id 聚合 token 消耗，归因到对应的策略元素。prompt_id 获取方式待实现时验证，如不可用则退化为按时间窗口归因。
 
-**降级方案：** 如果 OpenTelemetry 未配置，归因表中 Token 列显示「未配置」，成本分析跳过。不使用代理指标。
+**降级方案：** 如果 token-tracker.py 未运行或 tokens.jsonl 不存在，归因表中 Token 列显示「未配置」，成本分析跳过。不使用代理指标。
 
-**OTEL 环境变量说明：** 以上环境变量名称以 Claude Code 实际文档为准，此处为示意。实施时需验证最新版本的环境变量名。
+**OTEL 环境变量说明：** 以上环境变量名称以 Claude Code 实际文档为准。`http/json` 协议使用 HTTP POST（端口 4318），无需 gRPC 依赖。
 
 ### 4.3 候选人写入
 
@@ -515,6 +503,7 @@ Universal 规则（跨模板共性）
 
 | 任务 | 说明 | 负责人 |
 |------|------|--------|
-| 配置 Claude Code OTEL 环境变量 | 一次性配置 | 华哥 |
-| 部署本地 Collector | Alloy 或等效方案，输出 JSONL | 华哥 |
+| 创建 token-tracker.py | 纯 Python stdlib，零依赖 | Boaeugene |
+| 配置 Claude Code OTEL 环境变量 | 4 个环境变量，一次性配置 | 华哥 |
+| 启动 token-tracker | `python scripts/token-tracker.py`，需常驻运行 | 华哥 |
 | Skill 读取 Token 数据 | 按 prompt_id 归因到策略元素 | Boaeugene |

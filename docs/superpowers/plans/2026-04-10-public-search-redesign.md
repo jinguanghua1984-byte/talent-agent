@@ -308,3 +308,74 @@ data/search-strategies/
 git add skills/public-search/SKILL.md skills/public-search/references/ data/search-strategies/
 git commit -m "test: public-search 重写端到端验证通过"
 ```
+
+---
+
+## Task 10: Token Tracker — 轻量级 OTLP 接收器
+
+**Files:**
+- Create: `scripts/token-tracker.py`
+- Modify: `skills/public-search/SKILL.md`（更新 Token Tracker 章节，指向实际脚本和输出路径）
+
+**决策：** 放弃 Alloy 方案（需要安装 ~100MB 二进制 + Windows 服务配置），改用纯 Python stdlib 实现的轻量 OTLP HTTP 接收器。零外部依赖，约 80 行代码。
+
+**架构：**
+```
+Claude Code → OTEL HTTP/JSON (:4318) → token-tracker.py → data/token-tracker/tokens.jsonl
+```
+
+**为什么不用 Alloy：**
+- Alloy 是通用可观测平台，我们只需要"接收 OTLP → 写 JSONL"
+- Alloy Windows 二进制 ~100MB，需要额外配服务自启
+- Python stdlib `http.server` + `json` 即可实现，零依赖
+
+**环境变量（Claude Code 侧）：**
+```bash
+CLAUDE_CODE_ENABLE_TELEMETRY=1
+OTEL_LOGS_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_PROTOCOL=http/json
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+```
+
+- [ ] **Step 1: 创建 token-tracker.py**
+
+写入 `scripts/token-tracker.py`，功能：
+- HTTP 服务器监听 `0.0.0.0:4318`
+- 接收 POST `/v1/logs`，解析 OTLP JSON 格式
+- 从 `claude_code.api_request` 事件中提取 `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_creation_tokens`, `cost_usd`, `prompt_id`, `model`
+- 写入 `data/token-tracker/tokens.jsonl`（每行一个 JSON 对象）
+- 支持 `--port` 和 `--output` 命令行参数
+- 抑制 HTTP 请求日志（`log_message` 重写为空）
+
+**输出 JSONL 格式：**
+```json
+{"timestamp": "1712736000000000000", "prompt_id": "uuid", "input_tokens": 8432, "output_tokens": 1203, "cache_read_tokens": 5000, "cache_creation_tokens": 2000, "cost_usd": 0.0523, "model": "claude-sonnet-4-6"}
+```
+
+- [ ] **Step 2: 更新 SKILL.md Token Tracker 章节**
+
+将 SKILL.md 中「Token 消耗追踪」和「Token Tracker 前置任务」两个章节更新为：
+- 指向 `scripts/token-tracker.py` 脚本
+- 指向 `data/token-tracker/tokens.jsonl` 输出路径
+- 更新启动命令和环境变量为实际的 4 个变量
+- 移除 Alloy/OTEL Collector 相关描述
+- 保留降级方案（脚本未运行时 Token 列显示「未配置」）
+
+- [ ] **Step 3: 创建 data/token-tracker/.gitkeep**
+
+确保输出目录被 Git 追踪。
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add scripts/token-tracker.py data/token-tracker/ skills/public-search/SKILL.md
+git commit -m "feat(public-search): 添加轻量级 Token Tracker（纯 Python，零依赖）"
+```
+
+- [ ] **Step 5: 验证**
+
+1. 启动 token-tracker：`python scripts/token-tracker.py`
+2. 在另一个终端设置环境变量并启动 Claude Code
+3. 执行一次简单对话
+4. 检查 `data/token-tracker/tokens.jsonl` 是否有数据写入
+5. 停止 token-tracker，验证 Skill 降级行为（Token 列显示「未配置」）
