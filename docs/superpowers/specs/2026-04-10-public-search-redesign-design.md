@@ -167,6 +167,7 @@ data/search-strategies/
 3. **并发控制**：策略文件中记录「当前轮次」，新会话开始时检查轮次号。如果轮次号与文件不一致（说明有其他会话在更新），提示冲突，建议用户选择：
    - 基于当前文件继续
    - 创建新策略文件
+   > 注意：并发控制为 best-effort 级别（非 ACID），适用于单人使用场景。
 4. **退出机制**：用户输入「取消」「算了」或空消息时终止流程
 
 ---
@@ -222,9 +223,11 @@ interface TokenRecord {
 }
 ```
 
-**归因方式：** 每个 AI turn 对应一个 `prompt_id`，Skill 在执行搜索前后记录当前 turn 的 prompt_id，从 collector 输出中按 prompt_id 聚合 token 消耗，归因到对应的策略元素。
+**归因方式：** 每个 AI turn 对应一个 `prompt_id`，Skill 在执行搜索前后记录当前 turn 的 prompt_id，从 collector 输出中按 prompt_id 聚合 token 消耗，归因到对应的策略元素。prompt_id 获取方式待实现时验证，如不可用则退化为按时间窗口归因。
 
 **降级方案：** 如果 OpenTelemetry 未配置，归因表中 Token 列显示「未配置」，成本分析跳过。不使用代理指标。
+
+**OTEL 环境变量说明：** 以上环境变量名称以 Claude Code 实际文档为准，此处为示意。实施时需验证最新版本的环境变量名。
 
 ### 4.3 候选人写入
 
@@ -336,7 +339,7 @@ C. 画像：收窄到大厂AI部门PM
 
 ### 7.2 Instance → 策略模板
 
-**触发条件：** 当 N 个 Instance 的 JD 两两相似度均超过阈值，或同一策略模板下积累 N+ 次 Instance（初始 N=3，可调）。
+**触发条件：** 当 N 个 Instance 的 JD 两两相似度均超过阈值（初始 N=3，可调），触发模板创建提议。已有模板下积累 N+ 次新 Instance 时，建议更新模板统计数据。
 
 **AI 提议：**
 ```
