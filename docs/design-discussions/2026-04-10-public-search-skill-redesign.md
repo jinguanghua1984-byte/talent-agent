@@ -195,8 +195,8 @@ Universal（通用规则）
 
 ## 相关文件
 
-- 当前 SKILL.md: `skills/public-search/SKILL.md`
-- 渠道参考: `skills/public-search/references/search-sources.md`
+- 当前 SKILL.md: `.claude/skills/public-search/SKILL.md`
+- 渠道参考: `.claude/skills/public-search/references/search-sources.md`
 - 本次测试 JD: `data/jds/jd-20260410-alibaba-cloud-ai-agent-pm.json`
 - 本次搜索策略: `data/output/public-search-2026-04-10-alibaba-ai-agent-pm.md`
 - 改善设计方案: `docs/design-discussions/2026-04-10-public-search-skill-redesign-proposal.md`

@@ -16,9 +16,9 @@
 
 | 文件 | 职责 | 操作 |
 |------|------|------|
-| `skills/public-search/SKILL.md` | Skill 主文件（完整流程定义） | 完全重写 |
-| `skills/public-search/references/search-sources.md` | 渠道参考 + 岗位类型渠道推荐表 | 更新 |
-| `skills/public-search/references/strategy-template.md` | 策略文件模板（Instance/Template 格式定义） | 新建 |
+| `.claude/skills/public-search/SKILL.md` | Skill 主文件（完整流程定义） | 完全重写 |
+| `.claude/skills/public-search/references/search-sources.md` | 渠道参考 + 岗位类型渠道推荐表 | 更新 |
+| `.claude/skills/public-search/references/strategy-template.md` | 策略文件模板（Instance/Template 格式定义） | 新建 |
 | `data/search-strategies/instances/.gitkeep` | 单次策略目录 | 新建 |
 | `data/search-strategies/templates/.gitkeep` | 策略模板目录 | 新建 |
 | `data/search-strategies/universal-rules.json` | 通用规则 | 新建 |
@@ -67,11 +67,11 @@ git commit -m "chore: 创建搜索策略存储目录结构"
 ## Task 2: 创建策略文件模板参考
 
 **Files:**
-- Create: `skills/public-search/references/strategy-template.md`
+- Create: `.claude/skills/public-search/references/strategy-template.md`
 
 - [ ] **Step 1: 创建 Instance 策略模板**
 
-写入 `skills/public-search/references/strategy-template.md`，包含：
+写入 `.claude/skills/public-search/references/strategy-template.md`，包含：
 - Instance 策略文件的完整格式定义（元信息、目标画像、关键词矩阵、渠道计划、执行记录、累计归因）
 - Template 策略文件的完整格式定义（共同特征、推荐渠道、推荐关键词模式、排除渠道、统计数据）
 - 放弃记录的格式定义
@@ -82,7 +82,7 @@ git commit -m "chore: 创建搜索策略存储目录结构"
 - [ ] **Step 2: Commit**
 
 ```bash
-git add skills/public-search/references/strategy-template.md
+git add .claude/skills/public-search/references/strategy-template.md
 git commit -m "docs: 添加搜索策略文件格式模板参考"
 ```
 
@@ -91,7 +91,7 @@ git commit -m "docs: 添加搜索策略文件格式模板参考"
 ## Task 3: 更新渠道参考文档
 
 **Files:**
-- Modify: `skills/public-search/references/search-sources.md`
+- Modify: `.claude/skills/public-search/references/search-sources.md`
 
 - [ ] **Step 1: 在 search-sources.md 末尾追加岗位感知渠道推荐表**
 
@@ -119,7 +119,7 @@ git commit -m "docs: 添加搜索策略文件格式模板参考"
 - [ ] **Step 2: Commit**
 
 ```bash
-git add skills/public-search/references/search-sources.md
+git add .claude/skills/public-search/references/search-sources.md
 git commit -m "docs: 增加岗位类型渠道推荐表"
 ```
 
@@ -128,7 +128,7 @@ git commit -m "docs: 增加岗位类型渠道推荐表"
 ## Task 4: 重写 SKILL.md — 触发入口与引导模式
 
 **Files:**
-- Modify: `skills/public-search/SKILL.md`
+- Modify: `.claude/skills/public-search/SKILL.md`
 
 - [ ] **Step 1: 重写 SKILL.md 为新的完整结构**
 
@@ -143,7 +143,7 @@ git commit -m "docs: 增加岗位类型渠道推荐表"
 - [ ] **Step 2: Commit**
 
 ```bash
-git add skills/public-search/SKILL.md
+git add .claude/skills/public-search/SKILL.md
 git commit -m "feat(public-search): 重写触发入口与引导模式"
 ```
 
@@ -152,7 +152,7 @@ git commit -m "feat(public-search): 重写触发入口与引导模式"
 ## Task 5: 重写 SKILL.md — 协作策略生成
 
 **Files:**
-- Modify: `skills/public-search/SKILL.md`
+- Modify: `.claude/skills/public-search/SKILL.md`
 
 - [ ] **Step 1: 追加协作策略生成流程**
 
@@ -167,7 +167,7 @@ git commit -m "feat(public-search): 重写触发入口与引导模式"
 - [ ] **Step 2: Commit**
 
 ```bash
-git add skills/public-search/SKILL.md
+git add .claude/skills/public-search/SKILL.md
 git commit -m "feat(public-search): 重写协作策略生成流程"
 ```
 
@@ -176,7 +176,7 @@ git commit -m "feat(public-search): 重写协作策略生成流程"
 ## Task 6: 重写 SKILL.md — 执行搜索
 
 **Files:**
-- Modify: `skills/public-search/SKILL.md`
+- Modify: `.claude/skills/public-search/SKILL.md`
 
 - [ ] **Step 1: 追加执行搜索流程**
 
@@ -192,7 +192,7 @@ git commit -m "feat(public-search): 重写协作策略生成流程"
 - [ ] **Step 2: Commit**
 
 ```bash
-git add skills/public-search/SKILL.md
+git add .claude/skills/public-search/SKILL.md
 git commit -m "feat(public-search): 重写执行搜索流程（含 Token Tracker 接口）"
 ```
 
@@ -201,7 +201,7 @@ git commit -m "feat(public-search): 重写执行搜索流程（含 Token Tracker
 ## Task 7: 重写 SKILL.md — 搜索反馈与迭代循环
 
 **Files:**
-- Modify: `skills/public-search/SKILL.md`
+- Modify: `.claude/skills/public-search/SKILL.md`
 
 - [ ] **Step 1: 追加三层反馈结构**
 
@@ -224,7 +224,7 @@ git commit -m "feat(public-search): 重写执行搜索流程（含 Token Tracker
 - [ ] **Step 3: Commit**
 
 ```bash
-git add skills/public-search/SKILL.md
+git add .claude/skills/public-search/SKILL.md
 git commit -m "feat(public-search): 重写搜索反馈与迭代循环"
 ```
 
@@ -233,7 +233,7 @@ git commit -m "feat(public-search): 重写搜索反馈与迭代循环"
 ## Task 8: 重写 SKILL.md — 策略沉淀
 
 **Files:**
-- Modify: `skills/public-search/SKILL.md`
+- Modify: `.claude/skills/public-search/SKILL.md`
 
 - [ ] **Step 1: 追加策略沉淀流程**
 
@@ -254,7 +254,7 @@ git commit -m "feat(public-search): 重写搜索反馈与迭代循环"
 - [ ] **Step 3: Commit**
 
 ```bash
-git add skills/public-search/SKILL.md
+git add .claude/skills/public-search/SKILL.md
 git commit -m "feat(public-search): 重写策略沉淀与岗位感知"
 ```
 
@@ -305,7 +305,7 @@ data/search-strategies/
 - [ ] **Step 7: Commit 验证结果**
 
 ```bash
-git add skills/public-search/SKILL.md skills/public-search/references/ data/search-strategies/
+git add .claude/skills/public-search/SKILL.md .claude/skills/public-search/references/ data/search-strategies/
 git commit -m "test: public-search 重写端到端验证通过"
 ```
 
@@ -315,7 +315,7 @@ git commit -m "test: public-search 重写端到端验证通过"
 
 **Files:**
 - Create: `scripts/token-tracker.py`
-- Modify: `skills/public-search/SKILL.md`（更新 Token Tracker 章节，指向实际脚本和输出路径）
+- Modify: `.claude/skills/public-search/SKILL.md`（更新 Token Tracker 章节，指向实际脚本和输出路径）
 
 **决策：** 放弃 Alloy 方案（需要安装 ~100MB 二进制 + Windows 服务配置），改用纯 Python stdlib 实现的轻量 OTLP HTTP 接收器。零外部依赖，约 80 行代码。
 
@@ -368,7 +368,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 - [ ] **Step 4: Commit**
 
 ```bash
-git add scripts/token-tracker.py data/token-tracker/ skills/public-search/SKILL.md
+git add scripts/token-tracker.py data/token-tracker/ .claude/skills/public-search/SKILL.md
 git commit -m "feat(public-search): 添加轻量级 Token Tracker（纯 Python，零依赖）"
 ```
 

@@ -23,7 +23,7 @@
 
 ## 目录结构
 
-- skills/ — 4 个 CC Skill 定义
+- .claude/skills/ — 4 个 CC Skill 定义
 - data/ — JSON 数据存储（JD、候选人、筛选结果、报告）
 - scripts/ — 数据管理工具（data-manager.py）
 - schemas/ — 数据校验 Schema

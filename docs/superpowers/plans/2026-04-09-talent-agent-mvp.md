@@ -16,7 +16,7 @@
 
 ```
 talent-agent/
-├── skills/
+├── .claude/skills/
 │   ├── public-search/
 │   │   ├── SKILL.md                    # Skill 1 定义
 │   │   └── references/
@@ -109,13 +109,13 @@ chore: remove old architecture, keep maimai-scraper
 ### Task 2: 创建新目录结构
 
 **Files:**
-- Create: `skills/public-search/SKILL.md` (空占位)
-- Create: `skills/public-search/references/.gitkeep`
-- Create: `skills/platform-match/SKILL.md` (空占位)
-- Create: `skills/screen/SKILL.md` (空占位)
-- Create: `skills/screen/references/.gitkeep`
-- Create: `skills/report/SKILL.md` (空占位)
-- Create: `skills/report/references/.gitkeep`
+- Create: `.claude/skills/public-search/SKILL.md` (空占位)
+- Create: `.claude/skills/public-search/references/.gitkeep`
+- Create: `.claude/skills/platform-match/SKILL.md` (空占位)
+- Create: `.claude/skills/screen/SKILL.md` (空占位)
+- Create: `.claude/skills/screen/references/.gitkeep`
+- Create: `.claude/skills/report/SKILL.md` (空占位)
+- Create: `.claude/skills/report/references/.gitkeep`
 - Create: `data/jds/.gitkeep`
 - Create: `data/candidates/.gitkeep`
 - Create: `data/screens/.gitkeep`
@@ -127,15 +127,15 @@ chore: remove old architecture, keep maimai-scraper
 
 - [ ] **Step 1: 创建目录结构**
 
-Run: `mkdir -p skills/public-search/references skills/platform-match skills/screen/references skills/report/references data/{jds,candidates,screens,reports,rules,output} schemas scripts`
+Run: `mkdir -p .claude/skills/public-search/references .claude/skills/platform-match .claude/skills/screen/references .claude/skills/report/references data/{jds,candidates,screens,reports,rules,output} schemas scripts`
 
 - [ ] **Step 2: 迁移 maimai-scraper 到新位置**
 
 Run:
 ```bash
-cp -r adapters/claude-code/skills/maimai-scraper/* skills/platform-match/modules/ 2>/dev/null || true
+cp -r adapters/claude-code/skills/maimai-scraper/* .claude/skills/platform-match/modules/ 2>/dev/null || true
 # 如果 modules/ 已有内容，合并 references
-cp -r adapters/claude-code/skills/maimai-scraper/references/* skills/platform-match/references/ 2>/dev/null || true
+cp -r adapters/claude-code/skills/maimai-scraper/references/* .claude/skills/platform-match/references/ 2>/dev/null || true
 ```
 
 - [ ] **Step 3: 创建占位文件**
@@ -276,8 +276,8 @@ feat: add JSON schemas for data validation
 ### Task 5: 实现 public-search Skill
 
 **Files:**
-- Modify: `skills/public-search/SKILL.md`
-- Create: `skills/public-search/references/search-sources.md`
+- Modify: `.claude/skills/public-search/SKILL.md`
+- Create: `.claude/skills/public-search/references/search-sources.md`
 
 - [ ] **Step 1: 编写 search-sources.md**
 
@@ -344,16 +344,16 @@ feat: implement public-search skill
 ### Task 6: 迁移并实现 platform-match Skill
 
 **Files:**
-- Modify: `skills/platform-match/SKILL.md`
-- Create: `skills/platform-match/references/platform-config.md`
-- Verify: `skills/platform-match/modules/` (maimai-scraper 代码)
-- Verify: `skills/platform-match/references/maimai-fields.md`
-- Verify: `skills/platform-match/references/form-controls-map.md`
-- Verify: `skills/platform-match/references/anti-scraping.md`
+- Modify: `.claude/skills/platform-match/SKILL.md`
+- Create: `.claude/skills/platform-match/references/platform-config.md`
+- Verify: `.claude/skills/platform-match/modules/` (maimai-scraper 代码)
+- Verify: `.claude/skills/platform-match/references/maimai-fields.md`
+- Verify: `.claude/skills/platform-match/references/form-controls-map.md`
+- Verify: `.claude/skills/platform-match/references/anti-scraping.md`
 
 - [ ] **Step 1: 验证 maimai-scraper 迁移完整**
 
-Run: `ls -R skills/platform-match/modules/`
+Run: `ls -R .claude/skills/platform-match/modules/`
 Expected: form-filler/、loop-orchestrator/、result-merger/、logger/ 等目录存在
 
 - [ ] **Step 2: 编写 platform-config.md**
@@ -415,8 +415,8 @@ feat: implement platform-match skill with maimai-scraper
 ### Task 7: 实现 screen Skill
 
 **Files:**
-- Modify: `skills/screen/SKILL.md`
-- Create: `skills/screen/references/eval-criteria.md`
+- Modify: `.claude/skills/screen/SKILL.md`
+- Create: `.claude/skills/screen/references/eval-criteria.md`
 
 - [ ] **Step 1: 编写 eval-criteria.md**
 
@@ -492,8 +492,8 @@ feat: implement screen skill with rule evolution
 ### Task 8: 实现 report Skill
 
 **Files:**
-- Modify: `skills/report/SKILL.md`
-- Create: `skills/report/references/report-template.md`
+- Modify: `.claude/skills/report/SKILL.md`
+- Create: `.claude/skills/report/references/report-template.md`
 
 - [ ] **Step 1: 编写 report-template.md**
 

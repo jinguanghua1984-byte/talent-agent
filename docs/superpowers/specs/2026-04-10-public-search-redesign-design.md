@@ -494,8 +494,8 @@ Universal 规则（跨模板共性）
 
 | 文件 | 操作 |
 |------|------|
-| `skills/public-search/SKILL.md` | 完全重写 |
-| `skills/public-search/references/search-sources.md` | 更新：增加岗位类型渠道表 |
+| `.claude/skills/public-search/SKILL.md` | 完全重写 |
+| `.claude/skills/public-search/references/search-sources.md` | 更新：增加岗位类型渠道表 |
 | `data/search-strategies/` | 新建目录结构 |
 | `data/output/` | 保留，历史数据不迁移 |
 
