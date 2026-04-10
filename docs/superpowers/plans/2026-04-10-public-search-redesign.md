@@ -130,14 +130,15 @@ git commit -m "docs: 增加岗位类型渠道推荐表"
 **Files:**
 - Modify: `skills/public-search/SKILL.md`
 
-- [ ] **Step 1: 重写 SKILL.md 的 frontmatter 和触发部分**
+- [ ] **Step 1: 重写 SKILL.md 为新的完整结构**
 
-完全替换文件内容，写入新的 frontmatter、触发方式、入口判断逻辑、引导模式（含退出机制）。参考 spec 第 2 节。
+完全替换文件内容为新的 SKILL.md。Task 4 只写入 frontmatter + 触发入口 + 引导模式三个章节，后续 Task 5-8 逐步追加其余章节。文件末尾用占位注释标记待追加的章节。
 
 关键点：
 - 触发方式保持 `/public-search [输入]` 格式
 - 三种入口路径清晰定义
 - 引导模式的退出机制（「取消」「算了」或空消息）
+- 文件末尾追加 `<!-- SECTION: strategy-generation | execution | feedback | sedimentation 待追加 -->`
 
 - [ ] **Step 2: Commit**
 
@@ -185,7 +186,7 @@ git commit -m "feat(public-search): 重写协作策略生成流程"
 - 按关键词矩阵逐条执行
 - 每条独立记录（搜索量、候选人数、噪音数）
 - Token Tracker 集成：定义读取接口，降级方案（显示「未配置」）
-- 候选人去重复用 `data-manager.py candidate dedup`
+- 候选人去重复用 `scripts/data-manager.py candidate dedup`
 - 候选人写入流程（临时 JSON → data-manager create → 清理）
 
 - [ ] **Step 2: Commit**
@@ -271,8 +272,8 @@ git commit -m "feat(public-search): 重写策略沉淀与岗位感知"
 - [ ] **Step 2: 验证 JD 驱动路径**
 
 用之前创建的测试 JD（`jd-20260410-alibaba-cloud-ai-agent-pm`）触发 `/public-search jd-20260410-alibaba-cloud-ai-agent-pm`，确认：
-- 读取 JD 成功
-- 生成策略文件到 `data/search-strategies/instances/`
+- 读取 JD 成功（从 `data/jds/jd-20260410-alibaba-cloud-ai-agent-pm.json`）
+- 生成策略文件到 `data/search-strategies/instances/`（注意：不是旧路径 `data/output/`）
 - 策略包含关键词矩阵、渠道计划、目标画像
 - 等待用户确认（不自动执行搜索）
 
@@ -294,9 +295,16 @@ data/search-strategies/
 └── universal-rules.json  # 初始空规则
 ```
 
-- [ ] **Step 6: Commit 验证结果**
+- [ ] **Step 6: 验证 Token Tracker 降级行为**
+
+确认在未配置 OTEL 时：
+- 归因表 Token 列显示「未配置」
+- 成本分析环节被跳过
+- 其他功能正常工作
+
+- [ ] **Step 7: Commit 验证结果**
 
 ```bash
-git add -A
+git add skills/public-search/SKILL.md skills/public-search/references/ data/search-strategies/
 git commit -m "test: public-search 重写端到端验证通过"
 ```
