@@ -17,9 +17,20 @@ docs/download/
 skills/**/*.js
 skills/**/*.d.ts
 !skills/**/references/**/*.js
+.claude/skills/**/*.js
+.claude/skills/**/*.d.ts
+!.claude/skills/**/references/**/*.js
 
-# Talent agent specific
+# Claude Code local settings
+.claude/settings.local.json
+
+# Talent agent specific - runtime instance data (keep templates and shared config)
+data/candidates/*.json
+data/jds/*.json
+data/screens/*.json
+data/search-strategies/instances/*.md
 data/output/*.md
 data/rules/preferences.json
+data/token-tracker/*.jsonl
 *.pyc
 __pycache__/
