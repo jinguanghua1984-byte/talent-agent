@@ -199,4 +199,72 @@ AI 审查策略的完整性，标注建议（非决定）：
 
 退出时回复：**「好的，随时可以再来。」** 然后结束当前 Skill 执行。
 
-<!-- SECTION: execution | feedback | sedimentation 待追加 -->
+## 执行搜索
+
+策略确认后，按关键词矩阵逐条执行搜索。执行前**必须**参考 `references/search-sources.md` 中的渠道搜索语法和信息提取要点。
+
+### 执行逻辑
+
+按关键词矩阵逐条执行，每条独立记录：
+
+1. 调用搜索工具（`WebSearch` / `mcp__ddg-search__search` / `mcp__github__search_users`）
+2. 提取页面内容（`mcp__jina-reader__jina_reader` / `mcp__ddg-search__fetch_content`），识别候选人信息
+3. 记录：搜索量、候选人数、噪音数
+4. 候选人去重，合并 sources
+5. 通过 Token Tracker 获取本次操作的 token 消耗（参见下方「Token 消耗追踪」）
+
+### Token 消耗追踪
+
+**方案：基于 Claude Code OpenTelemetry 遥测**
+
+Skill 通过读取 collector 输出文件获取 token 数据。接口定义：
+
+```typescript
+interface TokenRecord {
+  timestamp: string;
+  prompt_id: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cost_usd: number;
+  model: string;
+}
+```
+
+**归因方式：** 每个 AI turn 对应一个 `prompt_id`。Skill 在执行搜索前后记录当前 turn 的 prompt_id，从 collector 输出中按 prompt_id 聚合 token 消耗，归因到对应的策略元素。
+
+**降级方案：** 如果 OpenTelemetry 未配置，归因表中 Token 列显示「未配置」，成本分析跳过。不使用代理指标。
+
+**前置任务：** Token Tracker 需要 OTEL 环境配置和本地 Collector 部署（独立任务，由华哥配合实施）。当前版本仅预留接口，未配置时优雅降级。
+
+### 信息提取
+
+从搜索结果中提取候选人信息：
+
+| 字段 | 必须 | 来源 |
+|------|------|------|
+| 姓名 | 是 | 页面内容 |
+| 当前公司 | 否 | 页面内容 |
+| 当前职位 | 否 | 页面内容 |
+| 城市 | 否 | 页面内容 |
+| 技能标签 | 否 | 推断（技术栈、专业领域） |
+| 来源渠道 | 是 | 搜索渠道名称 |
+| 来源 URL | 是 | 搜索结果 URL |
+
+提取规则：
+- 姓名是唯一必填字段，其他字段按可用性填写
+- 无法确定的字段留空，不要猜测
+- 记录发现时间作为 `found_at`
+
+### 候选人写入
+
+用户确认搜索结果后，写入 `data/candidates/`：
+
+1. 为每个候选人创建临时 JSON 文件
+2. 调用 `python scripts/data-manager.py candidate create <file>` 写入
+3. 清理临时文件
+4. 多渠道发现的同一候选人合并 sources 而非重复创建
+5. 去重逻辑复用 `python scripts/data-manager.py candidate dedup` 现有命令
+
+<!-- SECTION: feedback | sedimentation 待追加 -->
