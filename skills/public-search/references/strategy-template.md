@@ -221,5 +221,5 @@ Template 从多个相似 Instance 中提取共性，用于新 JD 的快速策略
 
 | 文件类型 | 存储路径 |
 |---------|---------|
-| Instance 策略文件 | `data/talent/strategies/instances/{jd-id}.md` |
-| Template 策略文件 | `data/talent/strategies/templates/{template-id}.md` |
+| Instance 策略文件 | `data/search-strategies/instances/{date}-{slug}.md` |
+| Template 策略文件 | `data/search-strategies/templates/{template-id}.md` |
