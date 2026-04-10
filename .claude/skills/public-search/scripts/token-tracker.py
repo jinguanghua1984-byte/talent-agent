@@ -6,7 +6,7 @@ Token Tracker - 轻量级 OTLP HTTP 接收器
 纯 Python stdlib 实现，零外部依赖。
 
 用法:
-    python scripts/token-tracker.py [--port 4318] [--output data/token-tracker/tokens.jsonl]
+    python .claude/skills/public-search/scripts/token-tracker.py [--port 4318] [--output data/token-tracker/tokens.jsonl]
 
 环境变量（Claude Code 侧）:
     CLAUDE_CODE_ENABLE_TELEMETRY=1
