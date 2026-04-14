@@ -1,8 +1,12 @@
 # 脉脉搜索表单自动填充模块设计
 
-> **状态**: 待审阅
+> **状态**: ~~待审阅~~ **已作废** (2026-04-14)
 > **日期**: 2026-03-20
 > **关联**: maimai-scraper skill 重构
+>
+> **作废原因**: 脉脉搜索已确认可通过 API 直接调用 (`POST /api/ent/v3/search/basic`)，
+> 不再需要 DOM 表单填充。表单填充模块的复杂度与收益不匹配。
+> 详见 `docs/design-discussions/2026-04-13-platform-match-skill-redesign.md`。
 
 ## 背景
 

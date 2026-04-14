@@ -1,0 +1,32 @@
+{
+  "save": {
+    "cookies_count": 13,
+    "localStorage_count": 1,
+    "cookie_domains": [
+      ".baidu.com",
+      ".maimai.cn",
+      "www.maimai.cn",
+      "maimai.cn"
+    ],
+    "cookie_names": [
+      "HWWAFSESTIME",
+      "HWWAFSESID",
+      "HWWAFSESTIME",
+      "HWWAFSESID",
+      "seid",
+      "guid",
+      "csrftoken",
+      "_buuid",
+      "_buuid.sig",
+      "BAIDUID_BFESS",
+      "AGL_USER_ID",
+      "session",
+      "session.sig"
+    ]
+  },
+  "restore": {
+    "final_url": "https://maimai.cn/talent/search",
+    "was_redirected": true,
+    "cookies_count": 13
+  }
+}

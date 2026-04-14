@@ -1,0 +1,87 @@
+{
+  "stats": {
+    "total_api_calls": 8,
+    "json_responses": 4,
+    "unique_domains": [
+      "ios-sentry.mm.taou.com",
+      "hdaa.shuzilm.cn",
+      "fclog.baidu.com",
+      "maimai.cn"
+    ]
+  },
+  "api_calls_sample": [
+    {
+      "method": "POST",
+      "url": "https://ios-sentry.mm.taou.com/api/11/envelope/",
+      "type": "fetch"
+    },
+    {
+      "method": "GET",
+      "url": "https://maimai.cn/web/pingback",
+      "type": "xhr"
+    },
+    {
+      "method": "GET",
+      "url": "https://maimai.cn/sdk/jobs/get_ent_version",
+      "type": "xhr"
+    },
+    {
+      "method": "GET",
+      "url": "https://maimai.cn/sdk/jobs/recruiter/spring_activity_pc_banner",
+      "type": "xhr"
+    },
+    {
+      "method": "POST",
+      "url": "https://fclog.baidu.com/log/ocpcagl",
+      "type": "xhr"
+    },
+    {
+      "method": "POST",
+      "url": "https://hdaa.shuzilm.cn/unload",
+      "type": "xhr"
+    },
+    {
+      "method": "POST",
+      "url": "https://fclog.baidu.com/log/ocpcagl",
+      "type": "xhr"
+    },
+    {
+      "method": "POST",
+      "url": "https://fclog.baidu.com/log/ocpcagl",
+      "type": "xhr"
+    }
+  ],
+  "json_responses_sample": [
+    {
+      "url": "https://maimai.cn/web/pingback",
+      "status": 200,
+      "keys": [
+        "result"
+      ],
+      "preview": "{\"result\": \"ok\"}"
+    },
+    {
+      "url": "https://maimai.cn/sdk/jobs/get_ent_version",
+      "status": 200,
+      "keys": [
+        "greaterThanV3",
+        "result"
+      ],
+      "preview": "{\"greaterThanV3\": false, \"result\": \"ok\"}"
+    },
+    {
+      "url": "https://maimai.cn/sdk/jobs/recruiter/spring_activity_pc_banner",
+      "status": 200,
+      "keys": [
+        "result"
+      ],
+      "preview": "{\"result\": \"ok\"}"
+    },
+    {
+      "url": "https://ios-sentry.mm.taou.com/api/11/envelope/",
+      "status": 200,
+      "keys": [],
+      "preview": "{}"
+    }
+  ]
+}
