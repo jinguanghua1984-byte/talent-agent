@@ -13,17 +13,24 @@
 
 import argparse
 import json
+import logging
 import os
+import re
 import sys
 from datetime import datetime, timezone
 
 
 SESSION_DIR = os.path.join(os.getcwd(), "data", "session")
+logger = logging.getLogger(__name__)
 
 
 def _progress_path(batch_id: str) -> str:
     os.makedirs(SESSION_DIR, exist_ok=True)
-    return os.path.join(SESSION_DIR, f"batch-progress-{batch_id}.json")
+    # 防止路径穿越：只允许字母数字、连字符、下划线
+    safe_id = re.sub(r"[^a-zA-Z0-9_\-]", "", batch_id)
+    if not safe_id:
+        raise ValueError(f"无效的 batch_id: {batch_id}")
+    return os.path.join(SESSION_DIR, f"batch-progress-{safe_id}.json")
 
 
 def _list_progress_files() -> list[str]:
@@ -41,7 +48,15 @@ def _now_iso() -> str:
 
 def cmd_create(args):
     """创建进度文件。"""
-    candidates = json.loads(args.candidates)
+    try:
+        candidates = json.loads(args.candidates)
+    except json.JSONDecodeError as e:
+        print(json.dumps({
+            "status": "error",
+            "code": "INVALID_JSON",
+            "message": f"候选人 JSON 解析失败: {e}",
+        }, ensure_ascii=False, indent=2))
+        return 1
     progress = {
         "batch_id": args.batch_id,
         "started_at": _now_iso(),
@@ -65,8 +80,16 @@ def cmd_update(args):
         print(f"错误: 进度文件不存在: {args.batch_id}", file=sys.stderr)
         return 1
 
-    with open(path, "r", encoding="utf-8") as f:
-        progress = json.load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            progress = json.load(f)
+    except json.JSONDecodeError as e:
+        print(json.dumps({
+            "status": "error",
+            "code": "CORRUPTED_FILE",
+            "message": f"进度文件 JSON 损坏: {path}: {e}",
+        }, ensure_ascii=False, indent=2))
+        return 1
 
     updated = False
     for cand in progress["candidates"]:
@@ -100,8 +123,16 @@ def cmd_get(args):
         print(f"错误: 进度文件不存在: {args.batch_id}", file=sys.stderr)
         return 1
 
-    with open(path, "r", encoding="utf-8") as f:
-        print(json.dumps(json.load(f), ensure_ascii=False, indent=2))
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            print(json.dumps(json.load(f), ensure_ascii=False, indent=2))
+    except json.JSONDecodeError as e:
+        print(json.dumps({
+            "status": "error",
+            "code": "CORRUPTED_FILE",
+            "message": f"进度文件 JSON 损坏: {path}: {e}",
+        }, ensure_ascii=False, indent=2))
+        return 1
     return 0
 
 
@@ -128,8 +159,16 @@ def cmd_resume(args):
         print(json.dumps({"resumable": False}))
         return 0
 
-    with open(path, "r", encoding="utf-8") as f:
-        progress = json.load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            progress = json.load(f)
+    except json.JSONDecodeError as e:
+        print(json.dumps({
+            "status": "error",
+            "code": "CORRUPTED_FILE",
+            "message": f"进度文件 JSON 损坏: {path}: {e}",
+        }, ensure_ascii=False, indent=2))
+        return 1
 
     # 找到需要恢复的候选人
     remaining = [

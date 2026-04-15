@@ -7,8 +7,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from .base import (
     CandidateData,
@@ -267,11 +270,14 @@ class MaimaiAdapter:
                 )
             )
         except Exception as e:
+            is_retryable = isinstance(e, (TimeoutError, ConnectionError, OSError))
+            if not is_retryable:
+                logger.error("搜索执行异常（非重试）: %s", e, exc_info=True)
             return SearchResult(
                 error=SearchError(
                     code="SEARCH_FAILED",
                     message=str(e),
-                    retryable=True,
+                    retryable=is_retryable,
                 )
             )
 
@@ -310,4 +316,7 @@ class MaimaiAdapter:
                 detail_url=f"https://maimai.cn/u/{platform_id}",
             )
         except Exception:
+            logger.error(
+                "获取候选人详情失败: platform_id=%s", platform_id, exc_info=True
+            )
             return None

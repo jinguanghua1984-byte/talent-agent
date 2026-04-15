@@ -73,6 +73,13 @@ async def _do_search(
                 context = await browser.new_context()
             else:
                 browser = await p.chromium.connect_over_cdp(DEFAULT_CDP_URL)
+                if not browser.contexts:
+                    return {
+                        "status": "error",
+                        "code": "NO_CONTEXT",
+                        "message": "CDP 连接成功但未找到浏览器上下文，请确保 Chrome 已打开页面",
+                        "retryable": True,
+                    }
                 context = browser.contexts[0]
 
             page = await context.new_page()
@@ -128,9 +135,13 @@ async def _do_search(
                     await asyncio.sleep(max(page_delay, 2))
                     record_page(platform, headless)
 
-            record_search(platform, headless)
+            try:
+                record_search(platform, headless)
+            except Exception:
+                pass  # 状态持久化失败不应丢弃搜索结果
 
-            await browser.close()
+            if headless:
+                await browser.close()
 
             return {
                 "status": "ok",

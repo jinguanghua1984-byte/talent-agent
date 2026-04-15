@@ -147,16 +147,20 @@ def _run_data_manager(*args: str) -> dict:
     if not os.path.exists(dm_path):
         return {"error": f"data-manager.py 不存在: {dm_path}"}
 
-    result = subprocess.run(
-        [sys.executable, dm_path, *args],
-        capture_output=True,
-        text=True,
-        cwd=os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.dirname(os.path.abspath(__file__))
-            )))
-        ),
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, dm_path, *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.dirname(
+                    os.path.dirname(os.path.abspath(__file__))
+                )))
+            ),
+        )
+    except subprocess.TimeoutExpired:
+        return {"error": f"data-manager.py 执行超时 (30s): {' '.join(args)}"}
 
     if result.returncode != 0:
         return {"error": result.stderr.strip()}
@@ -164,7 +168,7 @@ def _run_data_manager(*args: str) -> dict:
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError:
-        return {"raw_output": result.stdout}
+        return {"error": f"data-manager.py 返回非 JSON 输出 (returncode={result.returncode}): {result.stdout[:200]}"}
 
 
 # ---------------------------------------------------------------------------
@@ -211,9 +215,10 @@ def cmd_merge(args):
     with open(args.new_data, "r", encoding="utf-8") as f:
         new_data = json.load(f)
 
-    source = new_data.pop("_source", None)
+    source = new_data.get("_source")
+    clean_data = {k: v for k, v in new_data.items() if not k.startswith("_")}
 
-    merged = merge_fields(existing, new_data)
+    merged = merge_fields(existing, clean_data)
 
     if source:
         merged = append_source(merged, source)
@@ -245,7 +250,7 @@ def cmd_merge(args):
     print(json.dumps({
         "status": "ok",
         "candidate_id": candidate_id,
-        "fields_updated": list(set(new_data.keys()) - {"_source"}),
+        "fields_updated": list(clean_data.keys()),
     }, ensure_ascii=False, indent=2))
     return 0
 

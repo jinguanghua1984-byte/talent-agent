@@ -103,7 +103,7 @@ async def _status() -> int:
                 result["page_count"] = len(pages)
                 if pages:
                     result["current_url"] = pages[0].url
-            await browser.close()
+            # CDP 模式不关闭用户浏览器
             _output_json(result)
             return 0
     except Exception as e:
@@ -122,9 +122,17 @@ async def _save(output: str | None) -> int:
     try:
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp(DEFAULT_CDP_URL)
+            if not browser.contexts:
+                _output_json({
+                    "status": "error",
+                    "code": "NO_CONTEXT",
+                    "message": "CDP 连接成功但未找到浏览器上下文，请确保 Chrome 已打开页面",
+                    "retryable": True,
+                })
+                return 1
             context = browser.contexts[0]
             cookies = await context.cookies()
-            await browser.close()
+            # CDP 模式不关闭用户浏览器
 
         output_path = output or _cookie_backup_path("default")
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -195,7 +203,9 @@ async def _verify(platform: str, mode: str = "cdp") -> int:
                 for c in browser_cookies
             )
 
-            await browser.close()
+            # 仅 standalone (headless) 模式关闭浏览器，CDP 模式不关闭用户浏览器
+            if mode == "standalone":
+                await browser.close()
 
             is_valid = logged_in or has_auth_cookie
             _output_json({

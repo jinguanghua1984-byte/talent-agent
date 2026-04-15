@@ -14,11 +14,14 @@
 
 import argparse
 import json
+import logging
 import os
 import random
 import sys
 import time
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +111,7 @@ def _file_lock(filepath: str):
             fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         yield
     except (IOError, OSError):
+        logger.warning("文件锁获取失败，继续执行（并发写入可能导致状态不一致）")
         yield  # 锁获取失败，静默继续
     finally:
         if lock_fd:
@@ -120,6 +124,7 @@ def _file_lock(filepath: str):
                     fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
                 lock_fd.close()
             except Exception:
+                logger.warning("释放文件锁时出错", exc_info=True)
                 try:
                     lock_fd.close()
                 except Exception:
@@ -137,16 +142,23 @@ def _ensure_session_dir() -> None:
 def _load_state() -> dict:
     if not os.path.exists(STATE_FILE):
         return {}
-    with open(STATE_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error("限流状态文件损坏，已重置: %s", e)
+        return {}
 
 
 def _save_state(state: dict) -> None:
     _ensure_session_dir()
     tmp_path = STATE_FILE + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, STATE_FILE)
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, STATE_FILE)
+    except OSError as e:
+        logger.error("限流状态保存失败: %s", e)
 
 
 def _get_platform_state(platform: str, headless: bool = False) -> PlatformState:
@@ -242,7 +254,7 @@ def check_search(platform: str, headless: bool = False) -> dict:
     # 检查连续操作上限
     if ps.continuous_op_count >= 10:
         elapsed_continuous = now - ps.continuous_op_start
-        if elapsed_continuous > hard.continuous_op_minutes * 60:
+        if elapsed_continuous <= hard.continuous_op_minutes * 60:
             pause = random.uniform(hard.continuous_pause_min, hard.continuous_pause_max)
             return {
                 "allowed": False,

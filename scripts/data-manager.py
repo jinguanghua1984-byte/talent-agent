@@ -23,11 +23,14 @@
 
 import argparse
 import json
+import logging
 import os
 import re
 import sys
 from collections import defaultdict
 from datetime import date
+
+logger = logging.getLogger(__name__)
 
 # 尝试导入 jsonschema，如果没有则使用手动验证
 try:
@@ -89,15 +92,22 @@ def atomic_write_json(filepath, data):
         data: 要写入的字典数据
     """
     tmp_path = filepath + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, filepath)
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, filepath)
+    except (OSError, TypeError) as e:
+        logger.error("原子写入失败: %s", e)
 
 
 def read_json(filepath):
-    """读取 JSON 文件，返回字典。"""
-    with open(filepath, "r", encoding="utf-8") as f:
-        return json.load(f)
+    """读取 JSON 文件，返回字典。失败返回 None。"""
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error("读取 JSON 文件失败: %s: %s", filepath, e)
+        return None
 
 
 def ensure_dir(filepath):
@@ -202,7 +212,9 @@ def cmd_jd_list(args):
     results = []
     for fname in list_json_files(get_data_dirs()["jds"]):
         filepath = os.path.join(get_data_dirs()["jds"], fname)
-        results.append(read_json(filepath))
+        data = read_json(filepath)
+        if data is not None:
+            results.append(data)
 
     print(json.dumps(results, ensure_ascii=False, indent=2))
     return 0
@@ -261,6 +273,8 @@ def cmd_candidate_list(args):
     for fname in list_json_files(get_data_dirs()["candidates"]):
         filepath = os.path.join(get_data_dirs()["candidates"], fname)
         cand = read_json(filepath)
+        if cand is None:
+            continue
 
         # 按 enrichment_level 过滤
         if args.enrichment:
@@ -427,6 +441,8 @@ def cmd_candidate_dedup(args):
     for fname in list_json_files(get_data_dirs()["candidates"]):
         filepath = os.path.join(get_data_dirs()["candidates"], fname)
         cand = read_json(filepath)
+        if cand is None:
+            continue
         key = (cand.get("name", ""), cand.get("current_company", ""))
         groups[key].append(cand)
 
@@ -485,7 +501,9 @@ def cmd_screen_list(args):
     for fname in list_json_files(get_data_dirs()["screens"]):
         if fname.startswith(f"{jd_id}__"):
             filepath = os.path.join(get_data_dirs()["screens"], fname)
-            results.append(read_json(filepath))
+            data = read_json(filepath)
+            if data is not None:
+                results.append(data)
 
     print(json.dumps(results, ensure_ascii=False, indent=2))
     return 0
