@@ -148,6 +148,36 @@
       },
       "description": "Array of education experience objects"
     },
+    "active_state": {
+      "type": "string",
+      "description": "平台活跃状态（如 '今日活跃', '在线', '3天前活跃'）"
+    },
+    "project_experience": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "period"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "项目名称"
+          },
+          "period": {
+            "type": "string",
+            "description": "时间段（如 '2023-06 - 2024-12'）"
+          },
+          "role": {
+            "type": "string",
+            "description": "担任角色"
+          },
+          "description": {
+            "type": "string",
+            "description": "项目描述"
+          }
+        }
+      },
+      "description": "项目经历数组"
+    },
     "enrichment_level": {
       "type": "string",
       "enum": ["raw", "partial", "enriched"],
@@ -161,20 +191,53 @@
         "properties": {
           "channel": {
             "type": "string",
-            "description": "Source channel/platform"
+            "description": "来源平台标识（maimai, boss, public-search）"
           },
           "url": {
             "type": "string",
-            "description": "Source URL"
+            "description": "来源 URL"
           },
           "found_at": {
             "type": "string",
             "format": "date-time",
-            "description": "When the information was found"
+            "description": "发现时间（ISO 8601）"
+          },
+          "platform_id": {
+            "type": "string",
+            "description": "平台用户 ID（如脉脉 uid）"
+          },
+          "enrichment_level": {
+            "type": "string",
+            "enum": ["raw", "partial", "enriched"],
+            "description": "本次来源的丰富程度"
+          },
+          "match_confidence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "身份匹配置信度（0-100，仅候选丰富模式）"
+          },
+          "match_path": {
+            "type": "string",
+            "description": "匹配路径（A 或 B，仅候选丰富模式）"
+          },
+          "snapshot": {
+            "type": "object",
+            "properties": {
+              "company_at_source": {
+                "type": "string",
+                "description": "发现时的公司"
+              },
+              "position_at_source": {
+                "type": "string",
+                "description": "发现时的职位"
+              }
+            },
+            "description": "发现时的状态快照"
           }
         }
       },
-      "description": "Array of source information objects"
+      "description": "来源信息数组（只追加不覆盖）"
     }
   }
 }
