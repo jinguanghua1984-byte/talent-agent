@@ -119,7 +119,7 @@ platform-match/
 | `position` | `current_title` | 直接映射 |
 | `sdegree` | `education` | 1→"本科", 2→"硕士", 3→"博士", 4→"大专" |
 | `worktime` | `work_years` | "4年7个月" → 提取数字取整 |
-| `hunting_status` | `status` | 5→"在职-看机会", 其他→"在职-不看" |
+| `hunting_status` | `status` | 见下方完整映射表 |
 | `exp[].company` | `work_experience[].company` | 直接映射 |
 | `exp[].position` | `work_experience[].title` | 直接映射 |
 | `exp[].v` | `work_experience[].period` | "2021-09-01至今" → "2021-09 - 至今" |
@@ -139,12 +139,53 @@ platform-match/
 
 ### 3.3 candidate.schema.json 扩展
 
-新增字段：
+**新增字段：**
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `active_state` | string | 活跃状态（"今日活跃"/"在线"/"3天前活跃"） |
-| `project_experience` | array | 项目经历 |
+| `project_experience` | array | 项目经历（见下方 item 结构） |
+
+**project_experience[] item 结构：**
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `name` | string | 是 | 项目名称 |
+| `period` | string | 是 | 时间段（"2023-06 - 2024-12"） |
+| `role` | string | 否 | 担任角色 |
+| `description` | string | 否 | 项目描述 |
+
+**sources[] 扩展 schema（新增字段）：**
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `channel` | string | 是 | 来源平台标识（"maimai"/"boss"/"public-search"） |
+| `url` | string | 是 | 来源 URL |
+| `found_at` | string | 是 | 发现时间（ISO 8601） |
+| `platform_id` | string | 否 | 平台用户 ID（如脉脉 uid） |
+| `enrichment_level` | string | 否 | 本次来源的丰富程度（"raw"/"partial"/"enriched"） |
+| `match_confidence` | integer | 否 | 身份匹配置信度（0-100，仅候选丰富模式） |
+| `match_path` | string | 否 | 匹配路径（"A"/"B"，仅候选丰富模式） |
+| `snapshot` | object | 否 | 发现时的状态快照（见下方） |
+
+**snapshot 结构：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `company_at_source` | string | 发现时的公司 |
+| `position_at_source` | string | 发现时的职位 |
+
+### 3.3.1 hunting_status 完整映射
+
+| 脉脉 `hunting_status` | candidate `status` | 说明 |
+|---|---|---|
+| 5 | "在职-看机会" | 主动求职 |
+| 1-4 | "在职-不看" | 未主动求职（细分值待实测补充） |
+| 0 | "在职-不看" | 未设置求职状态 |
+| 离职标识（待实测确认具体值） | "离职-求职中" | 已离职 |
+| 无此字段 | 不更新 `status` | API 未返回时不覆盖已有值 |
+
+> 注：脉脉 API 的 `hunting_status` 完整枚举值需在登录后实测确认。上表为基于现有数据的推测，实施时需校准。
 
 ### 3.4 逐字段冲突策略
 
@@ -153,7 +194,7 @@ platform-match/
 | 字段类型 | 策略 | 适用字段 |
 |----------|------|----------|
 | 最新来源优先 | 取时间最新的值 | `current_company`, `current_title`, `expected_salary`, `expected_city`, `status`, `active_state` |
-| 首次来源优先 | 仅首次有值时写入 | `education_experience` |
+| 首次来源优先 | 候选人尚无该字段时写入，已有则不覆盖 | `education_experience` |
 | 合并去重 | 按唯一键合并 | `skill_tags`, `work_experience` |
 | 多数投票 | 多源一致则写入 | `age`, `gender` |
 
@@ -190,7 +231,7 @@ platform-match/
 
 ```
 步骤 1: 精确过滤
-  - company 完全匹配（含别名）AND position 相似度 > 70%
+  - company 完全匹配（含别名，别名表见 `rules/company-aliases.json`）AND position 相似度 > 70%
   → 剩余 ≤ 1: 自动选取（仅限置信度 ≥ 95%）
 
 步骤 2: 模糊匹配
@@ -743,7 +784,9 @@ triggers:
 }
 ```
 
-**2. 候选人评分**：每轮搜索确认时，Claude 对每个候选人打 JD 匹配度（0-100）
+**2. 候选人初筛评分**：每轮搜索确认时，Claude 对每个候选人打初步匹配度（0-100），存储为 `pre_screen_score`
+
+> 注：此分数为 public-search 阶段的初步筛选依据，与 screen skill 的详细人岗评估（Tier S/A/B）是不同层级的评分。screen 会在完整候选人信息基础上做更深入的评估。
 
 | 维度 | 分值 | 说明 |
 |------|------|------|
@@ -786,3 +829,91 @@ python scripts/data-manager.py batch candidates <batch-id> [--filter "score>80"]
 | `batch get <id>` | 查看批次详情 | 获取候选人列表 |
 | `batch candidates <id> [--filter]` | 从批次中筛选候选人 ID | 模式 1 输入 |
 | `candidate dedup-merge <primary> <secondary>` | 合并两个候选人为同一自然人 | 跨记录去重 |
+
+---
+
+## 附录 A：Spec Review 修订记录（2026-04-15）
+
+以下问题由 spec review 发现并修复：
+
+### HIGH 修订
+
+**H1. sources[] schema 扩展定义**
+- 问题：sources[] 新增字段（platform_id、match_confidence、snapshot 等）未在 schema 中定义
+- 修复：在 Section 3.3 新增完整的 sources[] 扩展 schema 和 snapshot 结构定义
+
+**H2. data-manager.py source 去重键 bug**
+- 问题：`cmd_candidate_merge` 第 329 行使用 `src.get("type", "")` 作为去重键，但 schema 定义的是 `channel`
+- 修复：实施时需将第 329 行改为 `src.get("channel", "")`，同步更新 dedup 逻辑
+
+**H3. hunting_status 映射不完整**
+- 问题：仅映射了 5→"在职-看机会"和默认→"在职-不看"，缺少离职状态映射
+- 修复：新增 Section 3.3.1 完整映射表，标注待实测值
+
+**H4. project_experience 字段结构缺失**
+- 问题：声明了 array 类型但未定义 item 结构
+- 修复：在 Section 3.3 定义了完整的 item 结构（name, period, role, description）
+
+**H5. 批次断点恢复机制缺失**
+- 问题：长时间批次中 Playwright 崩溃或 session 过期时无法恢复
+- 修复：新增 Section 附录 B（批次断点恢复）
+
+### MEDIUM 修订
+
+**M1. 公司别名注册表**
+- 修复：Section 4.3 步骤 1 引用 `rules/company-aliases.json`，初始内容示例：
+  ```json
+  {"阿里巴巴": ["阿里巴巴集团", "阿里"], "字节跳动": ["字节", "ByteDance"], "腾讯": ["腾讯科技", "Tencent"]}
+  ```
+
+**M2. "首次来源优先"歧义**
+- 修复：Section 3.4 修改为"候选人尚无该字段时写入，已有则不覆盖"
+
+**M3. rate_limiter 文件锁**
+- 修复：Section 七补充——rate_limiter.py 使用 `msvcrt.locking`（Windows）/ `fcntl.flock`（Linux）进行文件锁，防止多实例并发写入
+
+**M4. Cookie 安全**
+- 修复：Section 六补充——`data/session/` 目录已加入 `.gitignore`，cookies 文件以明文存储在本地（不提交到 git），未来可考虑 AES-256-GCM 加密
+
+**M5. "搜索组"概念定义**
+- 修复：Section 12.2 明确定义——"搜索组"是一个 `SearchParams` 实例（一种特定的关键词/筛选器组合），执行后跨页收集结果
+
+**M6. 批次评分与 screen 重叠**
+- 修复：Section 14.1 评分重命名为 `pre_screen_score`，并标注与 screen 评分的层级区别
+
+---
+
+## 附录 B：批次断点恢复机制
+
+### 进度文件
+
+每次模式 1 批次开始时，创建进度文件 `data/session/batch-progress-<timestamp>.json`：
+
+```json
+{
+  "batch_id": "public-search-20260415-1",
+  "started_at": "2026-04-15T10:00:00",
+  "candidates": [
+    {"id": "cand-1", "status": "completed", "result": "enriched"},
+    {"id": "cand-2", "status": "completed", "result": "not_found"},
+    {"id": "cand-3", "status": "in_progress", "last_step": "search"},
+    {"id": "cand-4", "status": "pending"},
+    {"id": "cand-5", "status": "pending"}
+  ],
+  "summary": {"completed": 2, "failed": 0, "pending": 3}
+}
+```
+
+### 恢复流程
+
+```
+模式 1 批次执行中发生中断（P0 错误 / Chrome 关闭 / 用户取消）:
+  1. 保存当前进度到 batch-progress 文件
+  2. 展示中断信息: "已处理 2/5，剩余 3 个"
+
+用户重新执行 /platform-match --candidates batch:<batch-id>:
+  1. 检查是否存在未完成的 batch-progress 文件
+  2. 如存在 → 提示: "发现未完成的批次（2/5 已完成），是否从断点继续？"
+  3. 用户确认 → 跳过已完成的，从 in_progress/pending 继续
+  4. 用户拒绝 → 从头开始
+```
