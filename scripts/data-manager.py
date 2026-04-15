@@ -793,7 +793,7 @@ def build_parser():
 
     cand_sub.add_parser("dedup", help="查找重复候选人")
 
-    cand_sub.add_parser("dedup-auto", help="自动检测重复候选人并输出合并建议")
+    cand_sub.add_parser("dedup-auto", help="按 name + current_company 查找重复候选人")
 
     cand_dedup_merge = cand_sub.add_parser("dedup-merge", help="合并两个候选人为同一自然人")
     cand_dedup_merge.add_argument("primary_id", help="主候选人 ID（保留）")

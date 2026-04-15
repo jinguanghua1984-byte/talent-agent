@@ -116,6 +116,14 @@ async def _do_search(
 
                 if result.has_more and page_num < pages:
                     page_check = check_search(platform, headless)
+                    if not page_check["allowed"]:
+                        return {
+                            "status": "error",
+                            "code": "RATE_LIMITED",
+                            "message": f"页间限流: {page_check['reason']}",
+                            "retryable": page_check["reason"] != "daily_limit",
+                            "wait_seconds": page_check.get("wait_seconds", 0),
+                        }
                     page_delay = page_check.get("delay_seconds", 2)
                     await asyncio.sleep(max(page_delay, 2))
                     record_page(platform, headless)

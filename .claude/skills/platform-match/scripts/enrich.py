@@ -131,10 +131,14 @@ def enrich_enrichment_level(existing: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def _get_data_manager_path() -> str:
-    return os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "scripts", "data-manager.py",
+    # enrich.py 位于 .claude/skills/platform-match/scripts/enrich.py
+    # data-manager.py 位于项目根目录 scripts/data-manager.py
+    project_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))
+        )))
     )
+    return os.path.join(project_root, "scripts", "data-manager.py")
 
 
 def _run_data_manager(*args: str) -> dict:
@@ -147,7 +151,11 @@ def _run_data_manager(*args: str) -> dict:
         [sys.executable, dm_path, *args],
         capture_output=True,
         text=True,
-        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        cwd=os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.dirname(os.path.abspath(__file__))
+            )))
+        ),
     )
 
     if result.returncode != 0:

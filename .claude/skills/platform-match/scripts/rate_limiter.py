@@ -87,46 +87,43 @@ class PlatformState:
 
 
 # ---------------------------------------------------------------------------
-# 文件锁（跨平台）
+# 文件锁（跨平台，上下文管理器）
 # ---------------------------------------------------------------------------
 
-_lock_file = None
+from contextlib import contextmanager
 
 
-def _acquire_lock(filepath: str) -> bool:
-    """尝试获取文件锁。"""
-    global _lock_file
+@contextmanager
+def _file_lock(filepath: str):
+    """跨平台文件锁上下文管理器。"""
+    lock_path = filepath + ".lock"
+    lock_fd = None
     try:
+        lock_fd = open(lock_path, "w")
         if sys.platform == "win32":
             import msvcrt
-            _lock_file = open(filepath + ".lock", "w")
-            msvcrt.locking(_lock_file.fileno(), msvcrt.LK_NBLCK, 1)
-            return True
+            msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
         else:
             import fcntl
-            _lock_file = open(filepath + ".lock", "w")
-            fcntl.flock(_lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return True
+            fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
     except (IOError, OSError):
-        return False
-
-
-def _release_lock() -> None:
-    """释放文件锁。"""
-    global _lock_file
-    try:
-        if _lock_file is None:
-            return
-        if sys.platform == "win32":
-            import msvcrt
-            msvcrt.locking(_lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(_lock_file.fileno(), fcntl.LOCK_UN)
-        _lock_file.close()
-        _lock_file = None
-    except Exception:
-        pass
+        yield  # 锁获取失败，静默继续
+    finally:
+        if lock_fd:
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+                    msvcrt.locking(lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                lock_fd.close()
+            except Exception:
+                try:
+                    lock_fd.close()
+                except Exception:
+                    pass
 
 
 # ---------------------------------------------------------------------------
@@ -204,8 +201,7 @@ def check_search(platform: str, headless: bool = False) -> dict:
     hard = HardLimits()
     elastic = DEFAULT_LIMITS.get(platform, ElasticConfig())
 
-    if headless:
-        hl = HeadlessLimits()
+    hl = HeadlessLimits()
 
     # 检查熔断
     if ps.circuit.is_open:
@@ -285,9 +281,7 @@ def check_search(platform: str, headless: bool = False) -> dict:
 
 def record_search(platform: str, headless: bool = False) -> None:
     """记录一次搜索操作。"""
-    if not _acquire_lock(STATE_FILE):
-        return
-    try:
+    with _file_lock(STATE_FILE):
         ps = _get_platform_state(platform, headless)
         now = time.time()
         today = time.strftime("%Y-%m-%d")
@@ -303,15 +297,11 @@ def record_search(platform: str, headless: bool = False) -> None:
             circuit=CircuitState(),
         )
         _save_platform_state(platform, ps, headless)
-    finally:
-        _release_lock()
 
 
 def record_page(platform: str, headless: bool = False) -> None:
     """记录一次翻页操作。"""
-    if not _acquire_lock(STATE_FILE):
-        return
-    try:
+    with _file_lock(STATE_FILE):
         ps = _get_platform_state(platform, headless)
         ps = PlatformState(
             last_search_at=ps.last_search_at,
@@ -324,15 +314,11 @@ def record_page(platform: str, headless: bool = False) -> None:
             circuit=ps.circuit,
         )
         _save_platform_state(platform, ps, headless)
-    finally:
-        _release_lock()
 
 
 def trigger_circuit_break(platform: str, reason: str, headless: bool = False) -> None:
     """触发熔断。"""
-    if not _acquire_lock(STATE_FILE):
-        return
-    try:
+    with _file_lock(STATE_FILE):
         ps = _get_platform_state(platform, headless)
         ps = PlatformState(
             last_search_at=ps.last_search_at,
@@ -350,8 +336,6 @@ def trigger_circuit_break(platform: str, reason: str, headless: bool = False) ->
             ),
         )
         _save_platform_state(platform, ps, headless)
-    finally:
-        _release_lock()
 
 
 # ---------------------------------------------------------------------------
@@ -382,15 +366,10 @@ def cmd_tick(args):
 
 
 def cmd_reset(args):
-    if not _acquire_lock(STATE_FILE):
-        print("错误: 无法获取文件锁", file=sys.stderr)
-        return 1
-    try:
+    with _file_lock(STATE_FILE):
         _save_state({})
         print(json.dumps({"status": "ok", "message": "已重置所有限流状态"}, ensure_ascii=False, indent=2))
         return 0
-    finally:
-        _release_lock()
 
 
 def build_parser() -> argparse.ArgumentParser:
