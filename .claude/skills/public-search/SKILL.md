@@ -284,6 +284,65 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 4. 多渠道发现的同一候选人合并 sources 而非重复创建
 5. 去重逻辑复用 `python scripts/data-manager.py candidate dedup` 现有命令
 
+### 批次记录
+
+每轮搜索结束时，自动创建批次文件。
+
+#### 批次文件格式
+
+存储路径: `data/batches/public-search-<date>-<seq>.json`
+
+```json
+{
+  "id": "public-search-20260415-1",
+  "created_at": "2026-04-15T08:30:00",
+  "jd_id": "jd-20260415-alibaba-aigc-pm",
+  "strategy_file": "data/search-strategies/instances/2026-04-15-aigc-pm.md",
+  "round": 1,
+  "query_summary": "AI产品经理 AIGC 互联网",
+  "candidates": [
+    {
+      "id": "cand-1",
+      "name": "张三",
+      "company": "阿里巴巴",
+      "title": "产品经理",
+      "score": 92,
+      "match_highlights": ["AIGC产品经验", "百万DAU"]
+    }
+  ],
+  "total": 2,
+  "metadata": {
+    "channels_used": ["LinkedIn", "Google"],
+    "keywords_used": ["AI产品经理", "AIGC"],
+    "token_cost": 30600
+  }
+}
+```
+
+#### 候选人初筛评分（pre_screen_score）
+
+搜索确认时，Claude 对每个候选人打初步匹配度（0-100）:
+
+| 维度 | 分值 | 说明 |
+|------|------|------|
+| 职位匹配度 | 0-30 | 当前职位与 JD 目标岗位的匹配 |
+| 技能重叠度 | 0-25 | 技能标签与 JD 要求的重叠 |
+| 行业经验 | 0-20 | 行业背景与 JD 的相关性 |
+| 公司背景 | 0-15 | 公司类型/规模与 JD 的匹配 |
+| 综合印象 | 0-10 | 基于公开信息的整体判断 |
+
+> 注: 此分数为 public-search 阶段的粗筛依据，与 screen skill 的详细人岗评估是不同层级。
+
+#### 写入流程
+
+1. 确定批次 ID: `public-search-YYYYMMDD-<seq>`（seq 从 1 递增）
+2. 为每个候选人打 pre_screen_score
+3. 写入批次文件到 `data/batches/`
+4. 可通过 data-manager 批次命令查询:
+   - `python scripts/data-manager.py batch list`
+   - `python scripts/data-manager.py batch get <batch-id>`
+   - `python scripts/data-manager.py batch candidates <batch-id> --filter "score>80"`
+
 ## 搜索反馈
 
 每轮搜索完成后，输出三层反馈结构。反馈数据全部来源于执行阶段记录的搜索量、候选人数、噪音数和 Token 消耗。
