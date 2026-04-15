@@ -34,3 +34,7 @@ data/rules/preferences.json
 data/token-tracker/*.jsonl
 *.pyc
 __pycache__/
+
+# Session data (cookies, rate limit state, batch progress)
+data/session/
+data/batches/
