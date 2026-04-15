@@ -1,4 +1,13 @@
-# platform-match Skill 全量重设计
+---
+id: FEAT-012
+title: 完善招聘平台匹配场景 platform-match
+category: FEAT
+status: pending
+created: 2026-04-15
+updated: 2026-04-15
+---
+
+# FEAT-012 | platform-match Skill 全量重设计
 
 **日期**: 2026-04-15
 **前置文档**: `docs/design-discussions/2026-04-13-platform-match-skill-redesign.md`
