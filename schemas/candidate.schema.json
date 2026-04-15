@@ -1,0 +1,243 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Candidate Schema",
+  "description": "Schema for validating candidate data",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for the candidate"
+    },
+    "name": {
+      "type": "string",
+      "description": "Candidate's full name"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Creation timestamp"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last update timestamp"
+    },
+    "gender": {
+      "type": "string",
+      "enum": ["男", "女", "其他", "未提及"],
+      "description": "Candidate's gender"
+    },
+    "age": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 120,
+      "description": "Candidate's age"
+    },
+    "work_years": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Years of work experience"
+    },
+    "education": {
+      "type": "string",
+      "enum": ["不限", "大专", "本科", "硕士", "博士"],
+      "description": "Candidate's education level"
+    },
+    "city": {
+      "type": "string",
+      "description": "Current city"
+    },
+    "current_company": {
+      "type": "string",
+      "description": "Current employer"
+    },
+    "current_title": {
+      "type": "string",
+      "description": "Current job title"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["在职-看机会", "在职-不看", "离职-求职中", "离职-不求职"],
+      "description": "Employment status"
+    },
+    "skill_tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Array of skill tags"
+    },
+    "expected_city": {
+      "oneOf": [
+        {
+          "type": "string",
+          "description": "Target city for job search (single city)"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Target cities for job search (multiple cities)"
+        }
+      ]
+    },
+    "expected_title": {
+      "type": "string",
+      "description": "Target job title"
+    },
+    "expected_salary": {
+      "type": "string",
+      "description": "Expected salary range"
+    },
+    "work_experience": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["period", "company", "title"],
+        "properties": {
+          "period": {
+            "type": "string",
+            "description": "Work period (e.g., '2020-01 - 2023-12')"
+          },
+          "company": {
+            "type": "string",
+            "description": "Company name"
+          },
+          "title": {
+            "type": "string",
+            "description": "Job title"
+          },
+          "description": {
+            "type": "string",
+            "description": "Job description/duties"
+          }
+        }
+      },
+      "description": "Array of work experience objects"
+    },
+    "education_experience": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["period", "school", "major"],
+        "properties": {
+          "period": {
+            "type": "string",
+            "description": "Education period (e.g., '2016-09 - 2020-06')"
+          },
+          "school": {
+            "type": "string",
+            "description": "School/institution name"
+          },
+          "major": {
+            "type": "string",
+            "description": "Major field of study"
+          },
+          "description": {
+            "type": "string",
+            "description": "Additional education details"
+          }
+        }
+      },
+      "description": "Array of education experience objects"
+    },
+    "active_state": {
+      "type": "string",
+      "description": "平台活跃状态（如 '今日活跃', '在线', '3天前活跃'）"
+    },
+    "project_experience": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "period"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "项目名称"
+          },
+          "period": {
+            "type": "string",
+            "description": "时间段（如 '2023-06 - 2024-12'）"
+          },
+          "role": {
+            "type": "string",
+            "description": "担任角色"
+          },
+          "description": {
+            "type": "string",
+            "description": "项目描述"
+          }
+        }
+      },
+      "description": "项目经历数组"
+    },
+    "enrichment_level": {
+      "type": "string",
+      "enum": ["raw", "partial", "enriched"],
+      "description": "Data enrichment level"
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["channel", "url", "found_at"],
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "来源平台标识（maimai, boss, public-search）"
+          },
+          "url": {
+            "type": "string",
+            "description": "来源 URL"
+          },
+          "found_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "发现时间（ISO 8601）"
+          },
+          "platform_id": {
+            "type": "string",
+            "description": "平台用户 ID（如脉脉 uid）"
+          },
+          "enrichment_level": {
+            "type": "string",
+            "enum": ["raw", "partial", "enriched"],
+            "description": "本次来源的丰富程度"
+          },
+          "match_confidence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "身份匹配置信度（0-100，仅候选丰富模式）"
+          },
+          "match_path": {
+            "type": "string",
+            "description": "匹配路径（A 或 B，仅候选丰富模式）"
+          },
+          "snapshot": {
+            "type": "object",
+            "properties": {
+              "company_at_source": {
+                "type": "string",
+                "description": "发现时的公司"
+              },
+              "position_at_source": {
+                "type": "string",
+                "description": "发现时的职位"
+              }
+            },
+            "description": "发现时的状态快照"
+          }
+        }
+      },
+      "description": "来源信息数组（只追加不覆盖）"
+    }
+  }
+}

@@ -1,0 +1,138 @@
+{
+  "cookies": [
+    {
+      "name": "HWWAFSESTIME",
+      "value": "1776055669976",
+      "domain": "www.maimai.cn",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "HWWAFSESID",
+      "value": "44b61735472009aef7",
+      "domain": "www.maimai.cn",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "HWWAFSESTIME",
+      "value": "1776055667423",
+      "domain": "maimai.cn",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "HWWAFSESID",
+      "value": "78fb6c4ba3522087cd",
+      "domain": "maimai.cn",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "seid",
+      "value": "s1776055670407",
+      "domain": ".maimai.cn",
+      "path": "/",
+      "expires": 1776142072.172266,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "guid",
+      "value": "Hh0EGxgTBBscGwQTE1YZGRkZGBgfVhwZBB0ZHwVDWEtMS3kKGgQaBBoEGxkbBU9HRVhCaQoDRUFJT20KT0FDRgoGZmd+YmECChwZBB0ZHwVeQ2FIT31PRlpaawoDHhxSChEeHERDfQoRGgQaGwp+ZApZXUVOREN9AgoaBB8FS0ZGQ1BFZw==",
+      "domain": ".maimai.cn",
+      "path": "/",
+      "expires": 1776487672.172286,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "csrftoken",
+      "value": "DOnTdahW-_6GP1gg8Q_O-AGOyIXjQTTBhJ6A",
+      "domain": "maimai.cn",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_buuid",
+      "value": "20be867dc9c04fd2949989923a9ca998",
+      "domain": "maimai.cn",
+      "path": "/",
+      "expires": 1776058264.172324,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "_buuid.sig",
+      "value": "klO_LpKUXPZ-n7B0Rqenge9126I",
+      "domain": "maimai.cn",
+      "path": "/",
+      "expires": 1776058264.172357,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "BAIDUID_BFESS",
+      "value": "69081BF66ACC5C16E414CFB8E2297101:FG=1",
+      "domain": ".baidu.com",
+      "path": "/",
+      "expires": 1807591672.802338,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "AGL_USER_ID",
+      "value": "4e7da407-f628-475f-a171-7d649e63647c",
+      "domain": ".maimai.cn",
+      "path": "/",
+      "expires": 1810615672.898709,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "session",
+      "value": "eyJzZWNyZXQiOiJBRE9RTTBmaWRCVjBZTFVpdElYeUtyMzkiLCJfZXhwaXJlIjoxNzc2MTQyMDcxODI0LCJfbWF4QWdlIjo4NjQwMDAwMH0=",
+      "domain": "maimai.cn",
+      "path": "/",
+      "expires": 1776142073.500115,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "session.sig",
+      "value": "wjVSak9uNJbbLcqggnwj0AAMdAM",
+      "domain": "maimai.cn",
+      "path": "/",
+      "expires": 1776142073.500182,
+      "httpOnly": false,
+      "secure": true,
+      "sameSite": "Lax"
+    }
+  ],
+  "localStorage": {
+    "MqVUQava": "0"
+  },
+  "saved_at": "2026-04-13T12:47:58.933130"
+}

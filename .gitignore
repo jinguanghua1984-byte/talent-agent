@@ -14,6 +14,27 @@ dist/
 docs/download/
 
 # TypeScript compiled output in skills
-adapters/claude-code/skills/**/*.js
-adapters/claude-code/skills/**/*.d.ts
-!adapters/claude-code/skills/**/references/**/*.js
+skills/**/*.js
+skills/**/*.d.ts
+!skills/**/references/**/*.js
+.claude/skills/**/*.js
+.claude/skills/**/*.d.ts
+!.claude/skills/**/references/**/*.js
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Talent agent specific - runtime instance data (keep templates and shared config)
+data/candidates/*.json
+data/jds/*.json
+data/screens/*.json
+data/search-strategies/instances/*.md
+data/output/*.md
+data/rules/preferences.json
+data/token-tracker/*.jsonl
+*.pyc
+__pycache__/
+
+# Session data (cookies, rate limit state, batch progress)
+data/session/
+data/batches/

@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Screening Result Schema",
+  "description": "Schema for validating screening results data",
+  "type": "object",
+  "required": [
+    "jd_id",
+    "candidate_id",
+    "score",
+    "status",
+    "created_at"
+  ],
+  "properties": {
+    "jd_id": {
+      "type": "string",
+      "description": "Reference to the job description"
+    },
+    "candidate_id": {
+      "type": "string",
+      "description": "Reference to the candidate"
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Screening score (0-100)"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["new", "screened", "reported", "passed", "rejected"],
+      "description": "Screening status"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Creation timestamp"
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Array of skill gaps identified"
+    },
+    "flags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Array of warning flags"
+    },
+    "user_adjustments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["field", "original", "adjusted", "reason"],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "Field that was adjusted"
+          },
+          "original": {
+            "description": "Original value",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "adjusted": {
+            "description": "Adjusted value",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "description": "Reason for adjustment"
+          }
+        }
+      },
+      "description": "Array of user-made adjustments"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last update timestamp"
+    }
+  }
+}
