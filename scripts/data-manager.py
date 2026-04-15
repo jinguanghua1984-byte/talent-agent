@@ -326,7 +326,7 @@ def cmd_candidate_merge(args):
     seen = set()
     unique_sources = []
     for src in sources:
-        key = (src.get("type", ""), src.get("url", ""))
+        key = (src.get("channel", ""), src.get("url", ""))
         if key not in seen:
             seen.add(key)
             unique_sources.append(src)
