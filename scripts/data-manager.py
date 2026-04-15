@@ -54,6 +54,7 @@ def get_data_dirs():
         "candidates": os.path.join(root, "data", "candidates"),
         "screens": os.path.join(root, "data", "screens"),
         "rules": os.path.join(root, "data", "rules"),
+        "batches": os.path.join(root, "data", "batches"),
     }
 
 # 有效枚举值
@@ -348,6 +349,77 @@ def cmd_candidate_merge(args):
     return 0
 
 
+def cmd_candidate_dedup_merge(args):
+    """合并两个候选人为同一自然人。
+
+    1. primary-id 存活，secondary-id 重命名为 .merged.json
+    2. sources[] 合并去重
+    3. 字段冲突按逐字段策略处理
+    4. enrichment_level 取两者中更高的
+    """
+    primary_id = args.primary_id
+    secondary_id = args.secondary_id
+
+    primary_path = os.path.join(get_data_dirs()["candidates"], f"{primary_id}.json")
+    secondary_path = os.path.join(get_data_dirs()["candidates"], f"{secondary_id}.json")
+
+    if not os.path.exists(primary_path):
+        print(f"错误: 主候选人不存在: {primary_id}", file=sys.stderr)
+        return 1
+    if not os.path.exists(secondary_path):
+        print(f"错误: 次候选人不存在: {secondary_id}", file=sys.stderr)
+        return 1
+
+    primary = read_json(primary_path)
+    secondary = read_json(secondary_path)
+
+    # 合并 sources（去重，按 channel+url）
+    all_sources = primary.get("sources", []) + secondary.get("sources", [])
+    seen = set()
+    unique_sources = []
+    for src in all_sources:
+        key = (src.get("channel", ""), src.get("url", ""))
+        if key not in seen:
+            seen.add(key)
+            unique_sources.append(src)
+
+    # enrichment_level 取最高
+    level_order = {"raw": 0, "partial": 1, "enriched": 2}
+    primary_level = level_order.get(primary.get("enrichment_level", "raw"), 0)
+    secondary_level = level_order.get(secondary.get("enrichment_level", "raw"), 0)
+    best_level = max(primary_level, secondary_level)
+    level_map = {0: "raw", 1: "partial", 2: "enriched"}
+
+    # 合并：secondary 的非空字段补充到 primary
+    merged = dict(primary)
+    for key, value in secondary.items():
+        if key in ("id", "created_at"):
+            continue
+        if key == "sources":
+            continue  # 已单独处理
+        if value and not merged.get(key):
+            merged[key] = value
+
+    merged["sources"] = unique_sources
+    merged["enrichment_level"] = level_map[best_level]
+    merged["updated_at"] = today_iso()
+
+    # 写入 primary
+    atomic_write_json(primary_path, merged)
+
+    # 重命名 secondary 为 .merged.json
+    merged_path = secondary_path.replace(".json", ".merged.json")
+    os.replace(secondary_path, merged_path)
+
+    print(json.dumps({
+        "primary_id": primary_id,
+        "secondary_id": secondary_id,
+        "merged_sources_count": len(unique_sources),
+        "enrichment_level": merged["enrichment_level"],
+    }, ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_candidate_dedup(args):
     """按 name + current_company 查找重复候选人。"""
     groups = defaultdict(list)
@@ -604,6 +676,74 @@ def cmd_validate(args):
 
 
 # ---------------------------------------------------------------------------
+# Batch 命令
+# ---------------------------------------------------------------------------
+
+def cmd_batch_list(args):
+    """列出所有搜索批次。"""
+    results = []
+    for fname in list_json_files(get_data_dirs()["batches"]):
+        filepath = os.path.join(get_data_dirs()["batches"], fname)
+        batch = read_json(filepath)
+        results.append({
+            "id": batch.get("id", ""),
+            "created_at": batch.get("created_at", ""),
+            "jd_id": batch.get("jd_id", ""),
+            "total": batch.get("total", 0),
+        })
+    print(json.dumps(results, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_batch_get(args):
+    """获取批次详情。"""
+    batch_path = os.path.join(get_data_dirs()["batches"], f"{args.id}.json")
+    if not os.path.exists(batch_path):
+        print(f"错误: 批次不存在: {args.id}", file=sys.stderr)
+        return 1
+    data = read_json(batch_path)
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_batch_candidates(args):
+    """从批次中筛选候选人。"""
+    batch_path = os.path.join(get_data_dirs()["batches"], f"{args.id}.json")
+    if not os.path.exists(batch_path):
+        print(f"错误: 批次不存在: {args.id}", file=sys.stderr)
+        return 1
+
+    batch = read_json(batch_path)
+    candidates = batch.get("candidates", [])
+
+    # 按 score 过滤
+    filter_expr = args.filter
+    if filter_expr:
+        try:
+            if ">" in filter_expr:
+                field, value = filter_expr.split(">", 1)
+                field = field.strip()
+                value = float(value.strip())
+                candidates = [c for c in candidates if c.get(field, 0) > value]
+            elif ">=" in filter_expr:
+                field, value = filter_expr.split(">=", 1)
+                field = field.strip()
+                value = float(value.strip())
+                candidates = [c for c in candidates if c.get(field, 0) >= value]
+            elif "<" in filter_expr:
+                field, value = filter_expr.split("<", 1)
+                field = field.strip()
+                value = float(value.strip())
+                candidates = [c for c in candidates if c.get(field, 0) < value]
+        except (ValueError, IndexError):
+            print(f"警告: 无法解析过滤表达式 '{filter_expr}'", file=sys.stderr)
+
+    result = [{"id": c.get("id", ""), "name": c.get("name", ""), "score": c.get("score", 0)} for c in candidates]
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # CLI 入口
 # ---------------------------------------------------------------------------
 
@@ -653,6 +793,12 @@ def build_parser():
 
     cand_sub.add_parser("dedup", help="查找重复候选人")
 
+    cand_sub.add_parser("dedup-auto", help="自动检测重复候选人并输出合并建议")
+
+    cand_dedup_merge = cand_sub.add_parser("dedup-merge", help="合并两个候选人为同一自然人")
+    cand_dedup_merge.add_argument("primary_id", help="主候选人 ID（保留）")
+    cand_dedup_merge.add_argument("secondary_id", help="次候选人 ID（合并后标记为 .merged）")
+
     # --- Screen ---
     screen_parser = subparsers.add_parser("screen", help="Screening 管理")
     screen_sub = screen_parser.add_subparsers(dest="action")
@@ -684,6 +830,19 @@ def build_parser():
     # --- Validate ---
     subparsers.add_parser("validate", help="验证所有数据文件")
 
+    # --- Batch ---
+    batch_parser = subparsers.add_parser("batch", help="搜索批次管理")
+    batch_sub = batch_parser.add_subparsers(dest="action")
+
+    batch_sub.add_parser("list", help="列出所有搜索批次")
+
+    batch_get = batch_sub.add_parser("get", help="获取批次详情")
+    batch_get.add_argument("id", help="批次 ID")
+
+    batch_cands = batch_sub.add_parser("candidates", help="从批次中筛选候选人")
+    batch_cands.add_argument("id", help="批次 ID")
+    batch_cands.add_argument("--filter", default=None, help="过滤表达式（如 score>80）")
+
     return parser
 
 
@@ -710,6 +869,8 @@ def main():
             "update": cmd_candidate_update,
             "merge": cmd_candidate_merge,
             "dedup": cmd_candidate_dedup,
+            "dedup-auto": cmd_candidate_dedup,
+            "dedup-merge": cmd_candidate_dedup_merge,
         }.get(args.action)
     elif args.command == "screen":
         handler = {
@@ -724,6 +885,12 @@ def main():
         }.get(args.action)
     elif args.command == "validate":
         handler = cmd_validate
+    elif args.command == "batch":
+        handler = {
+            "list": cmd_batch_list,
+            "get": cmd_batch_get,
+            "candidates": cmd_batch_candidates,
+        }.get(args.action)
     else:
         handler = None
 
