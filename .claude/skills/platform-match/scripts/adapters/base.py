@@ -14,6 +14,8 @@ class SearchParams:
     """搜索参数。"""
     query: str
     city: str | None = None
+    education: str | None = None
+    work_years: str | None = None
     page: int = 1
     page_size: int = 30
 
