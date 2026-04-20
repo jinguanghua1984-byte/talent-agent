@@ -1,9 +1,10 @@
 """boss.py — Boss 直聘平台适配器
 
-通过 Playwright 拦截 Boss 直聘搜索 API 请求获取候选人数据。
-采用 API 拦截模式（page.evaluate(fetch)）在已登录浏览器上下文中调用。
+通过被动拦截浏览器网络请求获取候选人数据。
+使用 response listener 在用户手动搜索时捕获 API 响应，
+避免 page.evaluate(fetch) 触发反爬检测。
 
-注意：API 端点和字段映射为预估，需根据阶段 1 调研结果校准。
+API 调研完成于 2026-04-20，端点和字段映射已校准。
 """
 
 from __future__ import annotations
@@ -25,15 +26,20 @@ from .base import (
 
 
 # ---------------------------------------------------------------------------
-# Boss 直聘搜索 API 配置（待调研校准）
+# Boss 直聘搜索 API 配置（已校准）
 # ---------------------------------------------------------------------------
 
-SEARCH_API_URL = "https://www.zhipin.com/wapi/zpgeek/search/candidate.json"
-DETAIL_API_URL = "https://www.zhipin.com/wapi/zpgeek/card/"
+SEARCH_API_URL = (
+    "https://www.zhipin.com/wapi/zpitem/web/boss/search/geeks.json"
+)
+# 候选人详情端点（需 securityId）
+DETAIL_API_URL = (
+    "https://www.zhipin.com/wapi/zpitem/web/boss/search/geeks.json"
+)
 
 
 # ---------------------------------------------------------------------------
-# 学历枚举映射（待调研校准）
+# 学历枚举映射（已校准）
 # ---------------------------------------------------------------------------
 
 EDUCATION_MAP: dict[str, str] = {
@@ -45,15 +51,25 @@ EDUCATION_MAP: dict[str, str] = {
     "EMBA": "硕士",
 }
 
+GENDER_MAP: dict[int, str] = {1: "男", 2: "女"}
+
 
 def _parse_work_years(raw: str | int | None) -> int:
-    """从工作年限字符串/数字提取年数。"""
+    """从 '4年' 提取年数。"""
     if raw is None:
         return 0
     if isinstance(raw, int):
         return raw
     match = re.search(r"(\d+)", str(raw))
     return int(match.group(1)) if match else 0
+
+
+def _parse_age(raw: str | None) -> int | None:
+    """从 '27岁' 提取年龄。"""
+    if not raw:
+        return None
+    match = re.search(r"(\d+)", str(raw))
+    return int(match.group(1)) if match else None
 
 
 def _normalize_period(raw: str) -> str:
@@ -65,11 +81,42 @@ def _normalize_period(raw: str) -> str:
     if len(parts) == 2:
         start = parts[0].rstrip("-").rstrip(".")
         return f"{start} - 至今"
-    # 尝试匹配 YYYY-MM-YYYY-MM 格式
     match = re.match(r"^(\d{4}-\d{2})-(\d{4}-\d{2})$", raw)
     if match:
         return f"{match.group(1)} - {match.group(2)}"
     return raw
+
+
+def _parse_geek_work(geek_work: dict | None) -> tuple[str, str]:
+    """从 geekWork.name 解析公司和职位。
+
+    geekWork.name 格式: "公司名·部门·职位名" 或 "公司名·职位名"
+    """
+    if not geek_work or not geek_work.get("name"):
+        return "", ""
+    name = geek_work["name"]
+    parts = name.split("·")
+    if len(parts) >= 3:
+        return parts[0], parts[-1]
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return name, ""
+
+
+def _parse_geek_edu(geek_edu: dict | None) -> tuple[str, str]:
+    """从 geekEdu.name 解析学校和专业。
+
+    geekEdu.name 格式: "国家·学校名·专业名"
+    """
+    if not geek_edu or not geek_edu.get("name"):
+        return "", ""
+    name = geek_edu["name"]
+    parts = name.split("·")
+    if len(parts) >= 3:
+        return parts[1], parts[2]
+    if len(parts) == 2:
+        return parts[0], parts[1]
+    return name, ""
 
 
 class BossAdapter:
@@ -133,16 +180,26 @@ class BossAdapter:
     def map_to_schema(self, api_data: dict) -> dict:
         """将 Boss 直聘 API 数据映射为 candidate.schema 格式。
 
-        字段映射基于预估，需根据阶段 1 调研结果校准。
+        接收 geekCard 层级的数据（API 返回的 geeks[].geekCard）。
+        字段映射基于 2026-04-20 实际 API 响应校准。
         """
         result: dict[str, Any] = {}
 
         result["name"] = api_data.get("name", "")
-        result["city"] = api_data.get("cityName", "")
-        result["current_company"] = api_data.get("brandName", "")
-        result["current_title"] = api_data.get("jobName", "")
+        result["city"] = api_data.get("city", "")
 
-        degree = api_data.get("degree")
+        gender = api_data.get("gender")
+        if gender and gender in GENDER_MAP:
+            result["gender"] = GENDER_MAP[gender]
+
+        # 当前公司和职位: geekWork.name = "公司·部门·职位"
+        company, title = _parse_geek_work(api_data.get("geekWork"))
+        if company:
+            result["current_company"] = company
+        if title:
+            result["current_title"] = title
+
+        degree = api_data.get("highestDegreeName")
         if degree:
             result["education"] = EDUCATION_MAP.get(degree, degree)
 
@@ -150,47 +207,63 @@ class BossAdapter:
         if work_year is not None:
             result["work_years"] = _parse_work_years(work_year)
 
-        gold_hunter = api_data.get("goldHunter")
-        if gold_hunter is not None:
-            result["status"] = "在职-看机会" if gold_hunter else "在职-不看"
+        age = _parse_age(api_data.get("ageDesc"))
+        if age is not None:
+            result["age"] = age
 
-        skills = api_data.get("skills", [])
-        if skills:
-            result["skill_tags"] = sorted(set(s for s in skills if s))
+        active_desc = api_data.get("activeDesc")
+        if active_desc:
+            result["active_state"] = active_desc
 
-        experiences = api_data.get("experienceList", [])
-        if experiences:
-            result["work_experience"] = [
-                {
-                    "period": _normalize_period(exp.get("period", "")),
-                    "company": exp.get("company", ""),
-                    "title": exp.get("job", ""),
-                    "description": exp.get("description", ""),
-                }
-                for exp in experiences
-                if exp.get("company") or exp.get("job")
-            ]
+        salary = api_data.get("salary")
+        if salary:
+            result["expected_salary"] = salary
 
-        educations = api_data.get("educationList", [])
-        if educations:
-            result["education_experience"] = [
-                {
-                    "period": _normalize_period(edu.get("period", "")),
-                    "school": edu.get("school", ""),
-                    "major": edu.get("major", ""),
-                    "description": edu.get("degree", ""),
-                }
-                for edu in educations
-                if edu.get("school") or edu.get("major")
-            ]
+        # 技能标签: labelMatchList[].markWord
+        label_list = api_data.get("labelMatchList") or []
+        skill_tags = [item["markWord"] for item in label_list if item.get("markWord")]
+        if skill_tags:
+            result["skill_tags"] = skill_tags
 
-        encrypt_id = api_data.get("encryptUserName", "")
+        # 工作经历: workList[].name = "公司·职位", workList[].dateRange
+        work_list = api_data.get("workList") or []
+        if work_list:
+            experiences = []
+            for w in work_list:
+                w_name = w.get("name", "")
+                w_parts = w_name.split("·")
+                w_company = w_parts[0] if len(w_parts) >= 2 else w_name
+                w_title = w_parts[-1] if len(w_parts) >= 2 else ""
+                date_range = _normalize_period(w.get("dateRange", ""))
+                if w_company or w_title:
+                    experiences.append({
+                        "period": date_range,
+                        "company": w_company,
+                        "title": w_title,
+                        "description": "",
+                    })
+            if experiences:
+                result["work_experience"] = experiences
+
+        # 教育经历: geekEdu.name = "国家·学校·专业"
+        geek_edu = api_data.get("geekEdu")
+        school, major = _parse_geek_edu(geek_edu)
+        if school or major:
+            result["education_experience"] = [{
+                "period": "",
+                "school": school,
+                "major": major,
+                "description": "",
+            }]
+
+        encrypt_id = api_data.get("encryptGeekId", "")
+        security_id = api_data.get("securityId", "")
         if encrypt_id:
             result["_source"] = {
                 "channel": "boss",
-                "url": f"https://www.zhipin.com/web/chat/search?query={encrypt_id}",
                 "platform_id": encrypt_id,
-                "enrichment_level": "enriched",
+                "security_id": security_id,
+                "url": f"https://www.zhipin.com/web/geek/{encrypt_id}",
             }
 
         return result
@@ -202,20 +275,22 @@ class BossAdapter:
     ) -> SearchResult:
         """通过 API 拦截执行搜索。
 
-        请求方式为预估，需根据阶段 1 调研结果校准（GET/POST、参数名等）。
+        注意: Boss 直聘会检测 page.evaluate(fetch)，导致强制登出。
+        应使用被动拦截方式（ctx.on('response')）获取数据，
+        此方法保留用于手动测试场景。
         """
         try:
             import urllib.parse
 
             query_params: dict[str, Any] = {
-                "query": params.query,
+                "keywords": params.query,
                 "page": params.page,
                 "pageSize": params.page_size,
             }
             if params.city:
                 query_params["city"] = params.city
             if params.education:
-                query_params["education"] = params.education
+                query_params["degree"] = params.education
             if params.work_years:
                 query_params["workYear"] = params.work_years
 
@@ -247,9 +322,16 @@ class BossAdapter:
             body = json.loads(response["body"])
 
             data = body.get("zpData", {})
-            items = data.get("hitHitList", []) or []
+            geeks = data.get("geeks", []) or []
+            # 提取每个 geek 的 geekCard
+            items = []
+            for g in geeks:
+                card = g.get("geekCard")
+                if card:
+                    items.append(card)
+
             total = data.get("totalCount", len(items))
-            has_more = params.page * params.page_size < total
+            has_more = data.get("hasMore", False)
 
             return SearchResult(
                 items=items,
@@ -309,7 +391,7 @@ class BossAdapter:
             return CandidateData(
                 raw=data,
                 platform_id=platform_id,
-                detail_url=f"https://www.zhipin.com/web/geek/card?securityId={platform_id}",
+                detail_url=f"https://www.zhipin.com/web/geek/{platform_id}",
             )
         except Exception:
             logger.error(
