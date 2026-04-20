@@ -177,9 +177,16 @@ def _run_data_manager(*args: str) -> dict:
 
 def cmd_map(args):
     """将 API 数据映射为 schema 格式。"""
-    from adapters.maimai import MaimaiAdapter
+    from adapters import ADAPTERS
 
-    adapter = MaimaiAdapter()
+    adapter = ADAPTERS.get(args.platform)
+    if not adapter:
+        print(json.dumps({
+            "status": "error",
+            "code": "UNKNOWN_PLATFORM",
+            "message": f"不支持的平台: {args.platform}",
+        }, ensure_ascii=False, indent=2))
+        return 1
 
     try:
         api_data = json.loads(args.api_data)

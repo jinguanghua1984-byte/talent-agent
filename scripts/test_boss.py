@@ -61,5 +61,36 @@ class TestAdapterRegistry(unittest.TestCase):
         self.assertEqual(adapter.platform_name, "maimai")
 
 
+class TestEnrichDynamicRouting(unittest.TestCase):
+    """enrich.py 动态路由测试。"""
+
+    def test_cmd_map_looks_up_adapters_registry(self):
+        """cmd_map 应通过 ADAPTERS 注册表查找适配器。"""
+        from unittest.mock import patch, MagicMock
+        from adapters import ADAPTERS
+
+        mock_adapter = MagicMock()
+        mock_adapter.map_to_schema.return_value = {"name": "mocked"}
+
+        with patch.dict(ADAPTERS, {"maimai": mock_adapter}):
+            from enrich import cmd_map
+            args = type("Args", (), {
+                "platform": "maimai",
+                "api_data": '{"name": "测试"}',
+            })()
+            cmd_map(args)
+            mock_adapter.map_to_schema.assert_called_once_with({"name": "测试"})
+
+    def test_cmd_map_unknown_platform(self):
+        """不支持的 platform 应返回错误。"""
+        from enrich import cmd_map
+        args = type("Args", (), {
+            "platform": "unknown_platform",
+            "api_data": '{"name": "测试"}',
+        })()
+        result = cmd_map(args)
+        self.assertEqual(result, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
