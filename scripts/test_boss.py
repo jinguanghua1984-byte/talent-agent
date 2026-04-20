@@ -92,5 +92,23 @@ class TestEnrichDynamicRouting(unittest.TestCase):
         self.assertEqual(result, 1)
 
 
+class TestBossInfrastructureRegistration(unittest.TestCase):
+    """Boss 渠道基础设施注册测试。"""
+
+    def test_session_verify_url_registered(self):
+        """session.py 应注册 boss 平台验证 URL。"""
+        from session import PLATFORM_VERIFY_URLS
+        self.assertIn("boss", PLATFORM_VERIFY_URLS)
+        self.assertEqual(PLATFORM_VERIFY_URLS["boss"], "https://www.zhipin.com/")
+
+    def test_rate_limiter_default_limits_registered(self):
+        """rate_limiter.py 应注册 boss 默认配额。"""
+        from rate_limiter import DEFAULT_LIMITS
+        self.assertIn("boss", DEFAULT_LIMITS)
+        boss_config = DEFAULT_LIMITS["boss"]
+        self.assertEqual(boss_config.batch_max, 20)
+        self.assertEqual(boss_config.daily_max, 150)
+
+
 if __name__ == "__main__":
     unittest.main()
