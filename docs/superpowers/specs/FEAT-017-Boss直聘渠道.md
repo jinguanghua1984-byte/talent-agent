@@ -1,5 +1,5 @@
 ---
-id: FEAT-013
+id: FEAT-017
 title: platform-match 新增 Boss 直聘渠道
 category: FEAT
 status: pending
@@ -7,7 +7,7 @@ created: 2026-04-20
 updated: 2026-04-20
 ---
 
-# FEAT-013 | platform-match 新增 Boss 直聘渠道
+# FEAT-017 | platform-match 新增 Boss 直聘渠道
 
 **日期**: 2026-04-20
 **前置文档**: `docs/superpowers/specs/2026-04-15-platform-match-redesign-design.md` (FEAT-012)
