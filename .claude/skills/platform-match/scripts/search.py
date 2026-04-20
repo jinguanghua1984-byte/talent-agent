@@ -23,17 +23,13 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from adapters.base import SearchParams, SearchResult  # noqa: E402
-from adapters.maimai import MaimaiAdapter  # noqa: E402
+from adapters import ADAPTERS  # noqa: E402
 from rate_limiter import check_search, record_search, record_page, trigger_circuit_break  # noqa: E402
 
 
 DEFAULT_CDP_URL = "http://localhost:9222"
 DEFAULT_PAGES = 3
 DEFAULT_PAGE_SIZE = 30
-
-ADAPTERS = {
-    "maimai": MaimaiAdapter(),
-}
 
 
 async def _do_search(

@@ -45,5 +45,21 @@ class TestSearchParamsExtended(unittest.TestCase):
             params.query = "修改"
 
 
+class TestAdapterRegistry(unittest.TestCase):
+    """适配器注册表测试。"""
+
+    def test_adapters_in_init(self):
+        """ADAPTERS 应在 adapters/__init__.py 中定义。"""
+        from adapters import ADAPTERS
+        self.assertIsInstance(ADAPTERS, dict)
+        self.assertIn("maimai", ADAPTERS)
+
+    def test_maimai_adapter_registered(self):
+        """脉脉适配器应已注册。"""
+        from adapters import ADAPTERS
+        adapter = ADAPTERS["maimai"]
+        self.assertEqual(adapter.platform_name, "maimai")
+
+
 if __name__ == "__main__":
     unittest.main()
