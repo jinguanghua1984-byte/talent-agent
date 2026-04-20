@@ -71,13 +71,40 @@ ADAPTERS = {
 | 文件 | 改动类型 | 改动量 | 说明 |
 |------|---------|--------|------|
 | `adapters/boss.py` | 新增 | ~200行 | Boss 直聘适配器主体 |
-| `search.py` | 注册 | 1行 | `ADAPTERS["boss"] = BossAdapter()` |
+| `adapters/__init__.py` | 注册 | 3行 | 定义共享 `ADAPTERS` 字典，避免 search.py 和 enrich.py 循环依赖 |
+| `search.py` | 注册 | 2行 | 新增 `from adapters.boss import BossAdapter` + `ADAPTERS["boss"]` |
 | `session.py` | 注册 | 1行 | `PLATFORM_VERIFY_URLS` 新增 `"boss": "https://www.zhipin.com/"` |
-| `enrich.py` | 路由 | 3行 | `cmd_map` 改为从 `ADAPTERS` 注册表按 `--platform` 动态选择适配器 |
+| `enrich.py` | 路由 | 3行 | `cmd_map` 改为从 `adapters.ADAPTERS` 注册表按 `--platform` 动态选择适配器 |
 | `rate_limiter.py` | 注册 | 2行 | `DEFAULT_LIMITS` 新增 `"boss": ElasticConfig(batch_max=20, daily_max=150)` |
-| `base.py` | 不变 | 0行 | 协议定义不变 |
+| `base.py` | 扩展 | 2行 | `SearchParams` 新增 `education: str \| None = None`, `work_years: str \| None = None`（可选字段，不影响现有适配器） |
 | `batch_progress.py` | 不变 | 0行 | 按 platform 字段区分 |
 | `maimai.py` | 不变 | 0行 | 脉脉适配器不受影响 |
+
+**适配器注册表设计**：将 `ADAPTERS` 字典从 `search.py` 移至 `adapters/__init__.py`，`search.py` 和 `enrich.py` 均从此处导入，避免循环依赖：
+
+```python
+# adapters/__init__.py
+from adapters.maimai import MaimaiAdapter
+from adapters.boss import BossAdapter
+
+ADAPTERS = {
+    "maimai": MaimaiAdapter(),
+    "boss": BossAdapter(),
+}
+```
+
+**SearchParams 扩展**：新增两个可选字段，默认值 `None`，现有适配器无需修改：
+
+```python
+@dataclass(frozen=True)
+class SearchParams:
+    query: str
+    city: str | None = None
+    education: str | None = None  # 新增
+    work_years: str | None = None  # 新增
+    page: int = 1
+    page_size: int = 30
+```
 
 ---
 
