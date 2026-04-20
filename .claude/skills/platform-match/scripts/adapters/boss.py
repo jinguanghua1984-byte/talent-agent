@@ -65,11 +65,10 @@ def _normalize_period(raw: str) -> str:
     if len(parts) == 2:
         start = parts[0].rstrip("-").rstrip(".")
         return f"{start} - 至今"
-    parts = raw.split("-")
-    if len(parts) == 2 and len(parts[0]) >= 6:
-        start = parts[0].rstrip("-").rstrip(".")
-        end = parts[1].rstrip("-").rstrip(".")
-        return f"{start} - {end}"
+    # 尝试匹配 YYYY-MM-YYYY-MM 格式
+    match = re.match(r"^(\d{4}-\d{2})-(\d{4}-\d{2})$", raw)
+    if match:
+        return f"{match.group(1)} - {match.group(2)}"
     return raw
 
 
