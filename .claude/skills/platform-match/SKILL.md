@@ -85,15 +85,16 @@ FOR EACH candidate:
     - 路径 A: query = "{name} {current_company}"
     - 路径 B: query = "{name} {current_title}"（路径 A 无结果时降级）
 
+    平台中文名映射: maimai→脉脉, boss→Boss直聘
   2.2 检查 platform_id 是否已关联
-    - 在 candidates sources[] 中查找 channel="maimai" 的记录
-    - 已关联（同记录）→ 跳过搜索，提示"已有脉脉数据"
+    - 在 candidates sources[] 中查找 channel="<platform>" 的记录
+    - 已关联（同记录）→ 跳过搜索，提示"已有{平台中文名}数据"
     - 已关联（其他记录）→ 提示可能重复，建议去重
     - 未关联 → 执行搜索
 
   2.3 调用搜索
     ```bash
-    python scripts/search.py search --platform maimai --query "<query>" --pages 1
+    python scripts/search.py search --platform <platform> --query "<query>" --pages 1
     ```
     - 解析 JSON 输出
     - 0 结果 → 标记"平台未收录"
@@ -122,7 +123,7 @@ FOR EACH candidate:
   2.6 丰富写入
     ```bash
     # 映射 API 数据
-    python scripts/enrich.py map --platform maimai --api-data '<json>'
+    python scripts/enrich.py map --platform <platform> --api-data '<json>'
     # 写入候选人
     python scripts/enrich.py merge --candidate-id <id> --new-data <tmp-file>
     ```
@@ -131,7 +132,7 @@ FOR EACH candidate:
 
   2.7 速率检查
     ```bash
-    python scripts/rate_limiter.py tick --platform maimai [--headless]
+    python scripts/rate_limiter.py tick --platform <platform> [--headless]
     ```
     - 如果 allowed=false → 等待 wait_seconds → 继续
 
