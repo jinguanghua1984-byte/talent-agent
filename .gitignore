@@ -39,6 +39,9 @@ __pycache__/
 data/session/
 data/batches/
 
+# Boss 搜索原始结果（含敏感个人信息）
+data/boss-search/
+
 # API capture data (debug only, not for version control)
 data/boss-api-capture.json
 data/boss-captured-requests.json
