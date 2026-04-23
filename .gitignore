@@ -38,3 +38,8 @@ __pycache__/
 # Session data (cookies, rate limit state, batch progress)
 data/session/
 data/batches/
+
+# API capture data (debug only, not for version control)
+data/boss-api-capture.json
+data/boss-captured-requests.json
+data/boss-search-response.json
