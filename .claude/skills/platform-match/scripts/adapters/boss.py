@@ -192,12 +192,16 @@ class BossAdapter:
         if gender and gender in GENDER_MAP:
             result["gender"] = GENDER_MAP[gender]
 
-        # 当前公司和职位: geekWork.name = "公司·部门·职位"
-        company, title = _parse_geek_work(api_data.get("geekWork"))
-        if company:
-            result["current_company"] = company
-        if title:
-            result["current_title"] = title
+        # 当前职位: geekWork.name（列表页公司名与职位混合，无法分离）
+        geek_work_name = api_data.get("geekWork", {}).get("name", "")
+        if geek_work_name:
+            company, title = _parse_geek_work(api_data.get("geekWork"))
+            if company:
+                result["current_company"] = company
+            if title:
+                result["current_title"] = title
+            elif not company:
+                result["current_title"] = geek_work_name
 
         degree = api_data.get("highestDegreeName")
         if degree:
@@ -225,15 +229,17 @@ class BossAdapter:
         if skill_tags:
             result["skill_tags"] = skill_tags
 
-        # 工作经历: workList[].name = "公司·职位", workList[].dateRange
+        # 工作经历: workList[].name（公司名与职位混合）, workList[].dateRange
         work_list = api_data.get("workList") or []
         if work_list:
             experiences = []
             for w in work_list:
                 w_name = w.get("name", "")
                 w_parts = w_name.split("·")
-                w_company = w_parts[0] if len(w_parts) >= 2 else w_name
-                w_title = w_parts[-1] if len(w_parts) >= 2 else ""
+                if len(w_parts) >= 2:
+                    w_company, w_title = w_parts[0], w_parts[-1]
+                else:
+                    w_company, w_title = "", w_name
                 date_range = _normalize_period(w.get("dateRange", ""))
                 if w_company or w_title:
                     experiences.append({
@@ -273,57 +279,114 @@ class BossAdapter:
         page: Any,
         params: SearchParams,
     ) -> SearchResult:
-        """通过 API 拦截执行搜索。
+        """通过被动网络拦截执行搜索。
 
-        注意: Boss 直聘会检测 page.evaluate(fetch)，导致强制登出。
-        应使用被动拦截方式（ctx.on('response')）获取数据，
-        此方法保留用于手动测试场景。
+        在搜索页 iframe 中填入关键词并点击搜索图标，
+        通过 page.on('response') 拦截 geeks.json API 响应。
+        使用 Playwright response.json() 读取 body，避免 page.evaluate(fetch) 触发反爬。
+
+        前提: page 必须是已有登录页面（复用 context.pages[0]），
+        且当前已处于 Boss 直聘人才搜索页。
         """
+        import asyncio
+        import urllib.parse
+
+        intercepted_response: Any = None
+        target_page_num = str(params.page)
+
+        def on_response(response: Any) -> None:
+            nonlocal intercepted_response
+            url = response.url
+            if "t.zhipin.com" in url:
+                return
+            if "geeks.json" in url:
+                logger.info("Boss search: intercepted geeks.json: %s", url[:150])
+            if "geeks.json" not in url:
+                return
+            resp_params = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            if resp_params.get("page", ["1"])[0] != target_page_num:
+                return
+            if "keywords" not in resp_params:
+                return
+            if urllib.parse.unquote_plus(resp_params["keywords"][0]) != params.query:
+                return
+            intercepted_response = response
+
+        page.on("response", on_response)
+
         try:
-            import urllib.parse
+            await page.wait_for_load_state("domcontentloaded")
+            await asyncio.sleep(0.5)
 
-            query_params: dict[str, Any] = {
-                "keywords": params.query,
-                "page": params.page,
-                "pageSize": params.page_size,
-            }
-            if params.city:
-                query_params["city"] = params.city
-            if params.education:
-                query_params["degree"] = params.education
-            if params.work_years:
-                query_params["workYear"] = params.work_years
+            search_frame = None
+            for _ in range(15):
+                for f in page.frames:
+                    if "/web/frame/search/" in f.url and "about:" not in f.url:
+                        search_frame = f
+                        break
+                if search_frame:
+                    break
+                await asyncio.sleep(0.5)
 
-            qs = urllib.parse.urlencode(query_params)
-            url = f"{SEARCH_API_URL}?{qs}"
-
-            response = await page.evaluate(
-                """async (url) => {
-                    const resp = await fetch(url, {
-                        credentials: 'include',
-                    });
-                    return {
-                        status: resp.status,
-                        body: await resp.text(),
-                    };
-                }""",
-                url,
-            )
-
-            if response["status"] != 200:
+            if not search_frame:
                 return SearchResult(
                     error=SearchError(
-                        code="API_ERROR",
-                        message=f"Boss API 返回状态码 {response['status']}",
-                        retryable=response["status"] in (429, 502, 503),
+                        code="NO_SEARCH_FRAME",
+                        message="未找到搜索 iframe，请确保页面在 Boss 直聘人才搜索页",
+                        retryable=True,
                     )
                 )
 
-            body = json.loads(response["body"])
+            logger.debug("Boss search: using frame %s", search_frame.url[:80])
+            keyword_input = await search_frame.query_selector(".input-text")
+            if not keyword_input:
+                return SearchResult(
+                    error=SearchError(
+                        code="NO_SEARCH_INPUT",
+                        message="未找到关键词输入框，请确保页面在 Boss 直聘人才搜索页",
+                        retryable=True,
+                    )
+                )
+
+            await keyword_input.click()
+            await asyncio.sleep(0.2)
+            await keyword_input.fill("")
+            await asyncio.sleep(0.1)
+            await keyword_input.type(params.query, delay=50)
+            await asyncio.sleep(0.3)
+
+            search_icon = await search_frame.query_selector(".icon-search")
+            if search_icon:
+                await search_icon.click()
+            else:
+                await keyword_input.press("Enter")
+
+            for _ in range(20):
+                if intercepted_response is not None:
+                    break
+                await asyncio.sleep(0.5)
+            else:
+                return SearchResult(
+                    error=SearchError(
+                        code="INTERCEPT_TIMEOUT",
+                        message="未拦截到 geeks.json 响应，可能未登录或搜索未触发",
+                        retryable=True,
+                    )
+                )
+
+            if intercepted_response.status != 200:
+                return SearchResult(
+                    error=SearchError(
+                        code="API_ERROR",
+                        message=f"Boss API 返回状态码 {intercepted_response.status}",
+                        retryable=intercepted_response.status in (429, 502, 503),
+                    )
+                )
+
+            body = await intercepted_response.json()
 
             data = body.get("zpData", {})
             geeks = data.get("geeks", []) or []
-            # 提取每个 geek 的 geekCard
             items = []
             for g in geeks:
                 card = g.get("geekCard")
@@ -358,6 +421,8 @@ class BossAdapter:
                     retryable=is_retryable,
                 )
             )
+        finally:
+            page.remove_listener("response", on_response)
 
     async def get_detail(
         self,
