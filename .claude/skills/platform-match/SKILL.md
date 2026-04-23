@@ -143,6 +143,11 @@ FOR EACH candidate:
 
 ## 模式 2: JD 驱动（条件找人）
 
+### 步骤 0: 选择平台
+
+如果 `--platform` 已传入 → 直接使用。
+未传入 → 交互式询问用户选择平台（支持: maimai、boss）。
+
 ### 步骤 1: 读取 JD 与搜索策略
 
 输入 A: `--jd <jd-id>`
@@ -167,7 +172,7 @@ FOR EACH candidate:
 
 FOR EACH 搜索组:
   ```bash
-  python scripts/search.py search --platform maimai --query "<query>" --pages 3
+  python scripts/search.py search --platform <platform> --query "<query>" --pages 3
   ```
   - 默认前 3 页 = 90 条
   - 跨组去重（按 platform_id，Claude 在内存中处理）
@@ -204,19 +209,24 @@ FOR EACH 用户选中:
 
 ## 模式 3: 对话式
 
-### 步骤 1: 理解搜索需求
+### 步骤 1: 选择平台
+
+如果 `--platform` 已传入 → 直接使用。
+未传入 → 交互式询问用户选择平台（支持: maimai、boss）。
+
+### 步骤 2: 理解搜索需求
 
 1. 用户自然语言 → Claude 解析为搜索参数
 2. 展示解析结果，用户确认
 3. 如有歧义 → 主动询问
 
-### 步骤 2: 执行搜索
+### 步骤 3: 执行搜索
 
 ```bash
-python scripts/search.py search --platform maimai --query "<query>" --pages 3
+python scripts/search.py search --platform <platform> --query "<query>" --pages 3
 ```
 
-### 步骤 3: 展示与交互
+### 步骤 4: 展示与交互
 
 1. 展示摘要表格（name, company, title, education, active_state）
 2. 用户可选择:
@@ -225,7 +235,7 @@ python scripts/search.py search --platform maimai --query "<query>" --pages 3
    - 查看某人详情
    - 结束搜索
 
-### 步骤 4: 按需写入
+### 步骤 5: 按需写入
 
 同模式 2 步骤 5。
 
