@@ -377,7 +377,7 @@ class BossAdapter:
                     error=SearchError(
                         code="API_ERROR",
                         message=f"Boss API 返回状态码 {intercepted_response.status}",
-                        retryable=intercepted_response.status in (429, 502, 503),
+                        retryable=intercepted_response.status in (429, 502, 503, 504),
                     )
                 )
 
