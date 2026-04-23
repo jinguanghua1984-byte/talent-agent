@@ -78,7 +78,22 @@ async def _do_search(
                     }
                 context = browser.contexts[0]
 
-            page = await context.new_page()
+            if platform == "boss":
+                existing_pages = context.pages
+                boss_page = next(
+                    (pg for pg in existing_pages if "zhipin.com" in pg.url),
+                    None,
+                )
+                if not boss_page:
+                    return {
+                        "status": "error",
+                        "code": "NO_PAGE",
+                        "message": "Boss 直聘需要已有登录页面，请确保 Chrome 已打开 Boss 直聘页面",
+                        "retryable": True,
+                    }
+                page = boss_page
+            else:
+                page = await context.new_page()
             params = SearchParams(query=query, page_size=DEFAULT_PAGE_SIZE)
 
             all_items = []
@@ -133,7 +148,7 @@ async def _do_search(
 
             try:
                 record_search(platform, headless)
-            except Exception:
+            except (OSError, json.JSONDecodeError):
                 pass  # 状态持久化失败不应丢弃搜索结果
 
             if headless:
