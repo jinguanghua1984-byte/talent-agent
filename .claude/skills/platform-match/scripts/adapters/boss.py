@@ -32,10 +32,8 @@ from .base import (
 SEARCH_API_URL = (
     "https://www.zhipin.com/wapi/zpitem/web/boss/search/geeks.json"
 )
-# 候选人详情端点（需 securityId）
-DETAIL_API_URL = (
-    "https://www.zhipin.com/wapi/zpitem/web/boss/search/geeks.json"
-)
+# 候选人详情端点（待调研，get_detail 暂不可用）
+DETAIL_API_URL = ""
 
 
 # ---------------------------------------------------------------------------
@@ -429,37 +427,13 @@ class BossAdapter:
         page: Any,
         platform_id: str,
     ) -> CandidateData | None:
-        """获取候选人详情。"""
-        try:
-            response = await page.evaluate(
-                """async (url) => {
-                    const resp = await fetch(url, {
-                        credentials: 'include',
-                    });
-                    return {
-                        status: resp.status,
-                        body: await resp.text(),
-                    };
-                }""",
-                f"{DETAIL_API_URL}{platform_id}",
-            )
+        """获取候选人详情。
 
-            if response["status"] != 200:
-                return None
-
-            body = json.loads(response["body"])
-            data = body.get("zpData", body)
-
-            if not data or not isinstance(data, dict):
-                return None
-
-            return CandidateData(
-                raw=data,
-                platform_id=platform_id,
-                detail_url=f"https://www.zhipin.com/web/geek/{platform_id}",
-            )
-        except Exception:
-            logger.error(
-                "Boss 获取候选人详情失败: platform_id=%s", platform_id, exc_info=True
-            )
-            return None
+        当前不可用: Boss 直聘详情端点未调研，且 page.evaluate(fetch)
+        会触发反爬检测导致强制登出。待改为被动拦截方式实现。
+        """
+        logger.warning(
+            "Boss get_detail 暂不可用: platform_id=%s（需改为被动拦截）",
+            platform_id,
+        )
+        return None
