@@ -239,7 +239,7 @@ class BossAdapter:
                 if len(w_parts) >= 2:
                     w_company, w_title = w_parts[0], w_parts[-1]
                 else:
-                    w_company, w_title = "", w_name
+                    w_company, w_title = w_name, ""
                 date_range = _normalize_period(w.get("dateRange", ""))
                 if w_company or w_title:
                     experiences.append({
