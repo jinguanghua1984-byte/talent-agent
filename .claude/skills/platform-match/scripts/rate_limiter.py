@@ -64,6 +64,7 @@ class ElasticConfig:
 
 DEFAULT_LIMITS = {
     "maimai": ElasticConfig(),
+    "boss": ElasticConfig(batch_max=20, daily_max=150),
 }
 
 
