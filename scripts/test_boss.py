@@ -306,6 +306,21 @@ class TestBossMapToSchema(unittest.TestCase):
         self.assertEqual(result["work_experience"][0]["company"], "某公司")
         self.assertEqual(result["work_experience"][0]["title"], "")
 
+    def test_education_mba_maps_to_master(self):
+        """MBA 应映射为硕士。"""
+        result = self._call({"name": "测试", "highestDegreeName": "MBA"})
+        self.assertEqual(result["education"], "硕士")
+
+    def test_education_emba_maps_to_master(self):
+        """EMBA 应映射为硕士。"""
+        result = self._call({"name": "测试", "highestDegreeName": "EMBA"})
+        self.assertEqual(result["education"], "硕士")
+
+    def test_education_unknown_passthrough(self):
+        """未知学历应原样保留。"""
+        result = self._call({"name": "测试", "highestDegreeName": "高中"})
+        self.assertEqual(result["education"], "高中")
+
 
 class TestBossParseWorkYears(unittest.TestCase):
     """_parse_work_years 工作年限解析测试。"""
@@ -434,6 +449,20 @@ class TestBossAdapterRegistered(unittest.TestCase):
         from search import ADAPTERS as search_adapters
         self.assertIs(search_adapters, registry_adapters)
         self.assertIn("boss", search_adapters)
+
+
+class TestBossGetDetailUnavailable(unittest.TestCase):
+    """get_detail 暂不可用测试。"""
+
+    def test_get_detail_returns_none(self):
+        import asyncio
+        from adapters.boss import BossAdapter
+
+        adapter = BossAdapter()
+        result = asyncio.get_event_loop().run_until_complete(
+            adapter.get_detail(None, "test_id")
+        )
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":
