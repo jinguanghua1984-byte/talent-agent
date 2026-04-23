@@ -36,6 +36,7 @@ MAX_COOKIE_BACKUPS = 3
 
 PLATFORM_VERIFY_URLS = {
     "maimai": "https://maimai.cn/",
+    "boss": "https://www.zhipin.com/",
 }
 
 

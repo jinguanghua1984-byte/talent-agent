@@ -1,6 +1,6 @@
 ---
 name: platform-match
-description: "招聘平台候选人搜索与信息丰富。在脉脉等招聘平台上搜索候选人，丰富候选人库信息，或根据 JD/条件搜索目标人选。触发词: 匹配候选人、搜索脉脉、平台找人、丰富候选人、platform match、/platform-match"
+description: "招聘平台候选人搜索与信息丰富。在脉脉、Boss直聘等招聘平台上搜索候选人，丰富候选人库信息，或根据 JD/条件搜索目标人选。触发词: 匹配候选人、搜索脉脉、搜索Boss、平台找人、丰富候选人、platform match、/platform-match"
 ---
 
 # platform-match Skill
@@ -13,9 +13,15 @@ description: "招聘平台候选人搜索与信息丰富。在脉脉等招聘平
 /platform-match --candidates batch:<batch-id> → 候选丰富（模式 1，从批次读取）
 /platform-match --jd <id|file>               → JD 驱动（模式 2）
 /platform-match --headless                   → 降级模式（附加在任意模式上）
+/platform-match --platform <name>            → 平台选择（附加在任意模式上）
 ```
 
 降级模式标志: `--headless` 参数。影响: 更保守的速率控制、更低的操作上限。
+
+平台选择: `--platform` 参数。支持: maimai（脉脉）、boss（Boss直聘）。
+- 传入 --platform → 直接使用，不询问
+- 不传 → 交互式询问用户选择平台
+- 模式 3（对话式）始终在搜索前确认平台
 
 ## 前置检查（所有模式共用）
 
@@ -23,18 +29,24 @@ description: "招聘平台候选人搜索与信息丰富。在脉脉等招聘平
 2. 检查 Playwright: `python -c "from playwright.async_api import async_playwright"`
 3. 检查 session 状态:
    - 默认模式: `python scripts/session.py status`
-   - 降级模式: `python scripts/session.py verify --platform maimai --mode standalone`
+   - 降级模式: `python scripts/session.py verify --platform <platform> --mode standalone`
 4. 如果 session 不可用:
-   - 默认模式 → 提示用户: "请先启动 Chrome: `chrome --remote-debugging-port=9222`"
-   - 降级模式 → 提示用户: "未找到 cookies 备份，请先用默认模式执行一次"
+   - maimai → 提示用户: "请先启动 Chrome: `chrome --remote-debugging-port=9222`"
+   - boss → 提示用户: "请确保 Chrome 已打开 Boss 直聘页面（需已有登录态）"
+5. boss 特殊: session.py verify --mode cdp 会 new_page() 触发反检测。
+   应优先检查 Chrome 是否已有 zhipin.com 页面，而非主动 verify。
+   参考 `references/boss/search-mechanism.md` 已知限制。
 
 ## 资源索引
 
 | 场景 | 文件 |
 |------|------|
 | 脉脉 API 规格 | `references/maimai/api-reference.md` |
-| 字段映射 | `references/maimai/field-mapping.md` |
-| 反检测策略 | `references/maimai/anti-detect.md` |
+| 脉脉字段映射 | `references/maimai/field-mapping.md` |
+| 脉脉反检测策略 | `references/maimai/anti-detect.md` |
+| Boss API 规格 | `references/boss/api-reference.md` |
+| Boss 字段映射 | `references/boss/field-mapping.md` |
+| Boss 搜索机制 | `references/boss/search-mechanism.md` |
 | 匹配策略 | `references/matching-strategy.md` |
 | 身份判定规则 | `rules/identity-rules.md` |
 | 人岗匹配规则 | `rules/jd-match-rules.md` |
@@ -73,15 +85,16 @@ FOR EACH candidate:
     - 路径 A: query = "{name} {current_company}"
     - 路径 B: query = "{name} {current_title}"（路径 A 无结果时降级）
 
+    平台中文名映射: maimai→脉脉, boss→Boss直聘
   2.2 检查 platform_id 是否已关联
-    - 在 candidates sources[] 中查找 channel="maimai" 的记录
-    - 已关联（同记录）→ 跳过搜索，提示"已有脉脉数据"
+    - 在 candidates sources[] 中查找 channel="<platform>" 的记录
+    - 已关联（同记录）→ 跳过搜索，提示"已有{平台中文名}数据"
     - 已关联（其他记录）→ 提示可能重复，建议去重
     - 未关联 → 执行搜索
 
   2.3 调用搜索
     ```bash
-    python scripts/search.py search --platform maimai --query "<query>" --pages 1
+    python scripts/search.py search --platform <platform> --query "<query>" --pages 1
     ```
     - 解析 JSON 输出
     - 0 结果 → 标记"平台未收录"
@@ -110,7 +123,7 @@ FOR EACH candidate:
   2.6 丰富写入
     ```bash
     # 映射 API 数据
-    python scripts/enrich.py map --platform maimai --api-data '<json>'
+    python scripts/enrich.py map --platform <platform> --api-data '<json>'
     # 写入候选人
     python scripts/enrich.py merge --candidate-id <id> --new-data <tmp-file>
     ```
@@ -119,7 +132,7 @@ FOR EACH candidate:
 
   2.7 速率检查
     ```bash
-    python scripts/rate_limiter.py tick --platform maimai [--headless]
+    python scripts/rate_limiter.py tick --platform <platform> [--headless]
     ```
     - 如果 allowed=false → 等待 wait_seconds → 继续
 
@@ -129,6 +142,11 @@ FOR EACH candidate:
 输出到 `data/output/platform-match-report.md`。
 
 ## 模式 2: JD 驱动（条件找人）
+
+### 步骤 0: 选择平台
+
+如果 `--platform` 已传入 → 直接使用。
+未传入 → 交互式询问用户选择平台（支持: maimai、boss）。
 
 ### 步骤 1: 读取 JD 与搜索策略
 
@@ -154,7 +172,7 @@ FOR EACH candidate:
 
 FOR EACH 搜索组:
   ```bash
-  python scripts/search.py search --platform maimai --query "<query>" --pages 3
+  python scripts/search.py search --platform <platform> --query "<query>" --pages 3
   ```
   - 默认前 3 页 = 90 条
   - 跨组去重（按 platform_id，Claude 在内存中处理）
@@ -191,19 +209,24 @@ FOR EACH 用户选中:
 
 ## 模式 3: 对话式
 
-### 步骤 1: 理解搜索需求
+### 步骤 1: 选择平台
+
+如果 `--platform` 已传入 → 直接使用。
+未传入 → 交互式询问用户选择平台（支持: maimai、boss）。
+
+### 步骤 2: 理解搜索需求
 
 1. 用户自然语言 → Claude 解析为搜索参数
 2. 展示解析结果，用户确认
 3. 如有歧义 → 主动询问
 
-### 步骤 2: 执行搜索
+### 步骤 3: 执行搜索
 
 ```bash
-python scripts/search.py search --platform maimai --query "<query>" --pages 3
+python scripts/search.py search --platform <platform> --query "<query>" --pages 3
 ```
 
-### 步骤 3: 展示与交互
+### 步骤 4: 展示与交互
 
 1. 展示摘要表格（name, company, title, education, active_state）
 2. 用户可选择:
@@ -212,7 +235,7 @@ python scripts/search.py search --platform maimai --query "<query>" --pages 3
    - 查看某人详情
    - 结束搜索
 
-### 步骤 4: 按需写入
+### 步骤 5: 按需写入
 
 同模式 2 步骤 5。
 
