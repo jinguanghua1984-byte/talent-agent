@@ -9,7 +9,7 @@
 | name | name | 直接映射 |
 | gender | gender | 1→"男", 2→"女", 其他→跳过 |
 | city | city | 直接映射 |
-| geekWork.name | current_title | "公司·部门·职位" → 取最后一段为职位，无分隔符时整体作为职位 |
+| geekWork.name | current_company + current_title | "公司·部门·职位" → 取第一段为公司、最后一段为职位；无分隔符时整体作为公司名 |
 | highestDegreeName | education | 通过 EDUCATION_MAP 映射（"MBA"/"EMBA"→"硕士"） |
 | workYear | work_years | "4年" → 提取数字 |
 | ageDesc | age | "27岁" → 提取数字 |

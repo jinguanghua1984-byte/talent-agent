@@ -75,3 +75,5 @@ for frame in page.frames:
 2. **筛选参数未暴露**: search.py CLI 未暴露 city/education/work_years 参数，
    Boss 的 build_search_params() 虽然支持这些字段但当前未被使用。
 3. **分页翻页**: 当前每次翻页需要重新填入关键词并点击搜索，效率较低。
+4. **get_detail 暂不可用**: 候选人详情端点未调研，且 `page.evaluate(fetch)` 会触发反爬检测。
+   需改为被动拦截方式实现（导航到候选人页面 → 拦截详情 API 响应）。
