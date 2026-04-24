@@ -18,6 +18,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+import subprocess
 
 try:
     from playwright.async_api import async_playwright
@@ -116,6 +117,72 @@ async def _status() -> int:
             "hint": "请确保 Chrome 已启动: chrome --remote-debugging-port=9222",
         })
         return 1
+
+
+async def _chrome_check() -> int:
+    """检测 Chrome 浏览器运行状态与远程调试端口。
+
+    返回三种状态:
+      - not_running: Chrome 未运行
+      - running_no_debug: Chrome 运行中但未开启远程调试
+      - running_with_debug: Chrome 运行中且 CDP 端口可达
+    """
+    # Step 1: 检查 chrome.exe 进程
+    try:
+        result = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq chrome.exe", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+        if "chrome.exe" not in result.stdout:
+            _output_json({
+                "status": "ok",
+                "chrome_state": "not_running",
+                "message": "Chrome 未运行",
+            })
+            return 0
+    except Exception as e:
+        _output_json({
+            "status": "error",
+            "code": "CHECK_FAILED",
+            "message": f"进程检测失败: {e}",
+            "retryable": True,
+        })
+        return 1
+
+    # Step 2: 尝试连接 CDP
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(DEFAULT_CDP_URL)
+            contexts = browser.contexts
+            result_data: dict = {
+                "status": "ok",
+                "chrome_state": "running_with_debug",
+                "cdp_url": DEFAULT_CDP_URL,
+                "context_count": len(contexts),
+            }
+            if contexts:
+                pages = contexts[0].pages
+                result_data["page_count"] = len(pages)
+                zhipin_pages = [
+                    {"url": pg.url, "title": await pg.title()}
+                    for pg in pages
+                    if "zhipin.com" in pg.url
+                ]
+                result_data["zhipin_pages"] = zhipin_pages
+                if pages:
+                    result_data["current_url"] = pages[0].url
+            _output_json(result_data)
+            return 0
+    except Exception:
+        _output_json({
+            "status": "ok",
+            "chrome_state": "running_no_debug",
+            "message": "Chrome 运行中但未开启远程调试端口 9222",
+        })
+        return 0
 
 
 async def _save(output: str | None) -> int:
@@ -316,6 +383,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("status", help="检查 CDP 连接状态")
+    subparsers.add_parser("chrome-check", help="检测 Chrome 运行状态与远程调试端口")
 
     save_p = subparsers.add_parser("save", help="导出 cookies")
     save_p.add_argument("--output", default=None, help="输出路径")
@@ -339,6 +407,7 @@ async def _main() -> int:
 
     handlers = {
         "status": lambda: _status(),
+        "chrome-check": lambda: _chrome_check(),
         "save": lambda: _save(args.output),
         "verify": lambda: _verify(args.platform, args.mode),
         "endpoints": lambda: _endpoints(),

@@ -5,6 +5,7 @@
 避免 page.evaluate(fetch) 触发反爬检测。
 
 API 调研完成于 2026-04-20，端点和字段映射已校准。
+搜索机制更新于 2026-04-24：关键词选择器、职位筛选清空、滚动翻页。
 """
 
 from __future__ import annotations
@@ -272,16 +273,71 @@ class BossAdapter:
 
         return result
 
+    async def _find_search_frame(self, page: Any) -> Any:
+        """定位搜索 iframe，超时 7.5s。"""
+        import asyncio
+
+        for _ in range(15):
+            for f in page.frames:
+                if "/web/frame/search/" in f.url and "about:" not in f.url:
+                    return f
+            await asyncio.sleep(0.5)
+        return None
+
+    async def _clear_job_filter(self, search_frame: Any) -> None:
+        """清空职位筛选为'不限职位'，避免搜索结果为空。"""
+        import asyncio
+
+        job_filter = await search_frame.query_selector(".search-current-job")
+        if not job_filter:
+            return
+        current_text = (await job_filter.inner_text()).strip()
+        if current_text and current_text != "不限职位":
+            await job_filter.click()
+            await asyncio.sleep(0.5)
+            job_items = await search_frame.query_selector_all(
+                'li[ka="search_select_job"]'
+            )
+            if job_items:
+                await job_items[0].click()
+                await asyncio.sleep(0.5)
+
+    async def _type_keyword(
+        self, search_frame: Any, query: str
+    ) -> bool:
+        """在 .search-input 中输入关键词。返回是否成功。"""
+        import asyncio
+
+        keyword_input = await search_frame.query_selector(".search-input")
+        if not keyword_input:
+            return False
+
+        await keyword_input.click()
+        await asyncio.sleep(0.3)
+        await keyword_input.press("Control+a")
+        await asyncio.sleep(0.1)
+        await keyword_input.press("Backspace")
+        await asyncio.sleep(0.3)
+        await keyword_input.type(query, delay=100)
+        await asyncio.sleep(0.3)
+
+        search_icon = await search_frame.query_selector(".icon-search")
+        if search_icon:
+            await search_icon.click()
+        else:
+            await keyword_input.press("Enter")
+        return True
+
     async def search(
         self,
         page: Any,
         params: SearchParams,
     ) -> SearchResult:
-        """通过被动网络拦截执行搜索。
+        """通过被动网络拦截执行单页搜索。
 
-        在搜索页 iframe 中填入关键词并点击搜索图标，
+        在搜索页 iframe 中清空职位筛选、填入关键词并点击搜索图标，
         通过 page.on('response') 拦截 geeks.json API 响应。
-        使用 Playwright response.json() 读取 body，避免 page.evaluate(fetch) 触发反爬。
+        仅返回请求的 page 对应的数据。
 
         前提: page 必须是已有登录页面（复用 context.pages[0]），
         且当前已处于 Boss 直聘人才搜索页。
@@ -297,8 +353,6 @@ class BossAdapter:
             url = response.url
             if "t.zhipin.com" in url:
                 return
-            if "geeks.json" in url:
-                logger.info("Boss search: intercepted geeks.json: %s", url[:150])
             if "geeks.json" not in url:
                 return
             resp_params = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
@@ -316,16 +370,7 @@ class BossAdapter:
             await page.wait_for_load_state("domcontentloaded")
             await asyncio.sleep(0.5)
 
-            search_frame = None
-            for _ in range(15):
-                for f in page.frames:
-                    if "/web/frame/search/" in f.url and "about:" not in f.url:
-                        search_frame = f
-                        break
-                if search_frame:
-                    break
-                await asyncio.sleep(0.5)
-
+            search_frame = await self._find_search_frame(page)
             if not search_frame:
                 return SearchResult(
                     error=SearchError(
@@ -336,8 +381,10 @@ class BossAdapter:
                 )
 
             logger.debug("Boss search: using frame %s", search_frame.url[:80])
-            keyword_input = await search_frame.query_selector(".input-text")
-            if not keyword_input:
+
+            await self._clear_job_filter(search_frame)
+            typed = await self._type_keyword(search_frame, params.query)
+            if not typed:
                 return SearchResult(
                     error=SearchError(
                         code="NO_SEARCH_INPUT",
@@ -345,19 +392,6 @@ class BossAdapter:
                         retryable=True,
                     )
                 )
-
-            await keyword_input.click()
-            await asyncio.sleep(0.2)
-            await keyword_input.fill("")
-            await asyncio.sleep(0.1)
-            await keyword_input.type(params.query, delay=50)
-            await asyncio.sleep(0.3)
-
-            search_icon = await search_frame.query_selector(".icon-search")
-            if search_icon:
-                await search_icon.click()
-            else:
-                await keyword_input.press("Enter")
 
             for _ in range(20):
                 if intercepted_response is not None:
@@ -407,6 +441,161 @@ class BossAdapter:
                     message=f"Boss API 响应解析失败: {e}",
                     retryable=True,
                 )
+            )
+        except Exception as e:
+            is_retryable = isinstance(e, (TimeoutError, ConnectionError, OSError))
+            if not is_retryable:
+                logger.error("Boss 搜索执行异常: %s", e, exc_info=True)
+            return SearchResult(
+                error=SearchError(
+                    code="SEARCH_FAILED",
+                    message=str(e),
+                    retryable=is_retryable,
+                )
+            )
+        finally:
+            page.remove_listener("response", on_response)
+
+    async def search_all_pages(
+        self,
+        page: Any,
+        params: SearchParams,
+        max_stall: int = 3,
+    ) -> SearchResult:
+        """搜索全部页并通过滚动翻页收集所有结果。
+
+        通过滚动搜索 iframe 和主页面到底部触发无限滚动加载，
+        被动拦截每一页的 geeks.json 响应，自动去重。
+
+        前提: 同 search()。页面需处于 /web/chat/search。
+        """
+        import asyncio
+        import urllib.parse
+
+        all_items: list[dict] = []
+        seen_ids: set[str] = set()
+        captured_pages: set[str] = set()
+        total = 0
+        has_more = True
+
+        async def on_response(response: Any) -> None:
+            nonlocal total, has_more
+            url = response.url
+            if "t.zhipin.com" in url:
+                return
+            if "geeks.json" not in url:
+                return
+            resp_params = urllib.parse.parse_qs(
+                urllib.parse.urlparse(url).query
+            )
+            keywords = urllib.parse.unquote_plus(
+                resp_params.get("keywords", [""])[0]
+            )
+            if keywords != params.query:
+                return
+
+            page_num = resp_params.get("page", ["1"])[0]
+            key = f"p{page_num}"
+            if key in captured_pages:
+                return
+            captured_pages.add(key)
+
+            try:
+                body = await response.json()
+                zp = body.get("zpData", {})
+                geeks = zp.get("geeks", []) or []
+                total = zp.get("totalCount", 0)
+                has_more = zp.get("hasMore", False)
+
+                for g in geeks:
+                    card = g.get("geekCard")
+                    if not card:
+                        continue
+                    eid = card.get("encryptGeekId", "")
+                    if eid and eid not in seen_ids:
+                        seen_ids.add(eid)
+                        all_items.append(card)
+
+                logger.info(
+                    "Boss scroll: page=%s new=%d unique=%d total=%d hasMore=%s",
+                    page_num,
+                    len(geeks),
+                    len(all_items),
+                    total,
+                    has_more,
+                )
+            except Exception as e:
+                logger.warning("Boss scroll: parse error on page %s: %s", page_num, e)
+
+        page.on("response", on_response)
+
+        try:
+            await page.wait_for_load_state("domcontentloaded")
+            await asyncio.sleep(0.5)
+
+            search_frame = await self._find_search_frame(page)
+            if not search_frame:
+                return SearchResult(
+                    error=SearchError(
+                        code="NO_SEARCH_FRAME",
+                        message="未找到搜索 iframe，请确保页面在 Boss 直聘人才搜索页",
+                        retryable=True,
+                    )
+                )
+
+            await self._clear_job_filter(search_frame)
+            typed = await self._type_keyword(search_frame, params.query)
+            if not typed:
+                return SearchResult(
+                    error=SearchError(
+                        code="NO_SEARCH_INPUT",
+                        message="未找到关键词输入框，请确保页面在 Boss 直聘人才搜索页",
+                        retryable=True,
+                    )
+                )
+
+            # 等待第一页响应
+            for _ in range(30):
+                if captured_pages:
+                    break
+                await asyncio.sleep(0.5)
+
+            if not captured_pages:
+                return SearchResult(
+                    error=SearchError(
+                        code="INTERCEPT_TIMEOUT",
+                        message="未拦截到 geeks.json 响应，可能未登录或搜索未触发",
+                        retryable=True,
+                    )
+                )
+
+            # 滚动翻页直到 hasMore=False 或连续 max_stall 次无新数据
+            stall_count = 0
+            prev_count = 0
+
+            while has_more:
+                await asyncio.sleep(2)
+                await search_frame.evaluate(
+                    "window.scrollTo(0, document.body.scrollHeight)"
+                )
+                await page.evaluate(
+                    "window.scrollTo(0, document.body.scrollHeight)"
+                )
+                await asyncio.sleep(1)
+
+                if len(all_items) == prev_count:
+                    stall_count += 1
+                    if stall_count >= max_stall:
+                        break
+                else:
+                    stall_count = 0
+                prev_count = len(all_items)
+
+            return SearchResult(
+                items=all_items,
+                total=total,
+                page=len(captured_pages),
+                has_more=has_more,
             )
         except Exception as e:
             is_retryable = isinstance(e, (TimeoutError, ConnectionError, OSError))

@@ -37,6 +37,7 @@ async def _do_search(
     query: str,
     pages: int = DEFAULT_PAGES,
     headless: bool = False,
+    all_pages: bool = False,
 ) -> dict:
     """执行搜索并返回所有页结果。"""
     adapter = ADAPTERS.get(platform)
@@ -96,6 +97,46 @@ async def _do_search(
                 page = await context.new_page()
             params = SearchParams(query=query, page_size=DEFAULT_PAGE_SIZE)
 
+            # Boss 全量滚动翻页模式
+            if all_pages and hasattr(adapter, "search_all_pages"):
+                result = await adapter.search_all_pages(page, params)
+                if result.error:
+                    if result.error.code in ("CAPTCHA", "FORBIDDEN"):
+                        trigger_circuit_break(platform, result.error.code, headless)
+                        return {
+                            "status": "error",
+                            "code": "CIRCUIT_BREAK",
+                            "message": f"触发熔断: {result.error.message}",
+                            "retryable": False,
+                            "trigger_reason": result.error.code,
+                        }
+                    return {
+                        "status": "error",
+                        "code": result.error.code,
+                        "message": result.error.message,
+                        "retryable": result.error.retryable,
+                    }
+
+                try:
+                    record_search(platform, headless)
+                except (OSError, json.JSONDecodeError):
+                    pass
+
+                if headless:
+                    await browser.close()
+
+                return {
+                    "status": "ok",
+                    "data": {
+                        "items": result.items,
+                        "total": result.total,
+                        "pages_fetched": result.page,
+                        "query": query,
+                        "platform": platform,
+                    },
+                }
+
+            # 标准分页模式（脉脉等）
             all_items = []
             total = 0
 
@@ -181,6 +222,7 @@ async def _cmd_search(args):
         query=args.query,
         pages=args.pages,
         headless=args.headless,
+        all_pages=args.all_pages,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["status"] == "ok" else 1
@@ -193,7 +235,8 @@ def build_parser() -> argparse.ArgumentParser:
     search_p = subparsers.add_parser("search", help="执行搜索")
     search_p.add_argument("--platform", required=True, help="平台名称")
     search_p.add_argument("--query", required=True, help="搜索关键词")
-    search_p.add_argument("--pages", type=int, default=DEFAULT_PAGES, help="搜索页数")
+    search_p.add_argument("--pages", type=int, default=DEFAULT_PAGES, help="搜索页数（Boss 使用滚动翻页时此参数无效）")
+    search_p.add_argument("--all-pages", action="store_true", help="滚动翻页抓取全部结果（Boss 推荐）")
     search_p.add_argument("--headless", action="store_true")
 
     return parser

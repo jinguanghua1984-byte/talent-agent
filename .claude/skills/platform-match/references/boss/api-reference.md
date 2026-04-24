@@ -74,17 +74,26 @@
 搜索页在 iframe 中加载（`/web/frame/search/`），不会通过 URL 导航触发 API。
 
 **正确的触发流程**:
-1. 在 `page.frames[1]` 中找到 `.input-text` 输入框
-2. `click()` → `Control+a` → `type(query, delay=50)`
-3. 点击 `.icon-search` 搜索图标
-4. 在 **page 级别**（不是 frame 级别）注册 `page.on('response')` 拦截 `geeks.json`
+1. 在 search_frame 中找到 `.search-input` 输入框（**不是** `.input-text`，那是另一个筛选条件的输入框）
+2. 先清空职位筛选：`.search-current-job` → 点击 → 选"不限职位"（否则搜索结果可能为空）
+3. `click()` → `Control+a` → `Backspace`（**不能用 fill("")**，Vue 组件不响应）
+4. `type(query, delay=100)` → `Enter` 或点击 `.icon-search`
+5. 在 **page 级别**（不是 frame 级别）注册 `page.on('response')` 拦截 `geeks.json`
+6. 翻页：滚动 search_frame 和 page 到底部触发无限滚动，拦截新 page 的响应
+
+**注意**: `on_response` 回调是同步的，`response.json()` 是异步方法。
+在回调内不能 await，需保存 response 对象到外部变量，在回调外再 await。
 
 **API 实际 URL 格式**:
 ```
 /wapi/zpitem/web/boss/search/geeks.json?page=1&jobId={encryptJobId}&keywords={query}&tag=&city={cityCode}&gender=-1&experience=-1,-1&...
 ```
 
-注意: `jobId` 是当前选中的职位 ID，搜索结果会基于该职位进行匹配。
+注意: `jobId` 是当前选中的职位 ID。搜索栏有职位筛选下拉（`.search-current-job`），
+默认绑定到某个具体职位，会导致搜索结果仅匹配该职位要求。每次搜索前需清空为"不限职位"。
+
+**分页**: Boss 使用无限滚动加载（无分页按钮），滚动到底部自动触发下一页请求。
+响应中 `hasMore: false` 表示已到最后一页。
 
 ## 反爬检测
 
@@ -97,4 +106,37 @@
 
 ## 详情 API
 
-待调研（需 securityId 访问候选人详情页）。
+**不可用**（2026-04-24 确认）。
+
+### 不可行的方案
+
+| 方案 | 结果 |
+|------|------|
+| `page.goto('/web/geek/{id}')` | 触发 browser-check.min.js → 强制登出（404 页面） |
+| `page.evaluate(fetch)` | 触发反爬检测 code: 7 → 强制登出 |
+| `context.new_page()` | 触发 browser-check.min.js → 强制登出 |
+
+### 侧边面板（.geek-detail）
+
+点击搜索结果卡片后在主页面右侧弹出，仅包含摘要信息：
+- 姓名、年龄、工作经验、学历、求职状态、期望薪资
+- 活跃状态
+- 技能标签
+- 期望职位
+- 当前公司·职位（仅最近一段）
+- 院校·专业（仅一段）
+
+不包含完整工作经历列表、项目经历、自我评价。
+
+### 可用数据来源
+
+搜索 API 的 `geekCard` 已包含大部分可用字段：
+- 基本信息：name, city, gender, ageDesc, workYear, highestDegreeName, salary, activeDesc
+- 当前职位：geekWork.name（公司·职位）
+- 期望职位：expect.name
+- 技能标签：labelMatchList[].markWord
+- 工作经历列表：workList[]（每项含 name + dateRange）
+- 教育经历：geekEdu.name（国家·学校·专业）
+- 唯一标识：encryptGeekId, securityId
+
+可满足 `enrichment_level: "partial"` 的入库需求。
