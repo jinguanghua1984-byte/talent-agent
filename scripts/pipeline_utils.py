@@ -142,7 +142,11 @@ def create_llm_client() -> Any:
             "未设置 ANTHROPIC_API_KEY。请在 .env 文件中配置，参考 .env.example"
         )
     import anthropic
-    return anthropic.Anthropic(api_key=api_key)
+    base_url = os.environ.get("ANTHROPIC_BASE_URL")
+    kwargs: dict[str, Any] = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+    return anthropic.Anthropic(**kwargs)
 
 
 def call_llm_with_retry(
