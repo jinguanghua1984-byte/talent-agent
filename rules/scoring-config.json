@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "top_companies": [
+    "阿里巴巴", "字节跳动", "腾讯", "百度", "美团", "京东",
+    "拼多多", "网易", "小米", "华为", "滴滴", "快手",
+    "微软", "Google", "Amazon", "Meta", "Apple"
+  ],
+  "ai_companies": [
+    "OpenAI", "Anthropic", "智谱AI", "百川智能", "月之暗面",
+    "MiniMax", "零一万物", "商汤科技", "旷视科技", "科大讯飞",
+    "Dify", "Coze", "阿里达摩院", "百度文心", "字节Seed",
+    "华为诺亚", "NVIDIA"
+  ],
+  "coarse_weights": {
+    "core_skill_hit": 3,
+    "supplement_skill_hit": 1,
+    "exclusion_penalty": 20,
+    "company_bonus": 5
+  },
+  "rank_dimensions": [
+    {"name": "岗位匹配度", "weight": 30, "description": "当前职位/期望职位 vs JD 目标角色"},
+    {"name": "技能覆盖率", "weight": 25, "description": "技能标签 vs JD 核心技能要求"},
+    {"name": "经验深度", "weight": 20, "description": "工作年限 + 行业经验 + 公司背景"},
+    {"name": "行业背景", "weight": 15, "description": "行业相关性 + 名企/AI 公司经历"},
+    {"name": "稳定性", "weight": 10, "description": "学历匹配 + 活跃度 + 跳槽频率"}
+  ],
+  "calibration": {
+    "top_per_batch": 3,
+    "max_candidates": 15
+  }
+}
