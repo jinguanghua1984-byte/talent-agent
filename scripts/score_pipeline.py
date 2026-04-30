@@ -1,5 +1,7 @@
 """评分 Pipeline 编排入口
 
+运行方式: python -m scripts.score_pipeline <command> [options]
+
 Usage:
     python scripts/score_pipeline.py run --jd-id <id> --source boss --search-keyword <keyword> [options]
     python scripts/score_pipeline.py resume --jd-id <id> --search-keyword <keyword>

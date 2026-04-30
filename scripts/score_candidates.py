@@ -1,4 +1,8 @@
-"""对 Boss 搜索结果进行评分排序"""
+"""[LEGACY] 对 Boss 搜索结果进行评分排序
+
+已被 score_pipeline.py 替代。保留用于回归基线对比。
+新项目请使用: python -m scripts.score_pipeline run --jd-id <id> --source boss --search-keyword <keyword>
+"""
 
 import json
 import re
