@@ -1,0 +1,21 @@
+{
+  "id": "jd-YYYYMMDD-company-slug",
+  "company": "公司全称",
+  "title": "职位名称",
+  "department": "部门名称 (可选)",
+  "created_at": "YYYY-MM-DD",
+  "description": "职位描述全文 (岗位职责 + 职位要求)",
+  "requirements": {
+    "min_experience_years": 3,
+    "max_experience_years": 10
+  },
+  "highlights": [],
+  "job_type": "全职",
+  "experience": "3-10年",
+  "min_education": "本科",
+  "salary_range": "",
+  "location": "",
+  "industry": "",
+  "source": "",
+  "source_url": ""
+}
