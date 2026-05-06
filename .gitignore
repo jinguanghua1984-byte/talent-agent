@@ -46,4 +46,5 @@ data/boss-search/
 data/boss-api-capture.json
 data/boss-captured-requests.json
 data/boss-search-response.json
+data/cache/
 .env
