@@ -3,6 +3,8 @@ importScripts("idb.js", "autopager.js");
 // background.js — Service Worker
 
 var pendingSearchCallbacks = {};
+var __activePager = null;
+var __pagerTabId = null;
 
 chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   // 存储捕获的请求数据
@@ -137,8 +139,8 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
 
           var pagerState = AutoPager.create(template, pageMeta, sendPageRequest);
 
-          window.__activePager = pagerState;
-          window.__pagerTabId = tabId;
+          __activePager = pagerState;
+          __pagerTabId = tabId;
 
           AutoPager.run(pagerState, msg.mode, msg.maxPages, function (event) {
             chrome.runtime.sendMessage(event).catch(function () {});
@@ -154,8 +156,8 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   }
 
   if (msg.type === "stopPager") {
-    if (window.__activePager) {
-      AutoPager.stop(window.__activePager);
+    if (__activePager) {
+      AutoPager.stop(__activePager);
       sendResponse({ ok: true });
     } else {
       sendResponse({ ok: false, error: "无正在运行的抓取" });
@@ -164,7 +166,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   }
 
   if (msg.type === "getPagerStatus") {
-    var pager = window.__activePager;
+    var pager = __activePager;
     sendResponse(pager ? {
       running: pager.running,
       currentPage: pager.currentPage,
