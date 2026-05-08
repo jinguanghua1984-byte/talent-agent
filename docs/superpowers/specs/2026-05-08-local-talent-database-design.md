@@ -81,15 +81,18 @@ CREATE TABLE candidates (
     score_version INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now')),
-    UNIQUE(name, current_company, current_title, city, education)
+    UNIQUE(name, current_company, current_title,
+           COALESCE(city, ''), COALESCE(education, ''))
 );
 ```
+
+> **注意**: SQLite 中 `NULL != NULL`，`UNIQUE` 约束含 nullable 列时无法正确去重。使用 `COALESCE` 将 NULL 转为空字符串参与唯一性判断。主去重逻辑在 `ingest()` 方法中以程序化方式实现，此约束仅作数据库层兜底。
 
 ### 4.2 candidate_details — 详情表
 
 ```sql
 CREATE TABLE candidate_details (
-    candidate_id INTEGER PRIMARY KEY REFERENCES candidates(id),
+    candidate_id INTEGER PRIMARY KEY REFERENCES candidates(id) ON DELETE CASCADE,
     work_experience TEXT,          -- JSON array
     education_experience TEXT,     -- JSON array
     project_experience TEXT,       -- JSON array
@@ -103,7 +106,7 @@ CREATE TABLE candidate_details (
 ```sql
 CREATE TABLE source_profiles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    candidate_id INTEGER REFERENCES candidates(id),
+    candidate_id INTEGER REFERENCES candidates(id) ON DELETE CASCADE,
     platform TEXT NOT NULL,        -- maimai/boss/linkedin
     platform_id TEXT,              -- 平台方 user ID
     profile_url TEXT,
@@ -121,7 +124,7 @@ CREATE TABLE source_profiles (
 -- candidates 表上的 overall_score 字段 + score_events 日志
 CREATE TABLE score_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    candidate_id INTEGER REFERENCES candidates(id),
+    candidate_id INTEGER REFERENCES candidates(id) ON DELETE CASCADE,
     old_score REAL,
     new_score REAL,
     trigger_type TEXT NOT NULL,    -- profile_enriched/platform_merged/
@@ -143,7 +146,7 @@ CREATE TABLE score_events (
 ```sql
 CREATE TABLE match_scores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    candidate_id INTEGER REFERENCES candidates(id),
+    candidate_id INTEGER REFERENCES candidates(id) ON DELETE CASCADE,
     jd_id TEXT NOT NULL,
     match_type TEXT NOT NULL,      -- coarse/llm_rank/calibration/final
     score REAL,
@@ -177,7 +180,7 @@ CREATE TABLE company_aliases (
 -- 合并日志
 CREATE TABLE merge_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    survivor_id INTEGER REFERENCES candidates(id),
+    survivor_id INTEGER REFERENCES candidates(id) ON DELETE CASCADE,
     merged_id INTEGER,
     match_type TEXT,               -- exact/alias/manual
     merged_fields TEXT,            -- JSON
@@ -187,7 +190,7 @@ CREATE TABLE merge_log (
 -- 待确认的合并候选
 CREATE TABLE pending_merges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    existing_id INTEGER REFERENCES candidates(id),
+    existing_id INTEGER REFERENCES candidates(id) ON DELETE CASCADE,
     new_data TEXT NOT NULL,        -- JSON
     match_fields TEXT,             -- JSON: 哪些字段匹配了
     status TEXT DEFAULT 'pending', -- pending/approved/rejected
@@ -222,6 +225,31 @@ CREATE VIRTUAL TABLE candidate_fts USING fts5(
     content='candidates',
     content_rowid='id'
 );
+
+-- FTS5 外部内容表必须通过触发器保持同步
+-- FTS 列映射: company → candidates.current_company, title → candidates.current_title,
+--             skills → candidates.skill_tags
+
+CREATE TRIGGER candidates_ai AFTER INSERT ON candidates BEGIN
+    INSERT INTO candidate_fts(rowid, name, company, title, skills, education, city)
+    VALUES (new.id, new.name, new.current_company, new.current_title,
+            new.skill_tags, new.education, new.city);
+END;
+
+CREATE TRIGGER candidates_ad AFTER DELETE ON candidates BEGIN
+    INSERT INTO candidate_fts(candidate_fts, rowid, name, company, title, skills, education, city)
+    VALUES ('delete', old.id, old.name, old.current_company, old.current_title,
+            old.skill_tags, old.education, old.city);
+END;
+
+CREATE TRIGGER candidates_au AFTER UPDATE ON candidates BEGIN
+    INSERT INTO candidate_fts(candidate_fts, rowid, name, company, title, skills, education, city)
+    VALUES ('delete', old.id, old.name, old.current_company, old.current_title,
+            old.skill_tags, old.education, old.city);
+    INSERT INTO candidate_fts(rowid, name, company, title, skills, education, city)
+    VALUES (new.id, new.name, new.current_company, new.current_title,
+            new.skill_tags, new.education, new.city);
+END;
 ```
 
 ### 4.8 向量索引（sqlite-vec）
@@ -295,7 +323,8 @@ class TalentDB:
     def fulltext_search(self, query: str, limit: int = 50) -> list[SearchHit]
 
     # ── 查询：向量相似 ──
-    def vector_search(self, query_text: str, limit: int = 20) -> list[VectorHit]
+    def vector_search(self, query_vector: bytes, limit: int = 20) -> list[VectorHit]
+        # 接受预计算的向量（由业务层生成），不依赖 embedding 模型
     def save_embedding(self, candidate_id: int, embedding: bytes) -> None
 
     # ── 查询：JD 匹配相关 ──
@@ -319,13 +348,13 @@ class CandidateFilter:
     education_levels: list[str] = None
     min_work_years: int = None
     max_work_years: int = None
-    skills_any: list[str] = None       # 包含任一
-    skills_all: list[str] = None       # 包含全部
+    skills_any: list[str] = None       # 包含任一，用 json_each + IN 子查询
+    skills_all: list[str] = None       # 包含全部，用 json_each + GROUP BY HAVING
     data_level: str = None
     hunting_status: list[str] = None
     min_score: float = None
     max_score: float = None
-    platforms: list[str] = None
+    platforms: list[str] = None        # JOIN source_profiles 过滤
     updated_after: str = None
 
 @dataclass
@@ -340,6 +369,115 @@ class PageResult:
     page: int
     page_size: int
 ```
+
+### 返回类型定义
+
+```python
+@dataclass
+class Candidate:
+    id: int
+    name: str
+    gender: str | None
+    age: int | None
+    city: str | None
+    work_years: int | None
+    education: str | None
+    current_company: str | None
+    current_title: str | None
+    expected_salary: str | None
+    expected_city: str | None
+    expected_title: str | None
+    hunting_status: str | None
+    skill_tags: list[str]       # 解析后的列表
+    data_level: str
+    overall_score: float
+    score_version: int
+    created_at: str
+    updated_at: str
+
+@dataclass
+class CandidateDetail:
+    candidate_id: int
+    work_experience: list[dict] | None
+    education_experience: list[dict] | None
+    project_experience: list[dict] | None
+    raw_data: dict | None
+    summary: str | None
+
+@dataclass
+class SourceProfile:
+    id: int
+    candidate_id: int
+    platform: str
+    platform_id: str | None
+    profile_url: str | None
+    raw_profile: dict | None
+    fetched_at: str | None
+
+@dataclass
+class SearchHit:
+    id: int
+    rank: float          # FTS5 match score
+    snippet: str         # 高亮摘要
+
+@dataclass
+class VectorHit:
+    id: int
+    similarity: float    # cosine distance
+    name: str
+    current_company: str | None
+    current_title: str | None
+
+@dataclass
+class MatchScore:
+    id: int
+    candidate_id: int
+    jd_id: str
+    match_type: str
+    score: float
+    dimensions: dict | None
+    reason: str | None
+    created_at: str
+
+@dataclass
+class PendingMerge:
+    id: int
+    existing_id: int
+    new_data: dict
+    match_fields: dict | None
+    status: str
+    created_at: str
+
+@dataclass
+class IngestResult:
+    created: int         # 新建记录数
+    merged: int          # 自动合并数
+    pending: int         # 待确认数
+    errors: int          # 失败数
+    error_details: list[str]
+```
+
+### 关键方法行为说明
+
+#### `ingest(candidate_data, platform)` 去重逻辑
+
+1. 查询 `candidates` 表：`WHERE name=? AND current_company=? AND current_title=? AND COALESCE(city,'')=? AND COALESCE(education,'')=?`
+2. 命中 → 自动合并：补充空字段（不覆盖已有值），新增 `source_profiles` 记录，返回已有 id
+3. 未命中 → 查 `company_aliases` 做别名匹配（name + alias of company）
+4. 别名命中 → 新建 candidates 记录 + 写入 `pending_merges`，返回新 id
+5. 未命中 → 新建 candidates + source_profiles，返回新 id
+
+#### `resolve_merge(pending_id, action)`
+
+- `"merge"`: 将新数据合并到已有记录（同 ingest 的合并策略），删除新建的 candidates 记录（CASCADE 自动清理关联数据），更新 pending_merges 状态为 approved
+- `"reject"`: 保留两条独立记录，更新 pending_merges 状态为 rejected
+
+#### `enrich(candidate_id, detail_data)`
+
+- 将 detail_data 写入 `candidate_details` 表（INSERT OR REPLACE）
+- 自动重新判定 `data_level`（如有完整工作经历则升级为 detailed）
+- 更新 `updated_at` 时间戳
+- FTS 触发器自动同步索引
 
 ## 7. 入库流程
 
