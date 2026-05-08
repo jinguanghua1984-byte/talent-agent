@@ -6,7 +6,32 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Mapping
+
+
+def _normalize_skill_tags(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, tuple):
+        return value
+    if isinstance(value, list):
+        return tuple(value)
+    if isinstance(value, str):
+        return (value,)
+    raise TypeError("skill_tags 必须是 list/tuple/str/None")
+
+
+def _normalize_experiences(value: Any) -> tuple[dict[str, Any], ...] | None:
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)):
+        raise TypeError("经历字段必须是 list/tuple/None")
+    normalized: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise TypeError("经历字段中的元素必须是 dict")
+        normalized.append(dict(item))
+    return tuple(normalized)
 
 
 @dataclass(frozen=True)
@@ -31,6 +56,56 @@ class Candidate:
     created_at: str = ""
     updated_at: str = ""
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "skill_tags", _normalize_skill_tags(self.skill_tags))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "gender": self.gender,
+            "age": self.age,
+            "city": self.city,
+            "work_years": self.work_years,
+            "education": self.education,
+            "current_company": self.current_company,
+            "current_title": self.current_title,
+            "expected_salary": self.expected_salary,
+            "expected_city": self.expected_city,
+            "expected_title": self.expected_title,
+            "hunting_status": self.hunting_status,
+            "skill_tags": list(self.skill_tags),
+            "data_level": self.data_level,
+            "overall_score": self.overall_score,
+            "score_version": self.score_version,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "Candidate":
+        return cls(
+            id=data["id"],
+            name=data["name"],
+            gender=data.get("gender"),
+            age=data.get("age"),
+            city=data.get("city"),
+            work_years=data.get("work_years"),
+            education=data.get("education"),
+            current_company=data.get("current_company"),
+            current_title=data.get("current_title"),
+            expected_salary=data.get("expected_salary"),
+            expected_city=data.get("expected_city"),
+            expected_title=data.get("expected_title"),
+            hunting_status=data.get("hunting_status"),
+            skill_tags=data.get("skill_tags"),
+            data_level=data.get("data_level", "lead"),
+            overall_score=data.get("overall_score", 0.0),
+            score_version=data.get("score_version", 0),
+            created_at=data.get("created_at", ""),
+            updated_at=data.get("updated_at", ""),
+        )
+
 
 @dataclass(frozen=True)
 class CandidateDetail:
@@ -40,6 +115,58 @@ class CandidateDetail:
     project_experience: tuple[dict[str, Any], ...] | None = None
     raw_data: dict[str, Any] | None = None
     summary: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "work_experience",
+            _normalize_experiences(self.work_experience),
+        )
+        object.__setattr__(
+            self,
+            "education_experience",
+            _normalize_experiences(self.education_experience),
+        )
+        object.__setattr__(
+            self,
+            "project_experience",
+            _normalize_experiences(self.project_experience),
+        )
+        if self.raw_data is not None:
+            object.__setattr__(self, "raw_data", dict(self.raw_data))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "work_experience": (
+                [dict(item) for item in self.work_experience]
+                if self.work_experience is not None
+                else None
+            ),
+            "education_experience": (
+                [dict(item) for item in self.education_experience]
+                if self.education_experience is not None
+                else None
+            ),
+            "project_experience": (
+                [dict(item) for item in self.project_experience]
+                if self.project_experience is not None
+                else None
+            ),
+            "raw_data": dict(self.raw_data) if self.raw_data is not None else None,
+            "summary": self.summary,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "CandidateDetail":
+        return cls(
+            candidate_id=data["candidate_id"],
+            work_experience=data.get("work_experience"),
+            education_experience=data.get("education_experience"),
+            project_experience=data.get("project_experience"),
+            raw_data=data.get("raw_data"),
+            summary=data.get("summary"),
+        )
 
 
 @dataclass(frozen=True)

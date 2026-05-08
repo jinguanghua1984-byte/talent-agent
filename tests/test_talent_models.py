@@ -164,3 +164,53 @@ class TestSortSpec:
         sort = SortSpec(field="overall_score")
         assert sort.field == "overall_score"
         assert sort.direction == "desc"
+
+
+class TestJsonCompatibility:
+    def test_candidate_list_input_normalized_to_tuple(self):
+        candidate = Candidate(id=2, name="Alice", skill_tags=["AI", "Python"])
+        assert candidate.skill_tags == ("AI", "Python")
+
+    def test_candidate_roundtrip(self):
+        original = Candidate(
+            id=3,
+            name="Bob",
+            city="Shanghai",
+            skill_tags=("Search", "NLP"),
+            data_level="core",
+            overall_score=88.5,
+            score_version=2,
+        )
+        payload = original.to_dict()
+        assert isinstance(payload["skill_tags"], list)
+
+        restored = Candidate.from_dict(payload)
+        assert restored == original
+
+    def test_candidate_detail_list_input_normalized_to_tuple(self):
+        detail = CandidateDetail(
+            candidate_id=10,
+            work_experience=[{"company": "A", "title": "PM"}],
+            education_experience=[{"school": "B"}],
+            project_experience=[{"name": "X"}],
+        )
+        assert detail.work_experience == ({"company": "A", "title": "PM"},)
+        assert detail.education_experience == ({"school": "B"},)
+        assert detail.project_experience == ({"name": "X"},)
+
+    def test_candidate_detail_roundtrip(self):
+        original = CandidateDetail(
+            candidate_id=11,
+            work_experience=({"company": "A", "title": "Engineer"},),
+            education_experience=({"school": "C", "degree": "MS"},),
+            project_experience=({"name": "Platform"},),
+            raw_data={"source": "db"},
+            summary="test summary",
+        )
+        payload = original.to_dict()
+        assert isinstance(payload["work_experience"], list)
+        assert isinstance(payload["education_experience"], list)
+        assert isinstance(payload["project_experience"], list)
+
+        restored = CandidateDetail.from_dict(payload)
+        assert restored == original
