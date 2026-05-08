@@ -177,9 +177,13 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   }
 
   if (msg.type === "exportPagerJson") {
-    PagerDB.getAll().then(function (contacts) {
-      return PagerDB.getCount().then(function (count) {
-        var pager = window.__activePager || {};
+    PagerDB.getCount().then(function (count) {
+      if (count === 0) {
+        sendResponse({ empty: true });
+        return;
+      }
+      return PagerDB.getAll().then(function (contacts) {
+        var pager = __activePager || {};
         var data = {
           exportTime: new Date().toISOString(),
           metadata: {
@@ -205,7 +209,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
         });
       });
     }).catch(function (err) {
-      sendResponse({ ok: false, error: err.message });
+      sendResponse({ empty: true });
     });
     return true;
   }

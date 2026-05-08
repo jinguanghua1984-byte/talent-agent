@@ -81,14 +81,14 @@
   document.getElementById("btn-export").addEventListener("click", function () {
     var filename = "maimai-capture-" + new Date().toISOString().slice(0, 10) + ".json";
 
-    chrome.runtime.sendMessage({ type: "getPagerStatus" }, function (status) {
-      if (status && status.totalPages > 1) {
-        chrome.runtime.sendMessage({ type: "exportPagerJson", filename: filename }, function (r) {
-          if (r && r.downloadId) { statusBadge.textContent = "已导出"; }
-        });
+    // 优先从 IndexedDB 导出（分页数据），没有则从 chrome.storage 导出
+    chrome.runtime.sendMessage({ type: "exportPagerJson", filename: filename }, function (r) {
+      if (r && r.downloadId) {
+        statusBadge.textContent = "已导出";
       } else {
-        chrome.runtime.sendMessage({ type: "exportJson", filename: filename }, function (r) {
-          if (r && r.downloadId) { statusBadge.textContent = "已导出"; }
+        // IndexedDB 无数据，回退到 chrome.storage
+        chrome.runtime.sendMessage({ type: "exportJson", filename: filename }, function (r2) {
+          if (r2 && r2.downloadId) { statusBadge.textContent = "已导出"; }
         });
       }
     });
