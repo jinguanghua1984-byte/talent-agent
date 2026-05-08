@@ -85,6 +85,60 @@ def test_init_is_idempotent(tmp_path: Path):
     assert db_path.exists()
 
 
+def test_minimal_ingest_rejects_duplicate_identity_with_missing_optional_fields(
+    db: TalentDB,
+):
+    candidate_data = {
+        "name": "Duplicate Person",
+        "current_company": "Acme",
+        "current_title": "Engineer",
+    }
+
+    db.ingest(candidate_data, platform="maimai")
+
+    with pytest.raises(sqlite3.IntegrityError):
+        db.ingest(candidate_data, platform="boss")
+
+    count = db._conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM candidates
+        WHERE name = ? AND current_company = ? AND current_title = ?
+        """,
+        (
+            candidate_data["name"],
+            candidate_data["current_company"],
+            candidate_data["current_title"],
+        ),
+    ).fetchone()[0]
+    assert count == 1
+
+
+def test_fts_trigger_indexes_ingested_candidate(db: TalentDB):
+    candidate_id = db.ingest(
+        {
+            "name": "Searchable Candidate",
+            "city": "Shenzhen",
+            "current_company": "VectorWorks",
+            "current_title": "ML Engineer",
+            "skill_tags": ["ranking", "retrieval"],
+        },
+        platform="maimai",
+    )
+
+    row = db._conn.execute(
+        """
+        SELECT rowid
+        FROM candidate_fts
+        WHERE candidate_fts MATCH ?
+        """,
+        ("Searchable",),
+    ).fetchone()
+
+    assert row is not None
+    assert row["rowid"] == candidate_id
+
+
 def test_get_existing(db_with_candidate: tuple[TalentDB, int]):
     db, candidate_id = db_with_candidate
 

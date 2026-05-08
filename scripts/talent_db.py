@@ -57,8 +57,7 @@ class TalentDB:
                 overall_score REAL DEFAULT 0,
                 score_version INTEGER DEFAULT 0,
                 created_at TEXT DEFAULT (datetime('now')),
-                updated_at TEXT DEFAULT (datetime('now')),
-                UNIQUE(name, current_company, current_title, city, education)
+                updated_at TEXT DEFAULT (datetime('now'))
             );
 
             CREATE TABLE IF NOT EXISTS candidate_details (
@@ -137,6 +136,14 @@ class TalentDB:
             CREATE INDEX IF NOT EXISTS idx_candidates_work_years ON candidates(work_years);
             CREATE INDEX IF NOT EXISTS idx_candidates_data_level ON candidates(data_level);
             CREATE INDEX IF NOT EXISTS idx_candidates_score ON candidates(overall_score DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_candidates_identity
+                ON candidates(
+                    name,
+                    current_company,
+                    current_title,
+                    COALESCE(city, ''),
+                    COALESCE(education, '')
+                );
             CREATE INDEX IF NOT EXISTS idx_source_platform ON source_profiles(platform);
             CREATE INDEX IF NOT EXISTS idx_source_candidate ON source_profiles(candidate_id);
             CREATE INDEX IF NOT EXISTS idx_match_scores_jd ON match_scores(jd_id);
@@ -274,7 +281,7 @@ class TalentDB:
         if row is None:
             return None
         data = dict(row)
-        data["skill_tags"] = _json_loads(data.get("skill_tags"), [])
+        data["skill_tags"] = _json_loads(data.get("skill_tags"), [], "candidates.skill_tags")
         return Candidate.from_dict(data)
 
     def get_detail(self, candidate_id: int) -> CandidateDetail | None:
@@ -285,8 +292,8 @@ class TalentDB:
             return None
         data = dict(row)
         for field in ("work_experience", "education_experience", "project_experience"):
-            data[field] = _json_loads(data.get(field), None)
-        data["raw_data"] = _json_loads(data.get("raw_data"), None)
+            data[field] = _json_loads(data.get(field), None, f"candidate_details.{field}")
+        data["raw_data"] = _json_loads(data.get("raw_data"), None, "candidate_details.raw_data")
         return CandidateDetail.from_dict(data)
 
     def get_sources(self, candidate_id: int) -> list[SourceProfile]:
@@ -305,7 +312,7 @@ class TalentDB:
                 platform=row["platform"],
                 platform_id=row["platform_id"],
                 profile_url=row["profile_url"],
-                raw_profile=_json_loads(row["raw_profile"], None),
+                raw_profile=_json_loads(row["raw_profile"], None, "source_profiles.raw_profile"),
                 fetched_at=row["fetched_at"],
             )
             for row in rows
@@ -375,8 +382,10 @@ class TalentDB:
             PendingMerge(
                 id=row["id"],
                 existing_id=row["existing_id"],
-                new_data=_json_loads(row["new_data"], {}),
-                match_fields=_json_loads(row["match_fields"], None),
+                new_data=_json_loads(row["new_data"], {}, "pending_merges.new_data"),
+                match_fields=_json_loads(
+                    row["match_fields"], None, "pending_merges.match_fields"
+                ),
                 status=row["status"],
                 created_at=row["created_at"],
             )
@@ -398,7 +407,10 @@ def _json_dumps(value: Any) -> str | None:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _json_loads(value: str | None, default: Any) -> Any:
+def _json_loads(value: str | None, default: Any, field_name: str) -> Any:
     if value is None:
         return default
-    return json.loads(value)
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in TalentDB field {field_name}") from exc
