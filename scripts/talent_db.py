@@ -139,8 +139,8 @@ class TalentDB:
             CREATE UNIQUE INDEX IF NOT EXISTS idx_candidates_identity
                 ON candidates(
                     name,
-                    current_company,
-                    current_title,
+                    COALESCE(current_company, ''),
+                    COALESCE(current_title, ''),
                     COALESCE(city, ''),
                     COALESCE(education, '')
                 );

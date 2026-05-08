@@ -114,6 +114,21 @@ def test_minimal_ingest_rejects_duplicate_identity_with_missing_optional_fields(
     assert count == 1
 
 
+def test_name_only_ingest_rejects_duplicate_identity(db: TalentDB):
+    candidate_data = {"name": "Name Only"}
+
+    db.ingest(candidate_data, platform="maimai")
+
+    with pytest.raises(sqlite3.IntegrityError):
+        db.ingest(candidate_data, platform="maimai")
+
+    count = db._conn.execute(
+        "SELECT COUNT(*) FROM candidates WHERE name = ?",
+        (candidate_data["name"],),
+    ).fetchone()[0]
+    assert count == 1
+
+
 def test_fts_trigger_indexes_ingested_candidate(db: TalentDB):
     candidate_id = db.ingest(
         {
