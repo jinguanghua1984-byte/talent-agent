@@ -322,6 +322,48 @@ def test_duplicate_source_profile_does_not_break_merge(db: TalentDB):
     assert sources[0].profile_url == "https://example.com/new"
 
 
+def test_same_platform_id_merges_even_when_identity_fields_change(db: TalentDB):
+    candidate_id = db.ingest(
+        {
+            "name": "Stable Source",
+            "current_company": "Acme",
+            "current_title": "Engineer",
+            "city": "Shanghai",
+            "education": "Bachelor",
+            "platform_id": "stable-source-id",
+            "skill_tags": ["Python"],
+        },
+        platform="maimai",
+    )
+
+    same_id = db.ingest(
+        {
+            "name": "Stable Source",
+            "current_company": "OtherCo",
+            "current_title": "Architect",
+            "city": "Beijing",
+            "education": "Master",
+            "platform_id": "stable-source-id",
+            "expected_salary": "70k",
+            "skill_tags": ["SQL"],
+        },
+        platform="maimai",
+    )
+
+    candidate = db.get(candidate_id)
+    sources = db.get_sources(candidate_id)
+    assert same_id == candidate_id
+    assert candidate.current_company == "Acme"
+    assert candidate.current_title == "Engineer"
+    assert candidate.city == "Shanghai"
+    assert candidate.education == "Bachelor"
+    assert candidate.expected_salary == "70k"
+    assert candidate.skill_tags == ("Python", "SQL")
+    assert len(sources) == 1
+    assert sources[0].candidate_id == candidate_id
+    assert sources[0].platform_id == "stable-source-id"
+
+
 def test_missing_platform_id_exact_ingest_does_not_duplicate_source_profile(
     db: TalentDB,
 ):
@@ -688,6 +730,55 @@ def test_resolve_merge_approve_deletes_merges_new_candidate_and_writes_log(
     }
     with pytest.raises(ValueError):
         db.resolve_merge(pending_id, "merge")
+
+
+def test_resolve_merge_rolls_back_when_late_step_fails(db: TalentDB, monkeypatch):
+    existing_id = db.ingest(
+        {
+            "name": "Atomic Person",
+            "current_company": "ByteDance",
+            "current_title": "Engineer",
+            "city": "Shanghai",
+            "education": "Bachelor",
+            "platform_id": "maimai-atomic-existing",
+        },
+        platform="maimai",
+    )
+    db.add_company_alias("ByteDance", "Toutiao")
+    new_id = db.ingest(
+        {
+            "name": "Atomic Person",
+            "current_company": "Toutiao",
+            "current_title": "Engineer",
+            "city": "Shanghai",
+            "education": "Bachelor",
+            "expected_salary": "80k",
+            "platform_id": "boss-atomic-new",
+            "skill_tags": ["Go"],
+            "work_experience": [{"company": "Toutiao", "title": "Engineer"}],
+        },
+        platform="boss",
+    )
+    pending_id = db.pending_merges()[0].id
+
+    def fail_move_sources(from_candidate_id, to_candidate_id):
+        raise RuntimeError("forced late failure")
+
+    monkeypatch.setattr(db, "_move_sources", fail_move_sources)
+
+    with pytest.raises(RuntimeError, match="forced late failure"):
+        db.resolve_merge(pending_id, "merge")
+
+    pending_row = db._conn.execute(
+        "SELECT status FROM pending_merges WHERE id = ?", (pending_id,)
+    ).fetchone()
+
+    assert db.get(existing_id).expected_salary is None
+    assert db.get(existing_id).skill_tags == ()
+    assert db.get_detail(existing_id) is None
+    assert db.get(new_id) is not None
+    assert pending_row["status"] == "pending"
+    assert db._conn.execute("SELECT COUNT(*) FROM merge_log").fetchone()[0] == 0
 
 
 def test_resolve_merge_reject_keeps_both_candidates(db: TalentDB):

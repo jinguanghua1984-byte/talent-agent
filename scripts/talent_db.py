@@ -242,6 +242,11 @@ class TalentDB:
             return candidate_id
 
     def _ingest_with_result(self, data: dict[str, Any], platform: str) -> tuple[int, str]:
+        source_candidate_id = self._candidate_id_for_source(data, platform)
+        if source_candidate_id is not None:
+            self._merge_candidate(source_candidate_id, data, platform)
+            return source_candidate_id, "merged"
+
         existing_id = self._find_exact_match(data)
         if existing_id is not None:
             self._merge_candidate(existing_id, data, platform)
@@ -307,8 +312,8 @@ class TalentDB:
         if row["status"] != "pending":
             raise ValueError(f"Pending merge is already resolved: {pending_id}")
 
-        if action == "reject":
-            with self._conn:
+        with self._conn:
+            if action == "reject":
                 self._conn.execute(
                     """
                     UPDATE pending_merges
@@ -317,25 +322,24 @@ class TalentDB:
                     """,
                     (pending_id,),
                 )
-            return
+                return
 
-        pending_data = _json_loads(row["new_data"], {}, "pending_merges.new_data")
-        existing_id = int(row["existing_id"])
-        new_id = pending_data.get("_candidate_id")
-        if new_id is None:
-            raise ValueError(f"Pending merge has no new candidate id: {pending_id}")
+            pending_data = _json_loads(row["new_data"], {}, "pending_merges.new_data")
+            existing_id = int(row["existing_id"])
+            new_id = pending_data.get("_candidate_id")
+            if new_id is None:
+                raise ValueError(f"Pending merge has no new candidate id: {pending_id}")
 
-        new_candidate = self.get(int(new_id))
-        if new_candidate is None:
-            raise ValueError(f"Pending merge candidate does not exist: {new_id}")
+            new_candidate = self.get(int(new_id))
+            if new_candidate is None:
+                raise ValueError(f"Pending merge candidate does not exist: {new_id}")
 
-        merge_data = new_candidate.to_dict()
-        merge_data.update(_public_ingest_data(pending_data))
-        detail = self.get_detail(int(new_id))
-        if detail is not None:
-            merge_data["detail"] = detail.to_dict()
+            merge_data = new_candidate.to_dict()
+            merge_data.update(_public_ingest_data(pending_data))
+            detail = self.get_detail(int(new_id))
+            if detail is not None:
+                merge_data["detail"] = detail.to_dict()
 
-        with self._conn:
             self._merge_candidate(existing_id, merge_data, pending_data.get("_platform", ""))
             self._move_sources(int(new_id), existing_id)
             self._conn.execute("DELETE FROM candidates WHERE id = ?", (int(new_id),))
@@ -361,6 +365,22 @@ class TalentDB:
                     ),
                 ),
             )
+
+    def _candidate_id_for_source(self, data: dict[str, Any], platform: str) -> int | None:
+        platform_id = data.get("platform_id")
+        if not platform_id:
+            return None
+        row = self._conn.execute(
+            """
+            SELECT candidate_id
+            FROM source_profiles
+            WHERE platform = ? AND platform_id = ?
+            ORDER BY id
+            LIMIT 1
+            """,
+            (platform, platform_id),
+        ).fetchone()
+        return int(row["candidate_id"]) if row is not None else None
 
     def _find_exact_match(self, data: dict[str, Any]) -> int | None:
         row = self._conn.execute(
@@ -589,7 +609,7 @@ class TalentDB:
                     incoming if _is_empty(current) and not _is_empty(incoming) else current
                 )
 
-        self.enrich(candidate_id, merged)
+        self._enrich_no_commit(candidate_id, merged)
 
     def _create_pending_merge(
         self,
@@ -674,46 +694,49 @@ class TalentDB:
         ]
 
     def enrich(self, candidate_id: int, detail_data: dict[str, Any]) -> None:
+        with self._conn:
+            self._enrich_no_commit(candidate_id, detail_data)
+
+    def _enrich_no_commit(self, candidate_id: int, detail_data: dict[str, Any]) -> None:
         values = {field: detail_data.get(field) for field in _DETAIL_FIELDS}
         work_experience = values.get("work_experience")
-        with self._conn:
+        self._conn.execute(
+            """
+            INSERT INTO candidate_details (
+                candidate_id, work_experience, education_experience,
+                project_experience, raw_data, summary
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(candidate_id) DO UPDATE SET
+                work_experience = excluded.work_experience,
+                education_experience = excluded.education_experience,
+                project_experience = excluded.project_experience,
+                raw_data = excluded.raw_data,
+                summary = excluded.summary
+            """,
+            (
+                candidate_id,
+                _json_dumps(values["work_experience"]),
+                _json_dumps(values["education_experience"]),
+                _json_dumps(values["project_experience"]),
+                _json_dumps(values["raw_data"]),
+                values["summary"],
+            ),
+        )
+        if work_experience:
             self._conn.execute(
                 """
-                INSERT INTO candidate_details (
-                    candidate_id, work_experience, education_experience,
-                    project_experience, raw_data, summary
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(candidate_id) DO UPDATE SET
-                    work_experience = excluded.work_experience,
-                    education_experience = excluded.education_experience,
-                    project_experience = excluded.project_experience,
-                    raw_data = excluded.raw_data,
-                    summary = excluded.summary
+                UPDATE candidates
+                SET data_level = 'detailed', updated_at = datetime('now')
+                WHERE id = ?
                 """,
-                (
-                    candidate_id,
-                    _json_dumps(values["work_experience"]),
-                    _json_dumps(values["education_experience"]),
-                    _json_dumps(values["project_experience"]),
-                    _json_dumps(values["raw_data"]),
-                    values["summary"],
-                ),
+                (candidate_id,),
             )
-            if work_experience:
-                self._conn.execute(
-                    """
-                    UPDATE candidates
-                    SET data_level = 'detailed', updated_at = datetime('now')
-                    WHERE id = ?
-                    """,
-                    (candidate_id,),
-                )
-            else:
-                self._conn.execute(
-                    "UPDATE candidates SET updated_at = datetime('now') WHERE id = ?",
-                    (candidate_id,),
-                )
+        else:
+            self._conn.execute(
+                "UPDATE candidates SET updated_at = datetime('now') WHERE id = ?",
+                (candidate_id,),
+            )
 
     def add_company_alias(self, canonical: str, alias: str) -> None:
         with self._conn:
