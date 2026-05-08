@@ -19,6 +19,7 @@
         method: e.data.method,
         pageMeta: e.data.pageMeta || null,
         contactCount: e.data.contactCount || 0,
+        template: e.data.template || null,
       };
     }
 
@@ -109,29 +110,8 @@
     }
 
     if (msg.type === "getFullTemplate") {
-      var script = document.createElement("script");
-      script.textContent = "(function(){" +
-        "var t = window.__maimaiSearchTemplate;" +
-        "window.postMessage({" +
-        "  type: '__MAIMAI_FULL_TEMPLATE__'," +
-        "  template: t" +
-        "}, '*');" +
-        "})();";
-      document.documentElement.appendChild(script);
-      script.remove();
-
-      var handler = function (e) {
-        if (e.source !== window || !e.data || e.data.type !== "__MAIMAI_FULL_TEMPLATE__") return;
-        window.removeEventListener("message", handler);
-        sendResponse({ template: e.data.template });
-      };
-      window.addEventListener("message", handler);
-
-      setTimeout(function () {
-        window.removeEventListener("message", handler);
-        sendResponse({ template: null });
-      }, 3000);
-      return true;
+      sendResponse({ template: templateCache.template || null });
+      return false;
     }
 
     if (msg.type === "pagerFetch") {

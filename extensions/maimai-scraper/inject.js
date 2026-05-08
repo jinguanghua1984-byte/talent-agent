@@ -171,6 +171,7 @@ if (!window.__maimaiScraperV2) {
       method: record.method,
       pageMeta: pageMeta,
       contactCount: contacts.length,
+      template: window.__maimaiSearchTemplate,
     }, "*");
   }
 
