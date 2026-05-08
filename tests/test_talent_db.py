@@ -85,19 +85,26 @@ def test_init_is_idempotent(tmp_path: Path):
     assert db_path.exists()
 
 
-def test_minimal_ingest_rejects_duplicate_identity_with_missing_optional_fields(
-    db: TalentDB,
-):
+def test_exact_match_merges_and_returns_same_id(db: TalentDB):
     candidate_data = {
         "name": "Duplicate Person",
         "current_company": "Acme",
         "current_title": "Engineer",
+        "city": "Shanghai",
+        "education": "Bachelor",
+        "skill_tags": ["Python"],
+        "platform_id": "maimai-duplicate-1",
     }
 
-    db.ingest(candidate_data, platform="maimai")
-
-    with pytest.raises(sqlite3.IntegrityError):
-        db.ingest(candidate_data, platform="boss")
+    first_id = db.ingest(candidate_data, platform="maimai")
+    second_id = db.ingest(
+        {
+            **candidate_data,
+            "skill_tags": ["Python", "SQL"],
+            "platform_id": "boss-duplicate-1",
+        },
+        platform="boss",
+    )
 
     count = db._conn.execute(
         """
@@ -111,22 +118,193 @@ def test_minimal_ingest_rejects_duplicate_identity_with_missing_optional_fields(
             candidate_data["current_title"],
         ),
     ).fetchone()[0]
+    candidate = db.get(first_id)
+
+    assert second_id == first_id
     assert count == 1
+    assert candidate.skill_tags == ("Python", "SQL")
+    assert len(db.get_sources(first_id)) == 2
 
 
-def test_name_only_ingest_rejects_duplicate_identity(db: TalentDB):
+def test_nullable_fields_matching_works(db: TalentDB):
     candidate_data = {"name": "Name Only"}
 
-    db.ingest(candidate_data, platform="maimai")
-
-    with pytest.raises(sqlite3.IntegrityError):
-        db.ingest(candidate_data, platform="maimai")
+    first_id = db.ingest(candidate_data, platform="maimai")
+    second_id = db.ingest(
+        {
+            "name": "Name Only",
+            "current_company": None,
+            "current_title": None,
+            "city": None,
+            "education": None,
+        },
+        platform="boss",
+    )
 
     count = db._conn.execute(
         "SELECT COUNT(*) FROM candidates WHERE name = ?",
         (candidate_data["name"],),
     ).fetchone()[0]
+
+    assert second_id == first_id
     assert count == 1
+
+
+def test_new_candidate(db: TalentDB):
+    candidate_id = db.ingest(
+        {
+            "name": "Fresh Candidate",
+            "current_company": "NewCo",
+            "current_title": "Designer",
+            "platform_id": "fresh-1",
+        },
+        platform="maimai",
+    )
+
+    candidate = db.get(candidate_id)
+
+    assert candidate is not None
+    assert candidate.name == "Fresh Candidate"
+    assert candidate.current_company == "NewCo"
+    assert db.get_sources(candidate_id)[0].platform_id == "fresh-1"
+
+
+def test_core_and_detailed_data_level(db: TalentDB):
+    core_id = db.ingest(
+        {"name": "Core Person", "skill_tags": ["Go"]},
+        platform="maimai",
+    )
+    detailed_id = db.ingest(
+        {
+            "name": "Detailed Person",
+            "work_experience": [{"company": "Acme", "title": "Engineer"}],
+        },
+        platform="maimai",
+    )
+
+    assert db.get(core_id).data_level == "core"
+    assert db.get(detailed_id).data_level == "detailed"
+    assert db.get_detail(detailed_id).work_experience == (
+        {"company": "Acme", "title": "Engineer"},
+    )
+
+
+def test_merge_supplements_empty_fields_only(db: TalentDB):
+    first_id = db.ingest(
+        {
+            "name": "Field Merge",
+            "current_company": "Acme",
+            "current_title": "Engineer",
+            "city": "Shanghai",
+            "education": "Bachelor",
+            "gender": "female",
+        },
+        platform="maimai",
+    )
+
+    second_id = db.ingest(
+        {
+            "name": "Field Merge",
+            "current_company": "Acme",
+            "current_title": "Engineer",
+            "city": "Shanghai",
+            "education": "Bachelor",
+            "gender": "male",
+            "expected_salary": "50k",
+        },
+        platform="boss",
+    )
+
+    candidate = db.get(first_id)
+    assert second_id == first_id
+    assert candidate.gender == "female"
+    assert candidate.expected_salary == "50k"
+
+
+def test_merge_detail_does_not_overwrite_with_empty_detail(db: TalentDB):
+    first_id = db.ingest(
+        {
+            "name": "Detail Merge",
+            "current_company": "Acme",
+            "current_title": "Engineer",
+            "work_experience": [{"company": "Acme"}],
+        },
+        platform="maimai",
+    )
+
+    same_id = db.ingest(
+        {
+            "name": "Detail Merge",
+            "current_company": "Acme",
+            "current_title": "Engineer",
+            "detail": {
+                "work_experience": [],
+                "education_experience": [{"school": "Fudan"}],
+            },
+        },
+        platform="boss",
+    )
+
+    detail = db.get_detail(first_id)
+    assert same_id == first_id
+    assert detail.work_experience == ({"company": "Acme"},)
+    assert detail.education_experience == ({"school": "Fudan"},)
+
+
+def test_duplicate_source_profile_does_not_break_merge(db: TalentDB):
+    candidate_id = db.ingest(
+        {
+            "name": "Source Stable",
+            "current_company": "Acme",
+            "current_title": "Engineer",
+            "platform_id": "same-source",
+            "profile_url": "https://example.com/old",
+        },
+        platform="maimai",
+    )
+
+    same_id = db.ingest(
+        {
+            "name": "Source Stable",
+            "current_company": "Acme",
+            "current_title": "Engineer",
+            "platform_id": "same-source",
+            "profile_url": "https://example.com/new",
+        },
+        platform="maimai",
+    )
+
+    sources = db.get_sources(candidate_id)
+    assert same_id == candidate_id
+    assert len(sources) == 1
+    assert sources[0].profile_url == "https://example.com/new"
+
+
+def test_batch_ingest_mixed_created_merged_errors(db: TalentDB):
+    result = db.batch_ingest(
+        [
+            {
+                "name": "Batch New",
+                "current_company": "Acme",
+                "current_title": "Engineer",
+            },
+            {
+                "name": "Batch New",
+                "current_company": "Acme",
+                "current_title": "Engineer",
+                "skill_tags": ["Python"],
+            },
+            {"current_company": "Broken"},
+        ],
+        platform="maimai",
+    )
+
+    assert result.created == 1
+    assert result.merged == 1
+    assert result.pending == 0
+    assert result.errors == 1
+    assert result.total == 2
+    assert "Broken" in result.error_details[0] or "name" in result.error_details[0]
 
 
 def test_fts_trigger_indexes_ingested_candidate(db: TalentDB):
@@ -286,3 +464,162 @@ def test_pending_merges_returns_pending_records_only(db: TalentDB):
     assert pending_merge.match_fields == pending_match_fields
     assert pending_merge.status == "pending"
     assert pending_merge.created_at
+
+
+def test_alias_pending_merge_create(db: TalentDB):
+    existing_id = db.ingest(
+        {
+            "name": "Alias Person",
+            "current_company": "ByteDance",
+            "current_title": "Product Manager",
+            "city": "Beijing",
+            "education": "Master",
+            "platform_id": "maimai-alias-existing",
+        },
+        platform="maimai",
+    )
+    db.add_company_alias("ByteDance", "Toutiao")
+
+    new_id = db.ingest(
+        {
+            "name": "Alias Person",
+            "current_company": "Toutiao",
+            "current_title": "Product Manager",
+            "city": "Beijing",
+            "education": "Master",
+            "platform_id": "boss-alias-new",
+        },
+        platform="boss",
+    )
+
+    pending = db.pending_merges()
+    candidate_count = db._conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0]
+
+    assert new_id != existing_id
+    assert candidate_count == 2
+    assert len(pending) == 1
+    assert pending[0].existing_id == existing_id
+    assert pending[0].new_data["current_company"] == "Toutiao"
+    assert "_candidate_id" not in pending[0].new_data
+
+
+def test_resolve_merge_approve_deletes_merges_new_candidate_and_writes_log(
+    db: TalentDB,
+):
+    existing_id = db.ingest(
+        {
+            "name": "Resolve Person",
+            "current_company": "ByteDance",
+            "current_title": "Engineer",
+            "city": "Shanghai",
+            "education": "Bachelor",
+            "platform_id": "maimai-resolve-existing",
+            "skill_tags": ["Python"],
+        },
+        platform="maimai",
+    )
+    db.add_company_alias("ByteDance", "Toutiao")
+    new_id = db.ingest(
+        {
+            "name": "Resolve Person",
+            "current_company": "Toutiao",
+            "current_title": "Engineer",
+            "city": "Shanghai",
+            "education": "Bachelor",
+            "expected_salary": "60k",
+            "platform_id": "boss-resolve-new",
+            "skill_tags": ["SQL"],
+        },
+        platform="boss",
+    )
+    pending_id = db.pending_merges()[0].id
+
+    db.resolve_merge(pending_id, "merge")
+
+    candidate = db.get(existing_id)
+    pending_row = db._conn.execute(
+        "SELECT status FROM pending_merges WHERE id = ?", (pending_id,)
+    ).fetchone()
+    log_row = db._conn.execute(
+        """
+        SELECT survivor_id, merged_id, match_type
+        FROM merge_log
+        WHERE survivor_id = ? AND merged_id = ?
+        """,
+        (existing_id, new_id),
+    ).fetchone()
+
+    assert db.get(new_id) is None
+    assert candidate.expected_salary == "60k"
+    assert candidate.skill_tags == ("Python", "SQL")
+    assert {source.platform_id for source in db.get_sources(existing_id)} == {
+        "maimai-resolve-existing",
+        "boss-resolve-new",
+    }
+    assert pending_row["status"] == "approved"
+    assert dict(log_row) == {
+        "survivor_id": existing_id,
+        "merged_id": new_id,
+        "match_type": "company_alias",
+    }
+
+
+def test_resolve_merge_reject_keeps_both_candidates(db: TalentDB):
+    existing_id = db.ingest(
+        {
+            "name": "Reject Person",
+            "current_company": "ByteDance",
+            "current_title": "Designer",
+            "city": "Shenzhen",
+            "education": "Bachelor",
+        },
+        platform="maimai",
+    )
+    db.add_company_alias("ByteDance", "Toutiao")
+    new_id = db.ingest(
+        {
+            "name": "Reject Person",
+            "current_company": "Toutiao",
+            "current_title": "Designer",
+            "city": "Shenzhen",
+            "education": "Bachelor",
+        },
+        platform="boss",
+    )
+    pending_id = db.pending_merges()[0].id
+
+    db.resolve_merge(pending_id, "reject")
+
+    status = db._conn.execute(
+        "SELECT status FROM pending_merges WHERE id = ?", (pending_id,)
+    ).fetchone()["status"]
+
+    assert db.get(existing_id) is not None
+    assert db.get(new_id) is not None
+    assert status == "rejected"
+    assert db.pending_merges() == []
+
+
+def test_resolve_merge_invalid_action_and_pending_id(db: TalentDB):
+    with pytest.raises(ValueError):
+        db.resolve_merge(123, "merge")
+
+    existing_id = db.ingest(
+        {
+            "name": "Invalid Action",
+            "current_company": "ByteDance",
+            "current_title": "Engineer",
+        },
+        platform="maimai",
+    )
+    with db._conn:
+        pending_id = db._conn.execute(
+            """
+            INSERT INTO pending_merges(existing_id, new_data, match_fields, status)
+            VALUES (?, ?, ?, 'pending')
+            """,
+            (existing_id, json.dumps({"name": "Invalid Action"}), json.dumps({})),
+        ).lastrowid
+
+    with pytest.raises(ValueError):
+        db.resolve_merge(pending_id, "maybe")

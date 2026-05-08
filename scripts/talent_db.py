@@ -7,7 +7,13 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from scripts.talent_models import Candidate, CandidateDetail, PendingMerge, SourceProfile
+from scripts.talent_models import (
+    Candidate,
+    CandidateDetail,
+    IngestResult,
+    PendingMerge,
+    SourceProfile,
+)
 
 
 _DETAIL_FIELDS = (
@@ -26,6 +32,7 @@ class TalentDB:
         self._conn = sqlite3.connect(str(self._db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys=ON")
+        self._last_ingest_action: str | None = None
         try:
             self._conn.execute("PRAGMA journal_mode=WAL")
         except sqlite3.OperationalError:
@@ -224,55 +231,340 @@ class TalentDB:
             pass
 
     def ingest(self, data: dict[str, Any], platform: str) -> int:
-        skill_tags = data.get("skill_tags")
-        data_level = self._data_level_for(data)
         with self._conn:
-            cursor = self._conn.execute(
-                """
-                INSERT INTO candidates (
-                    name, gender, age, city, work_years, education,
-                    current_company, current_title, expected_salary,
-                    expected_city, expected_title, hunting_status,
-                    skill_tags, data_level
+            candidate_id, action = self._ingest_with_result(data, platform)
+            self._last_ingest_action = action
+            return candidate_id
+
+    def _ingest_with_result(self, data: dict[str, Any], platform: str) -> tuple[int, str]:
+        existing_id = self._find_exact_match(data)
+        if existing_id is not None:
+            self._merge_candidate(existing_id, data, platform)
+            return existing_id, "merged"
+
+        canonical_company = self._canonical_for_alias(data.get("current_company"))
+        if canonical_company:
+            alias_match_data = {**data, "current_company": canonical_company}
+            alias_existing_id = self._find_exact_match(alias_match_data)
+            if alias_existing_id is not None:
+                new_id = self._insert_candidate(data, platform)
+                self._create_pending_merge(
+                    existing_id=alias_existing_id,
+                    new_id=new_id,
+                    data=data,
+                    platform=platform,
+                    match_fields={
+                        "name": "exact",
+                        "current_company": {
+                            "alias": data.get("current_company"),
+                            "canonical": canonical_company,
+                        },
+                        "current_title": "exact",
+                        "city": "exact",
+                        "education": "exact",
+                    },
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    data["name"],
-                    data.get("gender"),
-                    data.get("age"),
-                    data.get("city"),
-                    data.get("work_years"),
-                    data.get("education"),
-                    data.get("current_company"),
-                    data.get("current_title"),
-                    data.get("expected_salary"),
-                    data.get("expected_city"),
-                    data.get("expected_title"),
-                    data.get("hunting_status"),
-                    _json_dumps(skill_tags or []),
-                    data_level,
-                ),
-            )
-            candidate_id = int(cursor.lastrowid)
+                return new_id, "pending"
+
+        candidate_id = self._insert_candidate(data, platform)
+        return candidate_id, "created"
+
+    def batch_ingest(
+        self, candidates: list[dict[str, Any]], platform: str
+    ) -> IngestResult:
+        result = IngestResult()
+        for index, data in enumerate(candidates):
+            try:
+                self.ingest(data, platform)
+            except Exception as exc:  # noqa: BLE001 - batch import should keep going.
+                result.errors += 1
+                name = data.get("name", f"#{index}")
+                result.error_details.append(f"{name}: {exc}")
+                continue
+
+            if self._last_ingest_action == "created":
+                result.created += 1
+            elif self._last_ingest_action == "merged":
+                result.merged += 1
+            elif self._last_ingest_action == "pending":
+                result.pending += 1
+        return result
+
+    def resolve_merge(self, pending_id: int, action: str) -> None:
+        if action not in {"merge", "reject"}:
+            raise ValueError(f"Unsupported merge action: {action}")
+
+        row = self._conn.execute(
+            "SELECT * FROM pending_merges WHERE id = ?", (pending_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Pending merge does not exist: {pending_id}")
+
+        if action == "reject":
+            with self._conn:
+                self._conn.execute(
+                    """
+                    UPDATE pending_merges
+                    SET status = 'rejected', resolved_at = datetime('now')
+                    WHERE id = ?
+                    """,
+                    (pending_id,),
+                )
+            return
+
+        pending_data = _json_loads(row["new_data"], {}, "pending_merges.new_data")
+        existing_id = int(row["existing_id"])
+        new_id = pending_data.get("_candidate_id")
+        if new_id is None:
+            raise ValueError(f"Pending merge has no new candidate id: {pending_id}")
+
+        new_candidate = self.get(int(new_id))
+        if new_candidate is None:
+            raise ValueError(f"Pending merge candidate does not exist: {new_id}")
+
+        merge_data = new_candidate.to_dict()
+        merge_data.update(_public_ingest_data(pending_data))
+        detail = self.get_detail(int(new_id))
+        if detail is not None:
+            merge_data["detail"] = detail.to_dict()
+
+        with self._conn:
+            self._merge_candidate(existing_id, merge_data, pending_data.get("_platform", ""))
+            self._move_sources(int(new_id), existing_id)
+            self._conn.execute("DELETE FROM candidates WHERE id = ?", (int(new_id),))
             self._conn.execute(
                 """
-                INSERT INTO source_profiles (
-                    candidate_id, platform, platform_id, profile_url, raw_profile
-                )
-                VALUES (?, ?, ?, ?, ?)
+                UPDATE pending_merges
+                SET status = 'approved', resolved_at = datetime('now')
+                WHERE id = ?
+                """,
+                (pending_id,),
+            )
+            self._conn.execute(
+                """
+                INSERT INTO merge_log(survivor_id, merged_id, match_type, merged_fields)
+                VALUES (?, ?, ?, ?)
                 """,
                 (
-                    candidate_id,
-                    platform,
-                    data.get("platform_id"),
-                    data.get("profile_url"),
-                    _json_dumps(data.get("raw_profile", data)),
+                    existing_id,
+                    int(new_id),
+                    "company_alias",
+                    _json_dumps(
+                        _json_loads(row["match_fields"], {}, "pending_merges.match_fields")
+                    ),
                 ),
             )
-        if any(field in data for field in _DETAIL_FIELDS):
-            self.enrich(candidate_id, {field: data.get(field) for field in _DETAIL_FIELDS})
+
+    def _find_exact_match(self, data: dict[str, Any]) -> int | None:
+        row = self._conn.execute(
+            """
+            SELECT id
+            FROM candidates
+            WHERE name = ?
+              AND COALESCE(current_company, '') = ?
+              AND COALESCE(current_title, '') = ?
+              AND COALESCE(city, '') = ?
+              AND COALESCE(education, '') = ?
+            ORDER BY id
+            LIMIT 1
+            """,
+            (
+                data["name"],
+                _identity_value(data.get("current_company")),
+                _identity_value(data.get("current_title")),
+                _identity_value(data.get("city")),
+                _identity_value(data.get("education")),
+            ),
+        ).fetchone()
+        return int(row["id"]) if row is not None else None
+
+    def _canonical_for_alias(self, company: Any) -> str | None:
+        if not company:
+            return None
+        row = self._conn.execute(
+            """
+            SELECT canonical_name
+            FROM company_aliases
+            WHERE alias = ?
+            ORDER BY id
+            LIMIT 1
+            """,
+            (company,),
+        ).fetchone()
+        return row["canonical_name"] if row is not None else None
+
+    def _insert_candidate(self, data: dict[str, Any], platform: str) -> int:
+        skill_tags = data.get("skill_tags")
+        data_level = self._data_level_for(data)
+        cursor = self._conn.execute(
+            """
+            INSERT INTO candidates (
+                name, gender, age, city, work_years, education,
+                current_company, current_title, expected_salary,
+                expected_city, expected_title, hunting_status,
+                skill_tags, data_level
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                data["name"],
+                data.get("gender"),
+                data.get("age"),
+                data.get("city"),
+                data.get("work_years"),
+                data.get("education"),
+                data.get("current_company"),
+                data.get("current_title"),
+                data.get("expected_salary"),
+                data.get("expected_city"),
+                data.get("expected_title"),
+                data.get("hunting_status"),
+                _json_dumps(skill_tags or []),
+                data_level,
+            ),
+        )
+        candidate_id = int(cursor.lastrowid)
+        self._add_source_profile(candidate_id, data, platform)
+        detail_data = _detail_payload(data)
+        if detail_data:
+            self._merge_detail(candidate_id, detail_data)
         return candidate_id
+
+    def _merge_candidate(
+        self, existing_id: int, data: dict[str, Any], platform: str
+    ) -> None:
+        row = self._conn.execute(
+            "SELECT * FROM candidates WHERE id = ?", (existing_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Candidate does not exist: {existing_id}")
+
+        existing = dict(row)
+        updates: dict[str, Any] = {}
+        fill_only_fields = (
+            "gender",
+            "age",
+            "city",
+            "work_years",
+            "education",
+            "current_company",
+            "current_title",
+            "expected_salary",
+            "expected_city",
+            "expected_title",
+            "hunting_status",
+        )
+        for field in fill_only_fields:
+            incoming = data.get(field)
+            if _is_empty(existing.get(field)) and not _is_empty(incoming):
+                updates[field] = incoming
+
+        existing_tags = _json_loads(
+            existing.get("skill_tags"), [], "candidates.skill_tags"
+        )
+        merged_tags = _merge_skill_tags(existing_tags, data.get("skill_tags") or [])
+        if merged_tags != existing_tags:
+            updates["skill_tags"] = _json_dumps(merged_tags)
+
+        incoming_level = self._data_level_for(data)
+        if _data_level_rank(incoming_level) > _data_level_rank(existing.get("data_level")):
+            updates["data_level"] = incoming_level
+
+        if updates:
+            set_clause = ", ".join(f"{field} = ?" for field in updates)
+            self._conn.execute(
+                f"""
+                UPDATE candidates
+                SET {set_clause}, updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (*updates.values(), existing_id),
+            )
+        else:
+            self._conn.execute(
+                "UPDATE candidates SET updated_at = datetime('now') WHERE id = ?",
+                (existing_id,),
+            )
+
+        if platform:
+            self._add_source_profile(existing_id, data, platform)
+        detail_data = _detail_payload(data)
+        if detail_data:
+            self._merge_detail(existing_id, detail_data)
+
+    def _add_source_profile(
+        self, candidate_id: int, data: dict[str, Any], platform: str
+    ) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO source_profiles (
+                candidate_id, platform, platform_id, profile_url, raw_profile
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(platform, platform_id) DO UPDATE SET
+                profile_url = COALESCE(excluded.profile_url, source_profiles.profile_url),
+                raw_profile = COALESCE(excluded.raw_profile, source_profiles.raw_profile),
+                fetched_at = datetime('now')
+            """,
+            (
+                candidate_id,
+                platform,
+                data.get("platform_id"),
+                data.get("profile_url"),
+                _json_dumps(data.get("raw_profile", _public_ingest_data(data))),
+            ),
+        )
+
+    def _merge_detail(self, candidate_id: int, detail_data: dict[str, Any]) -> None:
+        existing = self.get_detail(candidate_id)
+        existing_data = existing.to_dict() if existing is not None else {}
+        merged: dict[str, Any] = {}
+        for field in _DETAIL_FIELDS:
+            incoming = detail_data.get(field)
+            current = existing_data.get(field)
+            merged[field] = (
+                incoming if _is_empty(current) and not _is_empty(incoming) else current
+            )
+
+        self.enrich(candidate_id, merged)
+
+    def _create_pending_merge(
+        self,
+        existing_id: int,
+        new_id: int,
+        data: dict[str, Any],
+        platform: str,
+        match_fields: dict[str, Any],
+    ) -> None:
+        pending_data = {**data, "_candidate_id": new_id, "_platform": platform}
+        self._conn.execute(
+            """
+            INSERT INTO pending_merges(existing_id, new_data, match_fields, status)
+            VALUES (?, ?, ?, 'pending')
+            """,
+            (existing_id, _json_dumps(pending_data), _json_dumps(match_fields)),
+        )
+
+    def _move_sources(self, from_candidate_id: int, to_candidate_id: int) -> None:
+        rows = self._conn.execute(
+            """
+            SELECT id, platform, platform_id, profile_url, raw_profile
+            FROM source_profiles
+            WHERE candidate_id = ?
+            ORDER BY id
+            """,
+            (from_candidate_id,),
+        ).fetchall()
+        for row in rows:
+            try:
+                self._conn.execute(
+                    "UPDATE source_profiles SET candidate_id = ? WHERE id = ?",
+                    (to_candidate_id, row["id"]),
+                )
+            except sqlite3.IntegrityError:
+                self._conn.execute(
+                    "DELETE FROM source_profiles WHERE id = ?", (row["id"],)
+                )
 
     def get(self, candidate_id: int) -> Candidate | None:
         row = self._conn.execute(
@@ -382,7 +674,9 @@ class TalentDB:
             PendingMerge(
                 id=row["id"],
                 existing_id=row["existing_id"],
-                new_data=_json_loads(row["new_data"], {}, "pending_merges.new_data"),
+                new_data=_public_ingest_data(
+                    _json_loads(row["new_data"], {}, "pending_merges.new_data")
+                ),
                 match_fields=_json_loads(
                     row["match_fields"], None, "pending_merges.match_fields"
                 ),
@@ -414,3 +708,39 @@ def _json_loads(value: str | None, default: Any, field_name: str) -> Any:
         return json.loads(value)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid JSON in TalentDB field {field_name}") from exc
+
+
+def _identity_value(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
+def _is_empty(value: Any) -> bool:
+    return value is None or value == "" or value == [] or value == {}
+
+
+def _merge_skill_tags(existing: list[str], incoming: list[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for tag in [*existing, *incoming]:
+        if tag in seen:
+            continue
+        seen.add(tag)
+        merged.append(tag)
+    return merged
+
+
+def _detail_payload(data: dict[str, Any]) -> dict[str, Any]:
+    detail: dict[str, Any] = {}
+    nested = data.get("detail")
+    if isinstance(nested, dict):
+        detail.update({field: nested.get(field) for field in _DETAIL_FIELDS if field in nested})
+    detail.update({field: data.get(field) for field in _DETAIL_FIELDS if field in data})
+    return {field: value for field, value in detail.items() if not _is_empty(value)}
+
+
+def _public_ingest_data(data: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in data.items() if not key.startswith("_")}
+
+
+def _data_level_rank(value: str | None) -> int:
+    return {"lead": 0, "core": 1, "detailed": 2}.get(value or "lead", 0)
