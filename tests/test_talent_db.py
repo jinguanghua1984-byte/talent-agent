@@ -251,6 +251,48 @@ def test_merge_detail_does_not_overwrite_with_empty_detail(db: TalentDB):
     assert detail.education_experience == ({"school": "Fudan"},)
 
 
+def test_merge_detail_combines_non_empty_lists(db: TalentDB):
+    first_id = db.ingest(
+        {
+            "name": "Detail Combine",
+            "current_company": "Acme",
+            "current_title": "Engineer",
+            "work_experience": [
+                {"company": "Acme", "title": "Engineer"},
+            ],
+            "project_experience": [{"name": "Search"}],
+        },
+        platform="maimai",
+    )
+
+    same_id = db.ingest(
+        {
+            "name": "Detail Combine",
+            "current_company": "Acme",
+            "current_title": "Engineer",
+            "detail": {
+                "work_experience": [
+                    {"company": "Acme", "title": "Engineer"},
+                    {"company": "Beta", "title": "Staff Engineer"},
+                ],
+                "project_experience": [{"name": "Ranking"}],
+            },
+        },
+        platform="boss",
+    )
+
+    detail = db.get_detail(first_id)
+    assert same_id == first_id
+    assert detail.work_experience == (
+        {"company": "Acme", "title": "Engineer"},
+        {"company": "Beta", "title": "Staff Engineer"},
+    )
+    assert detail.project_experience == (
+        {"name": "Search"},
+        {"name": "Ranking"},
+    )
+
+
 def test_duplicate_source_profile_does_not_break_merge(db: TalentDB):
     candidate_id = db.ingest(
         {
@@ -280,6 +322,55 @@ def test_duplicate_source_profile_does_not_break_merge(db: TalentDB):
     assert sources[0].profile_url == "https://example.com/new"
 
 
+def test_missing_platform_id_exact_ingest_does_not_duplicate_source_profile(
+    db: TalentDB,
+):
+    candidate_id = db.ingest(
+        {
+            "name": "No Platform Id",
+            "current_company": "Acme",
+            "current_title": "Engineer",
+            "profile_url": "https://example.com/no-platform-id",
+        },
+        platform="maimai",
+    )
+
+    same_id = db.ingest(
+        {
+            "name": "No Platform Id",
+            "current_company": "Acme",
+            "current_title": "Engineer",
+            "profile_url": "https://example.com/no-platform-id",
+        },
+        platform="maimai",
+    )
+    db.ingest(
+        {
+            "name": "No Platform Id",
+            "current_company": "Acme",
+            "current_title": "Engineer",
+            "raw_profile": {"same": "source"},
+        },
+        platform="boss",
+    )
+    db.ingest(
+        {
+            "name": "No Platform Id",
+            "current_company": "Acme",
+            "current_title": "Engineer",
+            "raw_profile": {"same": "source"},
+        },
+        platform="boss",
+    )
+
+    sources = db.get_sources(candidate_id)
+    assert same_id == candidate_id
+    assert [(source.platform, source.profile_url) for source in sources] == [
+        ("maimai", "https://example.com/no-platform-id"),
+        ("boss", None),
+    ]
+
+
 def test_batch_ingest_mixed_created_merged_errors(db: TalentDB):
     result = db.batch_ingest(
         [
@@ -305,6 +396,39 @@ def test_batch_ingest_mixed_created_merged_errors(db: TalentDB):
     assert result.errors == 1
     assert result.total == 2
     assert "Broken" in result.error_details[0] or "name" in result.error_details[0]
+
+
+def test_batch_ingest_counts_pending_alias_matches(db: TalentDB):
+    db.ingest(
+        {
+            "name": "Batch Pending",
+            "current_company": "ByteDance",
+            "current_title": "Engineer",
+            "city": "Shanghai",
+            "education": "Bachelor",
+        },
+        platform="maimai",
+    )
+    db.add_company_alias("ByteDance", "Toutiao")
+
+    result = db.batch_ingest(
+        [
+            {
+                "name": "Batch Pending",
+                "current_company": "Toutiao",
+                "current_title": "Engineer",
+                "city": "Shanghai",
+                "education": "Bachelor",
+            }
+        ],
+        platform="boss",
+    )
+
+    assert result.created == 0
+    assert result.merged == 0
+    assert result.pending == 1
+    assert result.errors == 0
+    assert len(db.pending_merges()) == 1
 
 
 def test_fts_trigger_indexes_ingested_candidate(db: TalentDB):
@@ -562,6 +686,8 @@ def test_resolve_merge_approve_deletes_merges_new_candidate_and_writes_log(
         "merged_id": new_id,
         "match_type": "company_alias",
     }
+    with pytest.raises(ValueError):
+        db.resolve_merge(pending_id, "merge")
 
 
 def test_resolve_merge_reject_keeps_both_candidates(db: TalentDB):
@@ -598,6 +724,8 @@ def test_resolve_merge_reject_keeps_both_candidates(db: TalentDB):
     assert db.get(new_id) is not None
     assert status == "rejected"
     assert db.pending_merges() == []
+    with pytest.raises(ValueError):
+        db.resolve_merge(pending_id, "reject")
 
 
 def test_resolve_merge_invalid_action_and_pending_id(db: TalentDB):

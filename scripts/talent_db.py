@@ -23,6 +23,11 @@ _DETAIL_FIELDS = (
     "raw_data",
     "summary",
 )
+_EXPERIENCE_FIELDS = (
+    "work_experience",
+    "education_experience",
+    "project_experience",
+)
 
 
 class TalentDB:
@@ -299,6 +304,8 @@ class TalentDB:
         ).fetchone()
         if row is None:
             raise ValueError(f"Pending merge does not exist: {pending_id}")
+        if row["status"] != "pending":
+            raise ValueError(f"Pending merge is already resolved: {pending_id}")
 
         if action == "reject":
             with self._conn:
@@ -495,6 +502,26 @@ class TalentDB:
     def _add_source_profile(
         self, candidate_id: int, data: dict[str, Any], platform: str
     ) -> None:
+        platform_id = data.get("platform_id") or None
+        profile_url = data.get("profile_url") or None
+        raw_profile = _json_dumps(data.get("raw_profile", _public_ingest_data(data)))
+        if platform_id is None:
+            existing_source_id = self._find_source_without_platform_id(
+                candidate_id, platform, profile_url
+            )
+            if existing_source_id is not None:
+                self._conn.execute(
+                    """
+                    UPDATE source_profiles
+                    SET profile_url = COALESCE(?, profile_url),
+                        raw_profile = COALESCE(?, raw_profile),
+                        fetched_at = datetime('now')
+                    WHERE id = ?
+                    """,
+                    (profile_url, raw_profile, existing_source_id),
+                )
+                return
+
         self._conn.execute(
             """
             INSERT INTO source_profiles (
@@ -509,11 +536,44 @@ class TalentDB:
             (
                 candidate_id,
                 platform,
-                data.get("platform_id"),
-                data.get("profile_url"),
-                _json_dumps(data.get("raw_profile", _public_ingest_data(data))),
+                platform_id,
+                profile_url,
+                raw_profile,
             ),
         )
+
+    def _find_source_without_platform_id(
+        self, candidate_id: int, platform: str, profile_url: str | None
+    ) -> int | None:
+        if profile_url:
+            row = self._conn.execute(
+                """
+                SELECT id
+                FROM source_profiles
+                WHERE candidate_id = ?
+                  AND platform = ?
+                  AND platform_id IS NULL
+                  AND profile_url = ?
+                ORDER BY id
+                LIMIT 1
+                """,
+                (candidate_id, platform, profile_url),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                """
+                SELECT id
+                FROM source_profiles
+                WHERE candidate_id = ?
+                  AND platform = ?
+                  AND platform_id IS NULL
+                  AND (profile_url IS NULL OR profile_url = '')
+                ORDER BY id
+                LIMIT 1
+                """,
+                (candidate_id, platform),
+            ).fetchone()
+        return int(row["id"]) if row is not None else None
 
     def _merge_detail(self, candidate_id: int, detail_data: dict[str, Any]) -> None:
         existing = self.get_detail(candidate_id)
@@ -522,9 +582,12 @@ class TalentDB:
         for field in _DETAIL_FIELDS:
             incoming = detail_data.get(field)
             current = existing_data.get(field)
-            merged[field] = (
-                incoming if _is_empty(current) and not _is_empty(incoming) else current
-            )
+            if field in _EXPERIENCE_FIELDS:
+                merged[field] = _merge_detail_list(current, incoming)
+            else:
+                merged[field] = (
+                    incoming if _is_empty(current) and not _is_empty(incoming) else current
+                )
 
         self.enrich(candidate_id, merged)
 
@@ -727,6 +790,28 @@ def _merge_skill_tags(existing: list[str], incoming: list[str]) -> list[str]:
         seen.add(tag)
         merged.append(tag)
     return merged
+
+
+def _merge_detail_list(existing: Any, incoming: Any) -> list[Any] | None:
+    merged: list[Any] = []
+    seen: set[str] = set()
+    for item in [*_as_list(existing), *_as_list(incoming)]:
+        key = json.dumps(item, ensure_ascii=False, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged or None
+
+
+def _as_list(value: Any) -> list[Any]:
+    if _is_empty(value):
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    return [value]
 
 
 def _detail_payload(data: dict[str, Any]) -> dict[str, Any]:
