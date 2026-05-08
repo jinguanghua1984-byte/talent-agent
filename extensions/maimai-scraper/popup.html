@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="header">
+    <h3>Maimai Talent Scraper</h3>
+    <span class="badge" id="status-badge">--</span>
+  </div>
+
+  <!-- 模式切换 -->
+  <div class="tabs">
+    <button class="tab active" data-tab="capture">被动拦截</button>
+    <button class="tab" data-tab="search">主动搜索</button>
+    <button class="tab" data-tab="dom">DOM 抓取</button>
+  </div>
+
+  <!-- 被动拦截模式 -->
+  <div class="tab-content active" id="tab-capture">
+    <p class="hint">在脉脉页面手动操作，扩展自动捕获 API 数据</p>
+    <div class="stats" id="capture-stats">
+      <span>请求: <b id="req-count">0</b></span>
+      <span>联系人: <b id="contact-count">0</b></span>
+    </div>
+    <div class="btn-row">
+      <button id="btn-refresh">刷新</button>
+      <button id="btn-clear">清除</button>
+      <button id="btn-export">导出 JSON</button>
+    </div>
+    <!-- 分页抓取控制 -->
+    <div class="pager-section" id="pager-section">
+      <div class="form-row">
+        <div class="form-group">
+          <label>抓取范围</label>
+          <select id="pager-mode">
+            <option value="all">全部页面</option>
+            <option value="custom">前 N 页</option>
+          </select>
+        </div>
+        <div class="form-group" id="pager-pages-group" style="display:none;">
+          <label>页数</label>
+          <input type="number" id="pager-max-pages" value="3" min="1" max="100" />
+        </div>
+      </div>
+      <div class="pager-info" id="pager-info" style="display:none;">
+        <span id="pager-template-info">模板状态: 等待捕获...</span>
+        <span id="pager-meta-info"></span>
+      </div>
+      <div class="btn-row">
+        <button id="btn-start-pager" class="primary">开始抓取</button>
+        <button id="btn-stop-pager" style="display:none;">停止</button>
+      </div>
+      <div class="progress-bar" id="pager-progress" style="display:none;">
+        <div class="progress-fill" id="pager-progress-fill"></div>
+      </div>
+      <div class="progress-text" id="pager-progress-text"></div>
+    </div>
+    <details>
+      <summary>原始请求数据</summary>
+      <pre id="capture-preview">等待数据...</pre>
+    </details>
+  </div>
+
+  <!-- 主动搜索模式 -->
+  <div class="tab-content" id="tab-search">
+    <div class="form-group">
+      <label>搜索关键词</label>
+      <input type="text" id="search-query" placeholder="例: 产品经理" />
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>页码</label>
+        <input type="number" id="search-page" value="1" min="1" />
+      </div>
+      <div class="form-group">
+        <label>每页条数</label>
+        <input type="number" id="search-pagesize" value="30" min="1" max="50" />
+      </div>
+    </div>
+    <div class="form-group">
+      <p class="hint" id="search-template-status">模板状态: 等待捕获...</p>
+    </div>
+    <button id="btn-search" class="primary">搜索</button>
+    <div id="search-result" class="result-box"></div>
+  </div>
+
+  <!-- DOM 抓取模式 -->
+  <div class="tab-content" id="tab-dom">
+    <p class="hint">从页面 DOM 直接提取已渲染的人才卡片</p>
+    <button id="btn-dom-scrape" class="primary">抓取当前页面</button>
+    <div id="dom-result" class="result-box"></div>
+  </div>
+</body>
+<script src="popup.js"></script>
+</body>
+</html>
