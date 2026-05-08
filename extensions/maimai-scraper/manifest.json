@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Maimai Talent Scraper",
+  "version": "2.1",
+  "description": "脉脉人才搜索抓取工具 — 被动拦截 + 主动搜索 + 自动分页 + 数据导出",
+  "permissions": ["storage", "scripting", "declarativeNetRequest", "downloads"],
+  "host_permissions": ["*://maimai.cn/*"],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "csp_rules",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Maimai Scraper"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://maimai.cn/*"],
+      "js": ["inject.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["*://maimai.cn/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}
