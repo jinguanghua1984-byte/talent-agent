@@ -1,4 +1,5 @@
 import sqlite3
+import json
 from pathlib import Path
 
 import pytest
@@ -158,3 +159,61 @@ def test_add_company_alias_and_pending_merges_empty(db: TalentDB):
 
     assert dict(row) == {"canonical_name": "ByteDance", "alias": "Toutiao"}
     assert db.pending_merges() == []
+
+
+def test_pending_merges_returns_pending_records_only(db: TalentDB):
+    existing_id = db.ingest(
+        {
+            "name": "Bob Li",
+            "city": "Beijing",
+            "current_company": "Acme",
+            "current_title": "Engineer",
+            "platform_id": "maimai-2",
+        },
+        platform="maimai",
+    )
+    pending_new_data = {
+        "name": "Robert Li",
+        "current_company": "Acme",
+        "current_title": "Senior Engineer",
+    }
+    pending_match_fields = {"name": "similar", "current_company": "exact"}
+    rejected_new_data = {
+        "name": "Rejected Candidate",
+        "current_company": "Other",
+    }
+
+    with db._conn:
+        pending_id = db._conn.execute(
+            """
+            INSERT INTO pending_merges(existing_id, new_data, match_fields, status)
+            VALUES (?, ?, ?, 'pending')
+            """,
+            (
+                existing_id,
+                json.dumps(pending_new_data),
+                json.dumps(pending_match_fields),
+            ),
+        ).lastrowid
+        db._conn.execute(
+            """
+            INSERT INTO pending_merges(existing_id, new_data, match_fields, status)
+            VALUES (?, ?, ?, 'rejected')
+            """,
+            (
+                existing_id,
+                json.dumps(rejected_new_data),
+                json.dumps({"name": "different"}),
+            ),
+        )
+
+    pending_merges = db.pending_merges()
+
+    assert len(pending_merges) == 1
+    pending_merge = pending_merges[0]
+    assert pending_merge.id == pending_id
+    assert pending_merge.existing_id == existing_id
+    assert pending_merge.new_data == pending_new_data
+    assert pending_merge.match_fields == pending_match_fields
+    assert pending_merge.status == "pending"
+    assert pending_merge.created_at
