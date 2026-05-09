@@ -1110,6 +1110,184 @@ def test_count_all_and_filtered(search_db: tuple[TalentDB, dict[str, int]]):
     assert db.count(CandidateFilter(companies=["ByteDance"], min_score=90)) == 2
 
 
+def test_full_talent_db_workflow(db: TalentDB):
+    batch_result = db.batch_ingest(
+        [
+            {
+                "name": "Workflow Alice",
+                "gender": "female",
+                "city": "Shanghai",
+                "work_years": 6,
+                "education": "Master",
+                "current_company": "ByteDance",
+                "current_title": "Product Manager",
+                "hunting_status": "open",
+                "skill_tags": ["AI", "Python"],
+                "platform_id": "maimai-workflow-alice-core",
+                "profile_url": "https://maimai.example/workflow-alice-core",
+                "work_experience": [
+                    {"company": "ByteDance", "title": "Product Manager"}
+                ],
+                "summary": "Owns search ranking products.",
+            },
+            {
+                "name": "Workflow Bob",
+                "age": 34,
+                "city": "Shanghai",
+                "work_years": 9,
+                "education": "Bachelor",
+                "current_company": "Tencent",
+                "current_title": "Backend Engineer",
+                "hunting_status": "passive",
+                "skill_tags": ["Go", "Kubernetes"],
+                "platform_id": "maimai-workflow-bob",
+            },
+            {
+                "name": "Workflow Cathy",
+                "age": 28,
+                "city": "Beijing",
+                "work_years": 5,
+                "education": "PhD",
+                "current_company": "Acme AI",
+                "current_title": "Data Scientist",
+                "hunting_status": "open",
+                "skill_tags": ["NLP", "Python"],
+                "platform_id": "maimai-workflow-cathy",
+                "detail": {
+                    "project_experience": [{"name": "Dialogue Platform"}],
+                    "raw_data": {"source": "maimai-cathy"},
+                },
+            },
+            {
+                "name": "Workflow Alice",
+                "age": 29,
+                "city": "Shanghai",
+                "work_years": 6,
+                "education": "Master",
+                "current_company": "ByteDance",
+                "current_title": "Product Manager",
+                "skill_tags": ["Python", "SQL"],
+                "platform_id": "maimai-workflow-alice-detail",
+                "profile_url": "https://maimai.example/workflow-alice-detail",
+                "detail": {
+                    "education_experience": [
+                        {"school": "Fudan University", "degree": "Master"}
+                    ],
+                    "project_experience": [{"name": "Talent Graph"}],
+                    "raw_data": {"source": "maimai-alice-detail"},
+                },
+            },
+        ],
+        platform="maimai",
+    )
+
+    assert batch_result.created == 3
+    assert batch_result.merged == 1
+    assert batch_result.errors == 0
+    assert db.count() == 3
+
+    alice_id = db.fulltext_search("Workflow Alice")[0].id
+    bob_id = db.fulltext_search("Workflow Bob")[0].id
+    cathy_id = db.fulltext_search("Workflow Cathy")[0].id
+
+    alice = db.get(alice_id)
+    alice_detail = db.get_detail(alice_id)
+    alice_sources = db.get_sources(alice_id)
+
+    assert alice.age == 29
+    assert alice.skill_tags == ("AI", "Python", "SQL")
+    assert alice.data_level == "detailed"
+    assert {
+        (source.platform, source.platform_id, source.profile_url)
+        for source in alice_sources
+    } == {
+        (
+            "maimai",
+            "maimai-workflow-alice-core",
+            "https://maimai.example/workflow-alice-core",
+        ),
+        (
+            "maimai",
+            "maimai-workflow-alice-detail",
+            "https://maimai.example/workflow-alice-detail",
+        ),
+    }
+    assert alice_detail.work_experience == (
+        {"company": "ByteDance", "title": "Product Manager"},
+    )
+    assert alice_detail.education_experience == (
+        {"school": "Fudan University", "degree": "Master"},
+    )
+    assert alice_detail.project_experience == ({"name": "Talent Graph"},)
+    assert alice_detail.raw_data == {"source": "maimai-alice-detail"}
+    assert alice_detail.summary == "Owns search ranking products."
+
+    db.update_overall_score(alice_id, 92.0, "workflow_test", {"stage": "overall"})
+    db.update_overall_score(bob_id, 86.0, "workflow_test")
+    db.update_overall_score(cathy_id, 97.0, "workflow_test")
+
+    assert db.get(alice_id).overall_score == 92.0
+    assert db.get(alice_id).score_version == 1
+
+    db.save_match_score(
+        alice_id,
+        "jd-workflow",
+        "coarse",
+        99.0,
+        dimensions={"skills": 0.99},
+        reason="Broad keyword match.",
+    )
+    db.save_match_score(alice_id, "jd-workflow", "llm_rank", 90.0)
+    db.save_match_score(alice_id, "jd-workflow", "final", 88.0)
+    db.save_match_score(bob_id, "jd-workflow", "coarse", 72.0)
+    db.save_match_score(bob_id, "jd-workflow", "llm_rank", 82.0)
+    db.save_match_score(bob_id, "jd-workflow", "final", 93.0)
+    db.save_match_score(cathy_id, "jd-workflow", "final", 84.0)
+
+    assert {
+        (score.candidate_id, score.match_type, score.score)
+        for score in db.get_match_scores("jd-workflow")
+    } == {
+        (alice_id, "coarse", 99.0),
+        (alice_id, "llm_rank", 90.0),
+        (alice_id, "final", 88.0),
+        (bob_id, "coarse", 72.0),
+        (bob_id, "llm_rank", 82.0),
+        (bob_id, "final", 93.0),
+        (cathy_id, "final", 84.0),
+    }
+
+    fulltext_hits = db.fulltext_search("SQL")
+    assert [hit.id for hit in fulltext_hits] == [alice_id]
+
+    filtered = db.search(
+        CandidateFilter(
+            cities=["Shanghai"],
+            min_work_years=5,
+            skills_any=["Python", "Go"],
+            min_score=80,
+        ),
+        sort=SortSpec("overall_score", "asc"),
+    )
+
+    assert filtered.total == 2
+    assert [candidate.id for candidate in filtered.items] == [bob_id, alice_id]
+
+    if db._vec_available:
+        db.save_embedding(alice_id, _embedding([1.0, 0.0, 0.0]))
+        db.save_embedding(bob_id, _embedding([0.0, 1.0, 0.0]))
+        db.save_embedding(cathy_id, _embedding([0.2, 0.8, 0.0]))
+
+        vector_hits = db.vector_search(_embedding([1.0, 0.0, 0.0]), limit=3)
+
+        assert vector_hits[0].id == alice_id
+        assert vector_hits[0].similarity == pytest.approx(1.0)
+
+    top = db.get_top_candidates("jd-workflow", top_n=3)
+
+    assert [candidate.id for candidate in top] == [bob_id, alice_id, cathy_id]
+
+
 def test_add_company_alias_and_pending_merges_empty(db: TalentDB):
     db.add_company_alias("ByteDance", "Toutiao")
 
