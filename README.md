@@ -6,6 +6,8 @@
 
 面向独立猎头顾问和小型猎头公司。Sourcing 是一个场景而非全部。
 
+项目已改造为运行时中立架构：业务工作流沉淀在 `agents/workflows/`，具体 agent 运行时只作为 adapter。Claude Code 仍受支持，但不再是唯一入口。
+
 ## MVP 覆盖
 
 - **公域搜索** (/public-search) — 根据JD、团队画像或关键词，在公开渠道搜索候选人
@@ -23,19 +25,21 @@
 
 ## 目录结构
 
-- .claude/skills/ — 4 个 CC Skill 定义
-- data/ — JSON 数据存储（JD、候选人、筛选结果、报告）
-- scripts/ — 数据管理工具（data-manager.py）
+- agents/workflows/ — 运行时中立的 agent 工作流定义
+- agents/capabilities.md — 通用能力契约和运行时工具映射
+- .claude/skills/ — Claude Code 兼容适配器
+- scripts/ — 可执行 Python 代码和 CLI
+- rules/ — 评分、公司别名、平台匹配规则
+- data/ — 运行时数据存储（JD、候选人、筛选结果、报告）
 - schemas/ — 数据校验 Schema
 
 ## 快速开始
 
-1. 在 Claude Code 中安装为插件
+1. 复制 `.env.example` 为 `.env`，配置 `LLM_PROVIDER`、`LLM_MODEL`、`LLM_API_KEY`
 2. 创建 JD: `python scripts/data-manager.py jd create jd.json`
-3. 搜索候选人: `/public-search CTO 10年经验 AI方向`
-4. 平台匹配: `/platform-match --platform maimai`
-5. 筛选评估: `/screen jd-001`
-6. 生成报告: `/report jd-001`
+3. 使用任意支持本仓库工作流的 agent 读取 `agents/workflows/`
+4. Claude Code 用户可继续使用 `/public-search`、`/platform-match`、`/screen`、`/report`
+5. 评分 pipeline: `python scripts/score_pipeline.py run --jd-id <id> --source boss --search-keyword <keyword>`
 
 ## 数据管理
 

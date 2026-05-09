@@ -44,3 +44,18 @@ def test_claude_skill_files_are_adapters_to_canonical_workflows():
         assert "## Adapter Steps" in text
         assert "agents/capabilities.md" in text
         assert "运行时私有入口" in text
+
+
+def test_readme_describes_runtime_neutral_architecture():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "运行时中立" in text
+    assert "agents/workflows/" in text
+    assert ".claude/skills/ — Claude Code 兼容适配器" in text
+
+
+def test_env_example_uses_generic_llm_settings():
+    text = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "LLM_PROVIDER=" in text
+    assert "LLM_MODEL=" in text
+    assert "LLM_API_KEY=" in text
+    assert "ANTHROPIC_API_KEY" in text
