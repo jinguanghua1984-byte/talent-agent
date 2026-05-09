@@ -1457,7 +1457,10 @@ class TestScoring:
 
         assert db.get(candidate_id).overall_score == float(score)
 
-    @pytest.mark.parametrize("score", [-0.01, 100.01, "90", True])
+    @pytest.mark.parametrize(
+        "score",
+        [-0.01, 100.01, "90", True, float("nan"), float("inf"), float("-inf")],
+    )
     def test_update_overall_score_rejects_invalid_score(
         self, db_with_candidate: tuple[TalentDB, int], score: object
     ):
@@ -1465,6 +1468,51 @@ class TestScoring:
 
         with pytest.raises(ValueError):
             db.update_overall_score(candidate_id, score, "manual_review")
+
+    @pytest.mark.parametrize("score", [float("nan"), float("inf"), float("-inf")])
+    def test_save_match_score_rejects_non_finite_score(
+        self, db_with_candidate: tuple[TalentDB, int], score: float
+    ):
+        db, candidate_id = db_with_candidate
+
+        with pytest.raises(ValueError):
+            db.save_match_score(candidate_id, "jd-001", "final", score)
+
+    def test_update_overall_score_rolls_back_candidate_when_event_insert_fails(
+        self, db_with_candidate: tuple[TalentDB, int]
+    ):
+        db, candidate_id = db_with_candidate
+        with db._conn:
+            db._conn.execute(
+                """
+                UPDATE candidates
+                SET overall_score = 45.0, score_version = 2
+                WHERE id = ?
+                """,
+                (candidate_id,),
+            )
+            db._conn.execute(
+                """
+                CREATE TRIGGER fail_score_events_insert
+                BEFORE INSERT ON score_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced score event failure');
+                END
+                """
+            )
+
+        with pytest.raises(sqlite3.IntegrityError, match="forced score event failure"):
+            db.update_overall_score(candidate_id, 88.5, "manual_review")
+
+        candidate = db.get(candidate_id)
+        event_count = db._conn.execute(
+            "SELECT COUNT(*) FROM score_events WHERE candidate_id = ?",
+            (candidate_id,),
+        ).fetchone()[0]
+
+        assert candidate.overall_score == 45.0
+        assert candidate.score_version == 2
+        assert event_count == 0
 
     def test_save_match_score_and_get_match_scores_roundtrip(
         self, db_with_candidate: tuple[TalentDB, int]
@@ -1522,6 +1570,38 @@ class TestScoring:
         assert scores[0].score == 91.0
         assert scores[0].dimensions == {"final": 0.91}
         assert scores[0].reason == "new"
+
+    def test_save_match_score_upsert_preserves_created_at(
+        self, db_with_candidate: tuple[TalentDB, int]
+    ):
+        db, candidate_id = db_with_candidate
+        original_created_at = "2026-05-01T00:00:00"
+
+        db.save_match_score(candidate_id, "jd-001", "final", 60.0, reason="old")
+        with db._conn:
+            db._conn.execute(
+                """
+                UPDATE match_scores
+                SET created_at = ?
+                WHERE candidate_id = ? AND jd_id = ? AND match_type = ?
+                """,
+                (original_created_at, candidate_id, "jd-001", "final"),
+            )
+        db.save_match_score(
+            candidate_id,
+            "jd-001",
+            "final",
+            91.0,
+            dimensions={"final": 0.91},
+            reason="new",
+        )
+
+        score = db.get_match_scores("jd-001", "final")[0]
+
+        assert score.created_at == original_created_at
+        assert score.score == 91.0
+        assert score.dimensions == {"final": 0.91}
+        assert score.reason == "new"
 
     def test_get_match_scores_filters_by_match_type_and_orders_by_score(
         self, db: TalentDB

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 from pathlib import Path
@@ -828,19 +829,19 @@ class TalentDB:
     ) -> None:
         _validate_score(score)
         _validate_non_empty_string(trigger, "trigger")
-        row = self._conn.execute(
-            """
-            SELECT overall_score
-            FROM candidates
-            WHERE id = ?
-            """,
-            (candidate_id,),
-        ).fetchone()
-        if row is None:
-            raise ValueError(f"Candidate does not exist: {candidate_id}")
-
         new_score = float(score)
         with self._conn:
+            row = self._conn.execute(
+                """
+                SELECT overall_score
+                FROM candidates
+                WHERE id = ?
+                """,
+                (candidate_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Candidate does not exist: {candidate_id}")
+
             self._conn.execute(
                 """
                 UPDATE candidates
@@ -892,8 +893,7 @@ class TalentDB:
                 ON CONFLICT(candidate_id, jd_id, match_type) DO UPDATE SET
                     score = excluded.score,
                     dimensions = excluded.dimensions,
-                    reason = excluded.reason,
-                    created_at = datetime('now')
+                    reason = excluded.reason
                 """,
                 (
                     candidate_id,
@@ -1280,6 +1280,8 @@ def _validate_non_empty_string(value: Any, field_name: str) -> None:
 def _validate_score(score: Any) -> None:
     if isinstance(score, bool) or not isinstance(score, (int, float)):
         raise ValueError("score must be a number between 0 and 100")
+    if not math.isfinite(float(score)):
+        raise ValueError("score must be finite")
     if score < 0 or score > 100:
         raise ValueError("score must be between 0 and 100")
 
