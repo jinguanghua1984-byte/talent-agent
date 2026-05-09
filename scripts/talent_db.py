@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from scripts.talent_models import (
     IngestResult,
     PageResult,
     PendingMerge,
+    SearchHit,
     SortSpec,
     SourceProfile,
 )
@@ -745,6 +747,44 @@ class TalentDB:
         ).fetchone()
         return int(row[0])
 
+    def fulltext_search(self, query: str, limit: int = 50) -> list[SearchHit]:
+        if not _is_positive_int(limit):
+            raise ValueError("limit must be a positive integer")
+
+        normalized_query = query.strip()
+        if not normalized_query:
+            return []
+
+        try:
+            return self._fulltext_search(normalized_query, limit)
+        except sqlite3.OperationalError:
+            safe_query = _safe_fts_query(normalized_query)
+            if not safe_query:
+                return []
+            try:
+                return self._fulltext_search(safe_query, limit)
+            except sqlite3.OperationalError:
+                return []
+
+    def _fulltext_search(self, query: str, limit: int) -> list[SearchHit]:
+        rows = self._conn.execute(
+            """
+            SELECT
+                rowid AS id,
+                rank,
+                snippet(candidate_fts, -1, '<b>', '</b>', '...', 20) AS snippet
+            FROM candidate_fts
+            WHERE candidate_fts MATCH ?
+            ORDER BY rank ASC, rowid ASC
+            LIMIT ?
+            """,
+            (query, limit),
+        ).fetchall()
+        return [
+            SearchHit(id=int(row["id"]), rank=float(row["rank"]), snippet=row["snippet"])
+            for row in rows
+        ]
+
     @staticmethod
     def _order_by_clause(sort: SortSpec | None) -> str:
         spec = sort or SortSpec(field="overall_score", direction="desc")
@@ -958,6 +998,11 @@ def _placeholders(values: list[Any]) -> str:
 
 def _is_positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _safe_fts_query(query: str) -> str:
+    tokens = re.findall(r"\w+", query, flags=re.UNICODE)
+    return " ".join(f'"{token}"' for token in tokens)
 
 
 def _identity_value(value: Any) -> str:

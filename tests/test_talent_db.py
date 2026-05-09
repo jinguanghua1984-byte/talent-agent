@@ -612,6 +612,103 @@ def test_fts_trigger_indexes_ingested_candidate(db: TalentDB):
     assert row["rowid"] == candidate_id
 
 
+def test_fulltext_search_by_name(search_db: tuple[TalentDB, dict[str, int]]):
+    db, ids = search_db
+
+    hits = db.fulltext_search("Alice")
+
+    assert [hit.id for hit in hits] == [ids["alice"]]
+    assert hits[0].rank < 0
+    assert "<b>Alice</b>" in hits[0].snippet
+
+
+def test_fulltext_search_by_company(search_db: tuple[TalentDB, dict[str, int]]):
+    db, ids = search_db
+
+    hits = db.fulltext_search("Tencent")
+
+    assert [hit.id for hit in hits] == [ids["bob"]]
+    assert "<b>Tencent</b>" in hits[0].snippet
+
+
+def test_fulltext_search_by_skill(search_db: tuple[TalentDB, dict[str, int]]):
+    db, ids = search_db
+
+    hits = db.fulltext_search("Kubernetes")
+
+    assert [hit.id for hit in hits] == [ids["bob"]]
+    assert "<b>Kubernetes</b>" in hits[0].snippet
+
+
+def test_fulltext_search_multiple_words(search_db: tuple[TalentDB, dict[str, int]]):
+    db, ids = search_db
+
+    hits = db.fulltext_search("Alice Python")
+
+    assert [hit.id for hit in hits] == [ids["alice"]]
+
+
+def test_fulltext_search_no_results(search_db: tuple[TalentDB, dict[str, int]]):
+    db, _ = search_db
+
+    assert db.fulltext_search("nonexistent") == []
+
+
+def test_fulltext_search_limit(search_db: tuple[TalentDB, dict[str, int]]):
+    db, _ = search_db
+
+    hits = db.fulltext_search("Python", limit=2)
+
+    assert len(hits) == 2
+
+
+def test_fulltext_search_empty_query_returns_empty_list(db: TalentDB):
+    assert db.fulltext_search("") == []
+    assert db.fulltext_search("   ") == []
+
+
+@pytest.mark.parametrize("limit", [0, -1, 1.5, True])
+def test_fulltext_search_rejects_invalid_limit(db: TalentDB, limit: object):
+    with pytest.raises(ValueError):
+        db.fulltext_search("Alice", limit=limit)
+
+
+def test_fulltext_search_special_chars_do_not_raise(
+    search_db: tuple[TalentDB, dict[str, int]],
+):
+    db, _ = search_db
+
+    hits = db.fulltext_search('Alice OR "')
+
+    assert isinstance(hits, list)
+
+
+def test_fulltext_search_fts_stays_synced_after_candidate_update(db: TalentDB):
+    candidate_id = db.ingest(
+        {
+            "name": "Sync Candidate",
+            "current_company": "OldCo",
+            "current_title": "Analyst",
+            "skill_tags": ["Excel"],
+        },
+        platform="maimai",
+    )
+
+    with db._conn:
+        db._conn.execute(
+            """
+            UPDATE candidates
+            SET current_title = ?, skill_tags = ?
+            WHERE id = ?
+            """,
+            ("Search Architect", json.dumps(["VectorSearch"]), candidate_id),
+        )
+
+    assert db.fulltext_search("Analyst") == []
+    hits = db.fulltext_search("VectorSearch")
+    assert [hit.id for hit in hits] == [candidate_id]
+
+
 def test_get_existing(db_with_candidate: tuple[TalentDB, int]):
     db, candidate_id = db_with_candidate
 
