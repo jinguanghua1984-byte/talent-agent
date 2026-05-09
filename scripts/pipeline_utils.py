@@ -127,19 +127,11 @@ def write_cache(path: Path, data: dict) -> Path:
     return path
 
 
-def create_llm_client() -> Any:
-    """创建 Anthropic 客户端。"""
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise EnvironmentError(
-            "未设置 ANTHROPIC_API_KEY。请在 .env 文件中配置，参考 .env.example"
-        )
-    import anthropic
-    base_url = os.environ.get("ANTHROPIC_BASE_URL")
-    kwargs: dict[str, Any] = {"api_key": api_key}
-    if base_url:
-        kwargs["base_url"] = base_url
-    return anthropic.Anthropic(**kwargs)
+def create_llm_client(provider: str | None = None, model: str | None = None) -> Any:
+    """创建通用 LLM 客户端。"""
+    from scripts.llm_client import create_llm_client as _create
+
+    return _create(provider=provider, model=model)
 
 
 def call_llm_with_retry(
@@ -154,19 +146,22 @@ def call_llm_with_retry(
     last_error: Exception | None = None
     for attempt in range(max_retries):
         try:
-            response = client.messages.create(
-                model=model,
-                max_tokens=max_tokens,
-                messages=messages,
-            )
-            return response.content[0].text
+            if hasattr(client, "messages"):
+                response = client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    messages=messages,
+                )
+                return response.content[0].text
+
+            return client.complete(messages, model=model, max_tokens=max_tokens)
         except Exception as e:
             error_str = str(e).lower()
             last_error = e
 
             if "api_key" in error_str or "authentication" in error_str:
                 raise EnvironmentError(
-                    "API Key 无效或缺失，请检查 .env 中的 ANTHROPIC_API_KEY"
+                    "API Key 无效或缺失，请检查 LLM_API_KEY；Anthropic 兼容模式也支持 ANTHROPIC_API_KEY"
                 ) from e
             if "rate_limit" in error_str or "429" in error_str:
                 wait = retry_delay * (2 ** attempt)
