@@ -95,3 +95,19 @@ class TestTruncateTextByRelevance:
         text = "负责数据分析报表制作。主导AI大模型产品从0到1。负责团队管理。"
         result = truncate_text_by_relevance(text, ["AI", "大模型", "产品"], max_length=30)
         assert "AI" in result or "大模型" in result
+
+
+def test_load_company_aliases_does_not_depend_on_claude_private_dir(tmp_path, monkeypatch):
+    """load_company_aliases 不依赖 .claude 私有目录，只从项目 rules/ 读取。"""
+    rules_dir = tmp_path / "rules"
+    rules_dir.mkdir()
+    (rules_dir / "company-aliases.json").write_text(
+        json.dumps({"测试公司": ["testco"]}), encoding="utf-8"
+    )
+
+    import scripts.pipeline_utils as pipeline_utils
+    monkeypatch.setattr(pipeline_utils, "RULES_DIR", rules_dir)
+    monkeypatch.setattr(pipeline_utils, "PROJECT_ROOT", tmp_path)
+
+    aliases = pipeline_utils.load_company_aliases()
+    assert aliases == {"测试公司": ["testco"]}

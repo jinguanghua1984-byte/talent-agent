@@ -21,7 +21,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 CACHE_DIR = DATA_DIR / "cache" / "pipeline"
 RULES_DIR = PROJECT_ROOT / "rules"
-SKILLS_RULES_DIR = PROJECT_ROOT / ".claude" / "skills" / "platform-match" / "rules"
 
 
 def compute_jd_hash(jd_text: str) -> str:
@@ -58,19 +57,13 @@ def load_scoring_config() -> dict[str, Any]:
 
 
 def load_company_aliases() -> dict[str, list[str]]:
-    """加载公司别名映射。合并 skills 和 rules 目录的配置。"""
-    aliases: dict[str, list[str]] = {}
-    for path in [SKILLS_RULES_DIR / "company-aliases.json",
-                 RULES_DIR / "company-aliases.json"]:
-        if path.exists():
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-                for company, alias_list in data.items():
-                    if company in aliases:
-                        aliases[company] = list(set(aliases[company] + alias_list))
-                    else:
-                        aliases[company] = alias_list
-    return aliases
+    """加载公司别名映射。规则只从项目根目录 rules/company-aliases.json 读取。"""
+    path = RULES_DIR / "company-aliases.json"
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    return {str(company): list(alias_list) for company, alias_list in data.items()}
 
 
 def _default_scoring_config() -> dict[str, Any]:
