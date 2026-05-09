@@ -53,10 +53,15 @@ def migrate_candidates(json_dir: Path, db_path: Path) -> IngestResult:
                 sources = _normalize_sources(legacy)
                 primary_source = sources[0] if sources else {}
                 candidate_data = _to_ingest_data(legacy, primary_source)
-                db.ingest(candidate_data, platform=_platform_for(primary_source))
-                _count_action(result, getattr(db, "_last_ingest_action", None))
+                ingest_result = db.batch_ingest(
+                    [candidate_data], platform=_platform_for(primary_source)
+                )
+                _merge_result(result, ingest_result)
                 for source in sources[1:]:
-                    db.ingest(_to_ingest_data(legacy, source), platform=_platform_for(source))
+                    db.ingest(
+                        _to_ingest_data(legacy, source),
+                        platform=_platform_for(source),
+                    )
             except Exception as exc:  # noqa: BLE001 - 单文件失败不阻断批量迁移。
                 result.errors += 1
                 result.error_details.append(f"{json_file.name}: {exc}")
@@ -82,12 +87,37 @@ def _normalize_sources(legacy: dict[str, Any]) -> list[dict[str, Any]]:
     sources: list[dict[str, Any]] = []
     source = legacy.get("_source")
     if isinstance(source, dict):
-        sources.append(dict(source))
+        _append_source_first_wins(sources, source)
 
     legacy_sources = legacy.get("sources")
     if isinstance(legacy_sources, list):
-        sources.extend(dict(item) for item in legacy_sources if isinstance(item, dict))
+        for item in legacy_sources:
+            if isinstance(item, dict):
+                _append_source_first_wins(sources, item)
     return sources
+
+
+def _append_source_first_wins(
+    sources: list[dict[str, Any]], source: dict[str, Any]
+) -> None:
+    existing_keys = {_source_key(item) for item in sources}
+    if _source_key(source) not in existing_keys:
+        sources.append(dict(source))
+
+
+def _source_key(source: dict[str, Any]) -> tuple[str, str, str]:
+    platform = _normalized_key_value(
+        source.get("channel") or source.get("platform") or source.get("source")
+    )
+    platform_id = _normalized_key_value(source.get("platform_id") or source.get("id"))
+    url = _normalized_key_value(source.get("url") or source.get("profile_url"))
+    if platform_id:
+        return (platform, platform_id, "")
+    return (platform, "", url)
+
+
+def _normalized_key_value(value: Any) -> str:
+    return "" if value is None else str(value)
 
 
 def _to_ingest_data(legacy: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
@@ -133,10 +163,14 @@ def _detail_data_for(legacy: dict[str, Any]) -> dict[str, Any]:
 
 
 def _raw_data_for(legacy: dict[str, Any]) -> Any:
-    if "raw_data" in legacy:
+    if "raw_data" in legacy and not _is_empty(legacy["raw_data"]):
         return legacy["raw_data"]
     nested = legacy.get("detail")
-    if isinstance(nested, dict) and "raw_data" in nested:
+    if (
+        isinstance(nested, dict)
+        and "raw_data" in nested
+        and not _is_empty(nested["raw_data"])
+    ):
         return nested["raw_data"]
     return None
 
@@ -152,13 +186,12 @@ def _platform_for(source: dict[str, Any]) -> str:
     return str(platform)
 
 
-def _count_action(result: IngestResult, action: str | None) -> None:
-    if action == "created":
-        result.created += 1
-    elif action == "merged":
-        result.merged += 1
-    elif action == "pending":
-        result.pending += 1
+def _merge_result(result: IngestResult, incoming: IngestResult) -> None:
+    result.created += incoming.created
+    result.merged += incoming.merged
+    result.pending += incoming.pending
+    result.errors += incoming.errors
+    result.error_details.extend(incoming.error_details)
 
 
 def main() -> None:

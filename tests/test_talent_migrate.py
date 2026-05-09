@@ -149,6 +149,42 @@ def test_migrates_source_object_as_primary_source(tmp_path: Path):
         db.close()
 
 
+def test_dedupes_source_object_and_sources_first_wins(tmp_path: Path):
+    json_dir = tmp_path / "json"
+    json_dir.mkdir()
+    db_path = tmp_path / "talent.db"
+    payload = _legacy_candidate(
+        sources=[
+            {
+                "channel": "maimai",
+                "platform_id": "same-source",
+                "url": "https://maimai.example/from-list",
+            }
+        ]
+    )
+    payload["_source"] = {
+        "channel": "maimai",
+        "platform_id": "same-source",
+        "url": "https://maimai.example/from-source",
+        "enrichment_level": "primary",
+    }
+    _write_json(json_dir / "alice.json", payload)
+
+    migrate_candidates(json_dir, db_path)
+
+    db = _read_db(db_path)
+    try:
+        candidate_id = db.fulltext_search("Alice")[0].id
+        sources = db.get_sources(candidate_id)
+        assert len(sources) == 1
+        assert sources[0].platform == "maimai"
+        assert sources[0].platform_id == "same-source"
+        assert sources[0].profile_url == "https://maimai.example/from-source"
+        assert sources[0].raw_profile["source"]["enrichment_level"] == "primary"
+    finally:
+        db.close()
+
+
 def test_migrates_work_experience_and_detail(tmp_path: Path):
     json_dir = tmp_path / "json"
     json_dir.mkdir()
@@ -177,6 +213,26 @@ def test_migrates_work_experience_and_detail(tmp_path: Path):
         assert detail.project_experience == tuple(projects)
         assert detail.summary == "Strong product background."
         assert detail.raw_data["legacy"]["raw_data"] == {"legacy_id": "old-1"}
+        assert detail.raw_data["legacy_json"]["name"] == "Alice Chen"
+    finally:
+        db.close()
+
+
+def test_empty_top_level_raw_data_falls_back_to_nested_detail_raw_data(tmp_path: Path):
+    json_dir = tmp_path / "json"
+    json_dir.mkdir()
+    db_path = tmp_path / "talent.db"
+    payload = _legacy_candidate(raw_data={})
+    payload["detail"] = {"raw_data": {"nested": "kept"}}
+    _write_json(json_dir / "alice.json", payload)
+
+    migrate_candidates(json_dir, db_path)
+
+    db = _read_db(db_path)
+    try:
+        candidate_id = db.fulltext_search("Alice")[0].id
+        detail = db.get_detail(candidate_id)
+        assert detail.raw_data["legacy"]["raw_data"] == {"nested": "kept"}
         assert detail.raw_data["legacy_json"]["name"] == "Alice Chen"
     finally:
         db.close()
@@ -283,12 +339,10 @@ def test_db_closes_on_exception_path(tmp_path: Path, monkeypatch):
     closed = []
 
     class RaisingDB:
-        _last_ingest_action = None
-
         def __init__(self, db_path):
             self.db_path = db_path
 
-        def ingest(self, data, platform):
+        def batch_ingest(self, candidates, platform):
             raise RuntimeError("forced ingest failure")
 
         def close(self):
@@ -301,6 +355,33 @@ def test_db_closes_on_exception_path(tmp_path: Path, monkeypatch):
     assert result.errors == 1
     assert "forced ingest failure" in result.error_details[0]
     assert closed == [tmp_path / "talent.db"]
+
+
+def test_uses_batch_ingest_result_for_primary_candidate_stats(tmp_path: Path, monkeypatch):
+    json_dir = tmp_path / "json"
+    json_dir.mkdir()
+    _write_json(json_dir / "alice.json", _legacy_candidate())
+
+    class TrackingDB:
+        def __init__(self, db_path):
+            self.ingest_calls = []
+
+        def batch_ingest(self, candidates, platform):
+            return IngestResult(created=0, merged=1, pending=0, errors=0)
+
+        def ingest(self, data, platform):
+            self.ingest_calls.append((data, platform))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("scripts.talent_migrate.TalentDB", TrackingDB)
+
+    result = migrate_candidates(json_dir, tmp_path / "talent.db")
+
+    assert result.created == 0
+    assert result.merged == 1
+    assert result.pending == 0
 
 
 def test_script_cli_runs_directly_from_project_root(tmp_path: Path):
