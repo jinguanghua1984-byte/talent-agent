@@ -10,8 +10,11 @@ from typing import Any
 from scripts.talent_models import (
     Candidate,
     CandidateDetail,
+    CandidateFilter,
     IngestResult,
+    PageResult,
     PendingMerge,
+    SortSpec,
     SourceProfile,
 )
 
@@ -28,6 +31,14 @@ _EXPERIENCE_FIELDS = (
     "education_experience",
     "project_experience",
 )
+_SORT_FIELDS = {
+    "overall_score": "candidates.overall_score",
+    "updated_at": "candidates.updated_at",
+    "work_years": "candidates.work_years",
+    "age": "candidates.age",
+    "created_at": "candidates.created_at",
+    "name": "candidates.name",
+}
 
 
 class TalentDB:
@@ -693,6 +704,57 @@ class TalentDB:
             for row in rows
         ]
 
+    def search(
+        self,
+        filters: CandidateFilter | None = None,
+        sort: SortSpec | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> PageResult:
+        if not _is_positive_int(page):
+            raise ValueError("page must be a positive integer")
+        if not _is_positive_int(page_size):
+            raise ValueError("page_size must be a positive integer")
+
+        order_by = self._order_by_clause(sort)
+        where_clause, params = _candidate_where_clause(filters)
+        total = self.count(filters)
+        offset = (page - 1) * page_size
+        rows = self._conn.execute(
+            f"""
+            SELECT candidates.*
+            FROM candidates
+            {where_clause}
+            ORDER BY {order_by}, candidates.id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, page_size, offset),
+        ).fetchall()
+        items = [_candidate_from_row(row) for row in rows]
+        return PageResult(items=items, total=total, page=page, page_size=page_size)
+
+    def count(self, filters: CandidateFilter | None = None) -> int:
+        where_clause, params = _candidate_where_clause(filters)
+        row = self._conn.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM candidates
+            {where_clause}
+            """,
+            params,
+        ).fetchone()
+        return int(row[0])
+
+    @staticmethod
+    def _order_by_clause(sort: SortSpec | None) -> str:
+        spec = sort or SortSpec(field="overall_score", direction="desc")
+        field = _SORT_FIELDS.get(spec.field)
+        if field is None:
+            raise ValueError(f"Unsupported sort field: {spec.field}")
+        if spec.direction not in {"asc", "desc"}:
+            raise ValueError(f"Unsupported sort direction: {spec.direction}")
+        return f"{field} {spec.direction.upper()}"
+
     def enrich(self, candidate_id: int, detail_data: dict[str, Any]) -> None:
         with self._conn:
             self._enrich_no_commit(candidate_id, detail_data)
@@ -794,6 +856,108 @@ def _json_loads(value: str | None, default: Any, field_name: str) -> Any:
         return json.loads(value)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid JSON in TalentDB field {field_name}") from exc
+
+
+def _candidate_from_row(row: sqlite3.Row) -> Candidate:
+    data = dict(row)
+    data["skill_tags"] = _json_loads(data.get("skill_tags"), [], "candidates.skill_tags")
+    return Candidate.from_dict(data)
+
+
+def _candidate_where_clause(filters: CandidateFilter | None) -> tuple[str, tuple[Any, ...]]:
+    if filters is None:
+        return "", ()
+
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    _add_in_filter(clauses, params, "candidates.current_company", filters.companies)
+    _add_in_filter(clauses, params, "candidates.current_title", filters.titles)
+    _add_in_filter(clauses, params, "candidates.city", filters.cities)
+    _add_in_filter(clauses, params, "candidates.education", filters.education_levels)
+    _add_in_filter(clauses, params, "candidates.hunting_status", filters.hunting_status)
+
+    if filters.min_work_years is not None:
+        clauses.append("candidates.work_years >= ?")
+        params.append(filters.min_work_years)
+    if filters.max_work_years is not None:
+        clauses.append("candidates.work_years <= ?")
+        params.append(filters.max_work_years)
+    if filters.data_level is not None:
+        clauses.append("candidates.data_level = ?")
+        params.append(filters.data_level)
+    if filters.min_score is not None:
+        clauses.append("candidates.overall_score >= ?")
+        params.append(filters.min_score)
+    if filters.max_score is not None:
+        clauses.append("candidates.overall_score <= ?")
+        params.append(filters.max_score)
+    if filters.updated_after is not None:
+        clauses.append("candidates.updated_at > ?")
+        params.append(filters.updated_after)
+
+    if filters.skills_any:
+        placeholders = _placeholders(filters.skills_any)
+        clauses.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM json_each(candidates.skill_tags) AS skill
+                WHERE skill.value IN ({placeholders})
+            )
+            """.format(placeholders=placeholders)
+        )
+        params.extend(filters.skills_any)
+
+    for skill in filters.skills_all or []:
+        clauses.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM json_each(candidates.skill_tags) AS skill
+                WHERE skill.value = ?
+            )
+            """
+        )
+        params.append(skill)
+
+    if filters.platforms:
+        placeholders = _placeholders(filters.platforms)
+        clauses.append(
+            """
+            EXISTS (
+                SELECT 1
+                FROM source_profiles
+                WHERE source_profiles.candidate_id = candidates.id
+                  AND source_profiles.platform IN ({placeholders})
+            )
+            """.format(placeholders=placeholders)
+        )
+        params.extend(filters.platforms)
+
+    if not clauses:
+        return "", ()
+    return "WHERE " + " AND ".join(clauses), tuple(params)
+
+
+def _add_in_filter(
+    clauses: list[str],
+    params: list[Any],
+    column: str,
+    values: list[Any] | None,
+) -> None:
+    if not values:
+        return
+    clauses.append(f"{column} IN ({_placeholders(values)})")
+    params.extend(values)
+
+
+def _placeholders(values: list[Any]) -> str:
+    return ", ".join("?" for _ in values)
+
+
+def _is_positive_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def _identity_value(value: Any) -> str:

@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 
 from scripts.talent_db import TalentDB
-from scripts.talent_models import Candidate, CandidateDetail, SourceProfile
+from scripts.talent_models import (
+    Candidate,
+    CandidateDetail,
+    CandidateFilter,
+    SortSpec,
+    SourceProfile,
+)
 
 
 @pytest.fixture
@@ -37,6 +43,114 @@ def db_with_candidate(db: TalentDB) -> tuple[TalentDB, int]:
         platform="maimai",
     )
     return db, candidate_id
+
+
+@pytest.fixture
+def search_db(db: TalentDB) -> tuple[TalentDB, dict[str, int]]:
+    ids = {
+        "alice": db.ingest(
+            {
+                "name": "Alice Chen",
+                "age": 29,
+                "city": "Shanghai",
+                "current_company": "ByteDance",
+                "current_title": "Product Manager",
+                "work_years": 6,
+                "education": "Master",
+                "skill_tags": ["AI", "Python", "SQL"],
+                "hunting_status": "open",
+                "platform_id": "maimai-alice",
+            },
+            platform="maimai",
+        ),
+        "bob": db.ingest(
+            {
+                "name": "Bob Li",
+                "age": 35,
+                "city": "Beijing",
+                "current_company": "Tencent",
+                "current_title": "Backend Engineer",
+                "work_years": 10,
+                "education": "Bachelor",
+                "skill_tags": ["Go", "Kubernetes"],
+                "hunting_status": "passive",
+                "platform_id": "boss-bob",
+            },
+            platform="boss",
+        ),
+        "cathy": db.ingest(
+            {
+                "name": "Cathy Wang",
+                "age": 27,
+                "city": "Shenzhen",
+                "current_company": "Acme",
+                "current_title": "Data Scientist",
+                "work_years": 4,
+                "education": "PhD",
+                "skill_tags": ["Python", "NLP"],
+                "hunting_status": "open",
+                "platform_id": "linkedin-cathy",
+                "work_experience": [{"company": "Acme", "title": "Data Scientist"}],
+            },
+            platform="linkedin",
+        ),
+        "dan": db.ingest(
+            {
+                "name": "Dan Zhao",
+                "age": 31,
+                "city": "Shanghai",
+                "current_company": "ByteDance",
+                "current_title": "ML Engineer",
+                "work_years": 8,
+                "education": "Master",
+                "skill_tags": ["Python", "ML"],
+                "hunting_status": "closed",
+                "platform_id": "boss-dan",
+            },
+            platform="boss",
+        ),
+    }
+    with db._conn:
+        db._conn.execute(
+            """
+            UPDATE candidates
+            SET overall_score = 91.5, created_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            ("2026-05-01T09:00:00", "2026-05-05T09:00:00", ids["alice"]),
+        )
+        db._conn.execute(
+            """
+            UPDATE candidates
+            SET overall_score = 78.0, created_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            ("2026-05-02T09:00:00", "2026-05-06T09:00:00", ids["bob"]),
+        )
+        db._conn.execute(
+            """
+            UPDATE candidates
+            SET overall_score = 88.0, created_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            ("2026-05-03T09:00:00", "2026-05-07T09:00:00", ids["cathy"]),
+        )
+        db._conn.execute(
+            """
+            UPDATE candidates
+            SET overall_score = 96.0, created_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            ("2026-05-04T09:00:00", "2026-05-08T09:00:00", ids["dan"]),
+        )
+        db._conn.execute(
+            """
+            INSERT INTO source_profiles(candidate_id, platform, platform_id, raw_profile)
+            VALUES (?, 'boss', 'boss-alice-extra', ?)
+            """,
+            (ids["alice"], json.dumps({"name": "Alice Chen"})),
+        )
+    return db, ids
 
 
 def test_creates_db_file(tmp_path: Path):
@@ -556,6 +670,127 @@ def test_get_sources_existing(db_with_candidate: tuple[TalentDB, int]):
 
 def test_get_sources_empty(db: TalentDB):
     assert db.get_sources(999999) == []
+
+
+def test_search_all_with_pagination(search_db: tuple[TalentDB, dict[str, int]]):
+    db, ids = search_db
+
+    first_page = db.search(sort=SortSpec("name", "asc"), page=1, page_size=2)
+    second_page = db.search(sort=SortSpec("name", "asc"), page=2, page_size=2)
+
+    assert first_page.total == 4
+    assert first_page.page == 1
+    assert first_page.page_size == 2
+    assert first_page.total_pages == 2
+    assert [candidate.id for candidate in first_page.items] == [ids["alice"], ids["bob"]]
+    assert [candidate.id for candidate in second_page.items] == [
+        ids["cathy"],
+        ids["dan"],
+    ]
+
+
+def test_search_filters_candidate_fields(search_db: tuple[TalentDB, dict[str, int]]):
+    db, ids = search_db
+
+    result = db.search(
+        CandidateFilter(
+            companies=["ByteDance"],
+            titles=["Product Manager"],
+            cities=["Shanghai"],
+            education_levels=["Master"],
+            min_work_years=5,
+            max_work_years=7,
+            data_level="core",
+            hunting_status=["open"],
+            min_score=90,
+            max_score=95,
+            updated_after="2026-05-04T00:00:00",
+        )
+    )
+
+    assert [candidate.id for candidate in result.items] == [ids["alice"]]
+    assert result.total == 1
+
+
+def test_search_filter_platforms_without_duplicate_candidates(
+    search_db: tuple[TalentDB, dict[str, int]],
+):
+    db, ids = search_db
+
+    result = db.search(
+        CandidateFilter(platforms=["boss"]),
+        sort=SortSpec("name", "asc"),
+    )
+
+    assert [candidate.id for candidate in result.items] == [
+        ids["alice"],
+        ids["bob"],
+        ids["dan"],
+    ]
+    assert result.total == 3
+
+
+def test_search_filter_skills_any_and_all(search_db: tuple[TalentDB, dict[str, int]]):
+    db, ids = search_db
+
+    any_result = db.search(
+        CandidateFilter(skills_any=["NLP", "Kubernetes"]),
+        sort=SortSpec("name", "asc"),
+    )
+    all_result = db.search(
+        CandidateFilter(skills_all=["Python", "SQL"]),
+        sort=SortSpec("name", "asc"),
+    )
+
+    assert [candidate.id for candidate in any_result.items] == [ids["bob"], ids["cathy"]]
+    assert [candidate.id for candidate in all_result.items] == [ids["alice"]]
+
+
+@pytest.mark.parametrize(
+    ("sort", "expected_names"),
+    [
+        (SortSpec("overall_score", "desc"), ["Dan Zhao", "Alice Chen", "Cathy Wang"]),
+        (SortSpec("name", "asc"), ["Alice Chen", "Bob Li", "Cathy Wang"]),
+        (SortSpec("work_years", "asc"), ["Cathy Wang", "Alice Chen", "Dan Zhao"]),
+    ],
+)
+def test_search_sort_by_score_name_work_years(
+    search_db: tuple[TalentDB, dict[str, int]],
+    sort: SortSpec,
+    expected_names: list[str],
+):
+    db, _ = search_db
+
+    result = db.search(sort=sort, page=1, page_size=3)
+
+    assert [candidate.name for candidate in result.items] == expected_names
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"sort": SortSpec("not_allowed", "asc")},
+        {"sort": SortSpec("name", "sideways")},
+        {"sort": SortSpec("name", "ASC")},
+        {"page": 0},
+        {"page_size": 0},
+    ],
+)
+def test_search_rejects_invalid_sort_and_pagination(
+    search_db: tuple[TalentDB, dict[str, int]],
+    kwargs: dict[str, object],
+):
+    db, _ = search_db
+
+    with pytest.raises(ValueError):
+        db.search(**kwargs)
+
+
+def test_count_all_and_filtered(search_db: tuple[TalentDB, dict[str, int]]):
+    db, _ = search_db
+
+    assert db.count() == 4
+    assert db.count(CandidateFilter(companies=["ByteDance"], min_score=90)) == 2
 
 
 def test_add_company_alias_and_pending_merges_empty(db: TalentDB):
