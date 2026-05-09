@@ -234,6 +234,7 @@ class TalentDB:
             END;
             """
         )
+        self._conn.execute("INSERT INTO candidate_fts(candidate_fts) VALUES('rebuild')")
 
     def _init_vectors(self) -> None:
         try:
@@ -757,13 +758,17 @@ class TalentDB:
 
         try:
             return self._fulltext_search(normalized_query, limit)
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as exc:
+            if not _is_fts_query_error(exc):
+                raise
             safe_query = _safe_fts_query(normalized_query)
             if not safe_query:
                 return []
             try:
                 return self._fulltext_search(safe_query, limit)
-            except sqlite3.OperationalError:
+            except sqlite3.OperationalError as fallback_exc:
+                if not _is_fts_query_error(fallback_exc):
+                    raise
                 return []
 
     def _fulltext_search(self, query: str, limit: int) -> list[SearchHit]:
@@ -1001,8 +1006,22 @@ def _is_positive_int(value: Any) -> bool:
 
 
 def _safe_fts_query(query: str) -> str:
-    tokens = re.findall(r"\w+", query, flags=re.UNICODE)
-    return " ".join(f'"{token}"' for token in tokens)
+    operators = {"AND", "OR", "NEAR", "NOT"}
+    tokens = [
+        token
+        for token in re.findall(r"\w+", query, flags=re.UNICODE)
+        if token.upper() not in operators
+    ]
+    return " OR ".join(f'"{token}"' for token in tokens)
+
+
+def _is_fts_query_error(exc: sqlite3.OperationalError) -> bool:
+    message = str(exc).lower()
+    return (
+        "fts5: syntax error" in message
+        or "malformed match expression" in message
+        or "unterminated string" in message
+    )
 
 
 def _identity_value(value: Any) -> str:

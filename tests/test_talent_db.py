@@ -676,11 +676,46 @@ def test_fulltext_search_rejects_invalid_limit(db: TalentDB, limit: object):
 def test_fulltext_search_special_chars_do_not_raise(
     search_db: tuple[TalentDB, dict[str, int]],
 ):
-    db, _ = search_db
+    db, ids = search_db
 
     hits = db.fulltext_search('Alice OR "')
 
-    assert isinstance(hits, list)
+    assert [hit.id for hit in hits] == [ids["alice"]]
+
+
+def test_fulltext_search_rebuilds_legacy_candidates_without_fts(tmp_path: Path):
+    db_path = tmp_path / "legacy.db"
+    legacy_db = TalentDB(db_path)
+    try:
+        candidate_id = legacy_db.ingest(
+            {
+                "name": "Legacy Candidate",
+                "current_company": "OldSearch",
+                "current_title": "Engineer",
+            },
+            platform="legacy",
+        )
+        with legacy_db._conn:
+            legacy_db._conn.execute("DROP TABLE candidate_fts")
+    finally:
+        legacy_db.close()
+
+    reopened_db = TalentDB(db_path)
+    try:
+        hits = reopened_db.fulltext_search("Legacy")
+    finally:
+        reopened_db.close()
+
+    assert [hit.id for hit in hits] == [candidate_id]
+
+
+def test_fulltext_search_raises_when_fts_table_is_missing(db_with_candidate):
+    db, _ = db_with_candidate
+    with db._conn:
+        db._conn.execute("DROP TABLE candidate_fts")
+
+    with pytest.raises(sqlite3.OperationalError):
+        db.fulltext_search("Alice")
 
 
 def test_fulltext_search_fts_stays_synced_after_candidate_update(db: TalentDB):
