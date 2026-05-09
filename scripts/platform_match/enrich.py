@@ -131,12 +131,10 @@ def enrich_enrichment_level(existing: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def _get_data_manager_path() -> str:
-    # enrich.py 位于 .claude/skills/platform-match/scripts/enrich.py
+    # enrich.py 位于 scripts/platform_match/enrich.py
     # data-manager.py 位于项目根目录 scripts/data-manager.py
     project_root = os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))
-        )))
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     )
     return os.path.join(project_root, "scripts", "data-manager.py")
 
@@ -154,9 +152,7 @@ def _run_data_manager(*args: str) -> dict:
             text=True,
             timeout=30,
             cwd=os.path.dirname(
-                os.path.dirname(os.path.dirname(os.path.dirname(
-                    os.path.dirname(os.path.abspath(__file__))
-                )))
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             ),
         )
     except subprocess.TimeoutExpired:
@@ -177,7 +173,7 @@ def _run_data_manager(*args: str) -> dict:
 
 def cmd_map(args):
     """将 API 数据映射为 schema 格式。"""
-    from adapters import ADAPTERS
+    from scripts.platform_match.adapters import ADAPTERS
 
     adapter = ADAPTERS.get(args.platform)
     if not adapter:

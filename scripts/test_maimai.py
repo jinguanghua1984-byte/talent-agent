@@ -1,21 +1,13 @@
 """maimai.py 纯函数单元测试"""
 
-import os
-import sys
 import unittest
-
-# 添加脚本路径，使 import adapters 可用
-SCRIPTS_DIR = os.path.join(
-    os.path.dirname(__file__), "..", ".claude", "skills", "platform-match", "scripts"
-)
-sys.path.insert(0, os.path.abspath(SCRIPTS_DIR))
 
 
 class TestParseWorkYears(unittest.TestCase):
     """_parse_work_years 工作年限解析测试。"""
 
     def _call(self, raw):
-        from adapters.maimai import _parse_work_years
+        from scripts.platform_match.adapters.maimai import _parse_work_years
         return _parse_work_years(raw)
 
     def test_standard_format(self):
@@ -47,7 +39,7 @@ class TestNormalizePeriod(unittest.TestCase):
     """_normalize_period 日期格式标准化测试。"""
 
     def _call(self, raw):
-        from adapters.maimai import _normalize_period
+        from scripts.platform_match.adapters.maimai import _normalize_period
         return _normalize_period(raw)
 
     def test_to_present_with_day(self):
@@ -80,7 +72,7 @@ class TestBuildSearchParams(unittest.TestCase):
     """build_search_params 搜索参数构建测试。"""
 
     def _call(self, **kwargs):
-        from adapters.maimai import MaimaiAdapter
+        from scripts.platform_match.adapters.maimai import MaimaiAdapter
         adapter = MaimaiAdapter()
         return adapter.build_search_params(**kwargs)
 
@@ -134,7 +126,7 @@ class TestMapToSchema(unittest.TestCase):
     """map_to_schema API 数据映射测试。"""
 
     def _call(self, api_data):
-        from adapters.maimai import MaimaiAdapter
+        from scripts.platform_match.adapters.maimai import MaimaiAdapter
         adapter = MaimaiAdapter()
         return adapter.map_to_schema(api_data)
 

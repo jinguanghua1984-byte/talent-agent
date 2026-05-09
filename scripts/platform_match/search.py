@@ -20,11 +20,9 @@ except ImportError:
     print("错误: 需要安装 playwright。运行: pip install playwright", file=sys.stderr)
     sys.exit(1)
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from adapters.base import SearchParams, SearchResult  # noqa: E402
-from adapters import ADAPTERS  # noqa: E402
-from rate_limiter import check_search, record_search, record_page, trigger_circuit_break  # noqa: E402
+from scripts.platform_match.adapters.base import SearchParams, SearchResult
+from scripts.platform_match.adapters import ADAPTERS
+from scripts.platform_match.rate_limiter import check_search, record_search, record_page, trigger_circuit_break
 
 
 DEFAULT_CDP_URL = "http://localhost:9222"
