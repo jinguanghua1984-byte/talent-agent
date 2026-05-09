@@ -122,6 +122,8 @@ def _normalized_key_value(value: Any) -> str:
 
 def _to_ingest_data(legacy: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
     data = {field: legacy[field] for field in _CORE_FIELDS if field in legacy}
+    if "expected_city" in data:
+        data["expected_city"] = _normalize_text_field(data["expected_city"])
     if "hunting_status" in legacy:
         data["hunting_status"] = legacy["hunting_status"]
     elif "status" in legacy:
@@ -145,6 +147,12 @@ def _to_ingest_data(legacy: dict[str, Any], source: dict[str, Any]) -> dict[str,
         raw_data["active_state"] = legacy["active_state"]
     data["detail"] = {**detail, "raw_data": raw_data}
     return data
+
+
+def _normalize_text_field(value: Any) -> Any:
+    if isinstance(value, (list, tuple)):
+        return json.dumps(list(value), ensure_ascii=False)
+    return value
 
 
 def _detail_data_for(legacy: dict[str, Any]) -> dict[str, Any]:

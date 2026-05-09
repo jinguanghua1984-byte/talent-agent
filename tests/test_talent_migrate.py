@@ -185,6 +185,26 @@ def test_dedupes_source_object_and_sources_first_wins(tmp_path: Path):
         db.close()
 
 
+def test_migrates_expected_city_list_as_text(tmp_path: Path):
+    json_dir = tmp_path / "json"
+    json_dir.mkdir()
+    db_path = tmp_path / "talent.db"
+    _write_json(
+        json_dir / "alice.json",
+        _legacy_candidate(expected_city=["Shanghai", "Beijing"]),
+    )
+
+    result = migrate_candidates(json_dir, db_path)
+
+    db = _read_db(db_path)
+    try:
+        candidate = db.get(db.fulltext_search("Alice")[0].id)
+        assert result.errors == 0
+        assert json.loads(candidate.expected_city) == ["Shanghai", "Beijing"]
+    finally:
+        db.close()
+
+
 def test_migrates_work_experience_and_detail(tmp_path: Path):
     json_dir = tmp_path / "json"
     json_dir.mkdir()
