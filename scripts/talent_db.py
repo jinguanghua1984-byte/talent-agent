@@ -34,6 +34,8 @@ _EXPERIENCE_FIELDS = (
     "education_experience",
     "project_experience",
 )
+_VECTOR_DIMENSIONS = 384
+_VECTOR_BYTES = _VECTOR_DIMENSIONS * 4
 _SORT_FIELDS = {
     "overall_score": "candidates.overall_score",
     "updated_at": "candidates.updated_at",
@@ -303,16 +305,16 @@ class TalentDB:
         if not self._vec_available:
             raise NotImplementedError("sqlite-vec extension is not available")
 
+        query_value = self._serialize_embedding(query_vector)
         count = self._conn.execute("SELECT COUNT(*) FROM candidate_vectors").fetchone()[0]
         if count == 0:
             return []
 
-        query_value = self._serialize_embedding(query_vector)
         rows = self._conn.execute(
             """
             SELECT
                 nearest.candidate_id AS id,
-                nearest.distance AS similarity,
+                nearest.distance,
                 candidates.name,
                 candidates.current_company,
                 candidates.current_title
@@ -329,7 +331,7 @@ class TalentDB:
         return [
             VectorHit(
                 id=int(row["id"]),
-                similarity=float(row["similarity"]),
+                similarity=1.0 / (1.0 + float(row["distance"])),
                 name=row["name"],
                 current_company=row["current_company"],
                 current_title=row["current_title"],
@@ -339,10 +341,24 @@ class TalentDB:
 
     def _serialize_embedding(self, embedding: bytes | list[float]) -> bytes:
         if isinstance(embedding, bytes):
+            if len(embedding) != _VECTOR_BYTES:
+                raise ValueError(
+                    f"embedding bytes must be {_VECTOR_BYTES} bytes "
+                    f"for {_VECTOR_DIMENSIONS} float32 dimensions"
+                )
             return embedding
-        if isinstance(embedding, list) and self._sqlite_vec is not None:
-            return self._sqlite_vec.serialize_float32(embedding)
-        raise TypeError("embedding must be bytes or list[float]")
+        if not isinstance(embedding, list):
+            raise TypeError("embedding must be bytes or list[float]")
+        if len(embedding) != _VECTOR_DIMENSIONS:
+            raise ValueError(
+                f"embedding list must contain {_VECTOR_DIMENSIONS} dimensions"
+            )
+        for value in embedding:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError("embedding list values must be int or float")
+        if self._sqlite_vec is None:
+            raise NotImplementedError("sqlite-vec extension is not available")
+        return self._sqlite_vec.serialize_float32([float(value) for value in embedding])
 
     def ingest(self, data: dict[str, Any], platform: str) -> int:
         with self._conn:

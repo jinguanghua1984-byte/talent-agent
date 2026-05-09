@@ -792,7 +792,8 @@ def test_vector_search_save_and_search_self_vector_first(db: TalentDB):
     hits = db.vector_search(_embedding([1.0, 0.0, 0.0]), limit=2)
 
     assert [hit.id for hit in hits] == [alice_id, bob_id]
-    assert hits[0].similarity == 0.0
+    assert hits[0].similarity == pytest.approx(1.0)
+    assert hits[0].similarity >= hits[1].similarity
     assert hits[0].name == "Vector Alice"
     assert hits[0].current_company == "ByteDance"
     assert hits[0].current_title == "ML Engineer"
@@ -826,10 +827,70 @@ def test_vector_search_empty_vector_table_returns_empty_list(db: TalentDB):
     assert db.vector_search(_embedding([1.0, 0.0, 0.0]), limit=5) == []
 
 
+def test_vector_search_empty_table_still_validates_query_vector(db: TalentDB):
+    if not db._vec_available:
+        pytest.skip("sqlite-vec extension is not available")
+
+    with pytest.raises(ValueError):
+        db.vector_search([1.0, 0.0, 0.0], limit=5)
+
+
 @pytest.mark.parametrize("limit", [0, -1, 1.5, True])
 def test_vector_search_rejects_invalid_limit(db: TalentDB, limit: object):
     with pytest.raises(ValueError):
         db.vector_search(_embedding([1.0, 0.0, 0.0]), limit=limit)
+
+
+@pytest.mark.parametrize(
+    ("embedding_factory", "error_type"),
+    [
+        (lambda: [1.0, 0.0, 0.0], ValueError),
+        (lambda: _embedding([1.0, 0.0, 0.0])[:-1], ValueError),
+        (lambda: _embedding([1.0, 0.0, 0.0]) + [0.0], ValueError),
+        (lambda: [True, *_embedding([1.0, 0.0, 0.0])[1:]], TypeError),
+        (lambda: ["1.0", *_embedding([1.0, 0.0, 0.0])[1:]], TypeError),
+        (lambda: _embedding_bytes([1.0, 0.0, 0.0])[:-4], ValueError),
+    ],
+)
+def test_vector_embedding_rejects_bad_values(
+    db_with_candidate: tuple[TalentDB, int],
+    embedding_factory,
+    error_type: type[Exception],
+):
+    db, candidate_id = db_with_candidate
+    if not db._vec_available:
+        pytest.skip("sqlite-vec extension is not available")
+
+    embedding = embedding_factory()
+    with pytest.raises(error_type):
+        db.save_embedding(candidate_id, embedding)
+    with pytest.raises(error_type):
+        db.vector_search(embedding)
+
+
+def test_save_bad_embedding_after_good_embedding_preserves_existing_vector(
+    db: TalentDB,
+):
+    if not db._vec_available:
+        pytest.skip("sqlite-vec extension is not available")
+    candidate_id = db.ingest({"name": "Stable Vector"}, platform="maimai")
+    other_id = db.ingest({"name": "Other Stable Vector"}, platform="boss")
+    good_embedding = _embedding([1.0, 0.0, 0.0])
+
+    db.save_embedding(candidate_id, good_embedding)
+    db.save_embedding(other_id, _embedding([0.0, 1.0, 0.0]))
+    with pytest.raises(ValueError):
+        db.save_embedding(candidate_id, [0.0, 1.0, 0.0])
+
+    hits = db.vector_search(good_embedding, limit=2)
+    row_count = db._conn.execute(
+        "SELECT COUNT(*) FROM candidate_vectors WHERE candidate_id = ?",
+        (candidate_id,),
+    ).fetchone()[0]
+
+    assert hits[0].id == candidate_id
+    assert hits[0].similarity == pytest.approx(1.0)
+    assert row_count == 1
 
 
 def test_vector_methods_raise_when_sqlite_vec_unavailable(db: TalentDB):
