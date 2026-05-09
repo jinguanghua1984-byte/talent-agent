@@ -830,7 +830,8 @@ class TalentDB:
         _validate_score(score)
         _validate_non_empty_string(trigger, "trigger")
         new_score = float(score)
-        with self._conn:
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
             row = self._conn.execute(
                 """
                 SELECT overall_score
@@ -867,6 +868,11 @@ class TalentDB:
                     _json_dumps(detail),
                 ),
             )
+        except Exception:
+            self._conn.rollback()
+            raise
+        else:
+            self._conn.commit()
 
     def save_match_score(
         self,
