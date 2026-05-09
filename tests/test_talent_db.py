@@ -1,5 +1,6 @@
 import sqlite3
 import json
+import struct
 from pathlib import Path
 
 import pytest
@@ -718,6 +719,128 @@ def test_fulltext_search_raises_when_fts_table_is_missing(db_with_candidate):
         db.fulltext_search("Alice")
 
 
+def test_vector_extension_availability_flag_and_schema(db: TalentDB):
+    assert isinstance(db._vec_available, bool)
+
+    row = db._conn.execute(
+        """
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table' AND name = 'candidate_vectors'
+        """
+    ).fetchone()
+
+    if db._vec_available:
+        assert row is not None
+    else:
+        assert row is None
+
+
+def test_init_continues_when_sqlite_vec_load_fails(tmp_path: Path, monkeypatch):
+    try:
+        import sqlite_vec
+    except ImportError:
+        pytest.skip("sqlite-vec package is not installed")
+
+    def fail_load(conn):
+        raise sqlite3.OperationalError("forced sqlite-vec load failure")
+
+    monkeypatch.setattr(sqlite_vec, "load", fail_load)
+    db = TalentDB(tmp_path / "vec-unavailable.db")
+    try:
+        row = db._conn.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'candidate_vectors'
+            """
+        ).fetchone()
+
+        assert db._vec_available is False
+        assert row is None
+        with pytest.raises(NotImplementedError):
+            db.save_embedding(1, _embedding([1.0, 0.0, 0.0]))
+        with pytest.raises(NotImplementedError):
+            db.vector_search(_embedding([1.0, 0.0, 0.0]))
+    finally:
+        db.close()
+
+
+def test_vector_search_save_and_search_self_vector_first(db: TalentDB):
+    if not db._vec_available:
+        pytest.skip("sqlite-vec extension is not available")
+    alice_id = db.ingest(
+        {
+            "name": "Vector Alice",
+            "current_company": "ByteDance",
+            "current_title": "ML Engineer",
+        },
+        platform="maimai",
+    )
+    bob_id = db.ingest(
+        {
+            "name": "Vector Bob",
+            "current_company": "Tencent",
+            "current_title": "Backend Engineer",
+        },
+        platform="boss",
+    )
+
+    db.save_embedding(alice_id, _embedding_bytes([1.0, 0.0, 0.0]))
+    db.save_embedding(bob_id, _embedding([0.0, 1.0, 0.0]))
+
+    hits = db.vector_search(_embedding([1.0, 0.0, 0.0]), limit=2)
+
+    assert [hit.id for hit in hits] == [alice_id, bob_id]
+    assert hits[0].similarity == 0.0
+    assert hits[0].name == "Vector Alice"
+    assert hits[0].current_company == "ByteDance"
+    assert hits[0].current_title == "ML Engineer"
+
+
+def test_save_embedding_upserts_existing_candidate_embedding(db: TalentDB):
+    if not db._vec_available:
+        pytest.skip("sqlite-vec extension is not available")
+    candidate_id = db.ingest({"name": "Upsert Vector"}, platform="maimai")
+    other_id = db.ingest({"name": "Other Vector"}, platform="boss")
+
+    db.save_embedding(candidate_id, _embedding([1.0, 0.0, 0.0]))
+    db.save_embedding(other_id, _embedding([0.2, 0.8, 0.0]))
+    db.save_embedding(candidate_id, _embedding([0.0, 1.0, 0.0]))
+
+    hits = db.vector_search(_embedding([0.0, 1.0, 0.0]), limit=2)
+    row_count = db._conn.execute(
+        "SELECT COUNT(*) FROM candidate_vectors WHERE candidate_id = ?",
+        (candidate_id,),
+    ).fetchone()[0]
+
+    assert hits[0].id == candidate_id
+    assert row_count == 1
+
+
+def test_vector_search_empty_vector_table_returns_empty_list(db: TalentDB):
+    if not db._vec_available:
+        pytest.skip("sqlite-vec extension is not available")
+    db.ingest({"name": "No Vector Yet"}, platform="maimai")
+
+    assert db.vector_search(_embedding([1.0, 0.0, 0.0]), limit=5) == []
+
+
+@pytest.mark.parametrize("limit", [0, -1, 1.5, True])
+def test_vector_search_rejects_invalid_limit(db: TalentDB, limit: object):
+    with pytest.raises(ValueError):
+        db.vector_search(_embedding([1.0, 0.0, 0.0]), limit=limit)
+
+
+def test_vector_methods_raise_when_sqlite_vec_unavailable(db: TalentDB):
+    db._vec_available = False
+
+    with pytest.raises(NotImplementedError):
+        db.save_embedding(1, _embedding([1.0, 0.0, 0.0]))
+    with pytest.raises(NotImplementedError):
+        db.vector_search(_embedding([1.0, 0.0, 0.0]))
+
+
 def test_fulltext_search_fts_stays_synced_after_candidate_update(db: TalentDB):
     candidate_id = db.ingest(
         {
@@ -1209,3 +1332,11 @@ def test_resolve_merge_invalid_action_and_pending_id(db: TalentDB):
 
     with pytest.raises(ValueError):
         db.resolve_merge(pending_id, "maybe")
+
+
+def _embedding(prefix: list[float]) -> list[float]:
+    return [*prefix, *([0.0] * (384 - len(prefix)))]
+
+
+def _embedding_bytes(prefix: list[float]) -> bytes:
+    return struct.pack("<384f", *_embedding(prefix))

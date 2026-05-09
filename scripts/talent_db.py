@@ -18,6 +18,7 @@ from scripts.talent_models import (
     SearchHit,
     SortSpec,
     SourceProfile,
+    VectorHit,
 )
 
 
@@ -51,6 +52,8 @@ class TalentDB:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._last_ingest_action: str | None = None
+        self._sqlite_vec: Any | None = None
+        self._vec_available = self._load_vec_extension()
         try:
             self._conn.execute("PRAGMA journal_mode=WAL")
         except sqlite3.OperationalError:
@@ -180,6 +183,22 @@ class TalentDB:
         self._init_vectors()
         self._conn.commit()
 
+    def _load_vec_extension(self) -> bool:
+        try:
+            import sqlite_vec
+
+            self._conn.enable_load_extension(True)
+            try:
+                sqlite_vec.load(self._conn)
+            finally:
+                self._conn.enable_load_extension(False)
+        except (ImportError, AttributeError, sqlite3.Error):
+            self._sqlite_vec = None
+            return False
+
+        self._sqlite_vec = sqlite_vec
+        return True
+
     def _init_fts(self) -> None:
         self._conn.executescript(
             """
@@ -237,6 +256,8 @@ class TalentDB:
         self._conn.execute("INSERT INTO candidate_fts(candidate_fts) VALUES('rebuild')")
 
     def _init_vectors(self) -> None:
+        if not self._vec_available:
+            return
         try:
             self._conn.execute(
                 """
@@ -247,7 +268,81 @@ class TalentDB:
                 """
             )
         except sqlite3.OperationalError:
-            pass
+            self._vec_available = False
+
+    def save_embedding(self, candidate_id: int, embedding: bytes | list[float]) -> None:
+        if not self._vec_available:
+            raise NotImplementedError("sqlite-vec extension is not available")
+
+        row = self._conn.execute(
+            "SELECT id FROM candidates WHERE id = ?",
+            (candidate_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Candidate does not exist: {candidate_id}")
+
+        embedding_value = self._serialize_embedding(embedding)
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM candidate_vectors WHERE candidate_id = ?",
+                (candidate_id,),
+            )
+            self._conn.execute(
+                """
+                INSERT INTO candidate_vectors(candidate_id, embedding)
+                VALUES (?, ?)
+                """,
+                (candidate_id, embedding_value),
+            )
+
+    def vector_search(
+        self, query_vector: bytes | list[float], limit: int = 20
+    ) -> list[VectorHit]:
+        if not _is_positive_int(limit):
+            raise ValueError("limit must be a positive integer")
+        if not self._vec_available:
+            raise NotImplementedError("sqlite-vec extension is not available")
+
+        count = self._conn.execute("SELECT COUNT(*) FROM candidate_vectors").fetchone()[0]
+        if count == 0:
+            return []
+
+        query_value = self._serialize_embedding(query_vector)
+        rows = self._conn.execute(
+            """
+            SELECT
+                nearest.candidate_id AS id,
+                nearest.distance AS similarity,
+                candidates.name,
+                candidates.current_company,
+                candidates.current_title
+            FROM (
+                SELECT candidate_id, distance
+                FROM candidate_vectors
+                WHERE embedding MATCH ? AND k = ?
+                ORDER BY distance
+            ) AS nearest
+            JOIN candidates ON candidates.id = nearest.candidate_id
+            """,
+            (query_value, limit),
+        ).fetchall()
+        return [
+            VectorHit(
+                id=int(row["id"]),
+                similarity=float(row["similarity"]),
+                name=row["name"],
+                current_company=row["current_company"],
+                current_title=row["current_title"],
+            )
+            for row in rows
+        ]
+
+    def _serialize_embedding(self, embedding: bytes | list[float]) -> bytes:
+        if isinstance(embedding, bytes):
+            return embedding
+        if isinstance(embedding, list) and self._sqlite_vec is not None:
+            return self._sqlite_vec.serialize_float32(embedding)
+        raise TypeError("embedding must be bytes or list[float]")
 
     def ingest(self, data: dict[str, Any], platform: str) -> int:
         with self._conn:
