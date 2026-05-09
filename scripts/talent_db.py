@@ -13,6 +13,7 @@ from scripts.talent_models import (
     CandidateDetail,
     CandidateFilter,
     IngestResult,
+    MatchScore,
     PageResult,
     PendingMerge,
     SearchHit,
@@ -818,6 +819,148 @@ class TalentDB:
             for row in rows
         ]
 
+    def update_overall_score(
+        self,
+        candidate_id: int,
+        score: float,
+        trigger: str,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        _validate_score(score)
+        _validate_non_empty_string(trigger, "trigger")
+        row = self._conn.execute(
+            """
+            SELECT overall_score
+            FROM candidates
+            WHERE id = ?
+            """,
+            (candidate_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Candidate does not exist: {candidate_id}")
+
+        new_score = float(score)
+        with self._conn:
+            self._conn.execute(
+                """
+                UPDATE candidates
+                SET overall_score = ?,
+                    score_version = score_version + 1,
+                    updated_at = datetime('now')
+                WHERE id = ?
+                """,
+                (new_score, candidate_id),
+            )
+            self._conn.execute(
+                """
+                INSERT INTO score_events(
+                    candidate_id, old_score, new_score, trigger_type, trigger_detail
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    candidate_id,
+                    float(row["overall_score"]),
+                    new_score,
+                    trigger,
+                    _json_dumps(detail),
+                ),
+            )
+
+    def save_match_score(
+        self,
+        candidate_id: int,
+        jd_id: str,
+        match_type: str,
+        score: float,
+        dimensions: dict[str, Any] | None = None,
+        reason: str | None = None,
+    ) -> None:
+        _validate_non_empty_string(jd_id, "jd_id")
+        _validate_non_empty_string(match_type, "match_type")
+        _validate_score(score)
+        if not self._candidate_exists(candidate_id):
+            raise ValueError(f"Candidate does not exist: {candidate_id}")
+
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO match_scores(
+                    candidate_id, jd_id, match_type, score, dimensions, reason
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(candidate_id, jd_id, match_type) DO UPDATE SET
+                    score = excluded.score,
+                    dimensions = excluded.dimensions,
+                    reason = excluded.reason,
+                    created_at = datetime('now')
+                """,
+                (
+                    candidate_id,
+                    jd_id,
+                    match_type,
+                    float(score),
+                    _json_dumps(dimensions),
+                    reason,
+                ),
+            )
+
+    def get_match_scores(
+        self,
+        jd_id: str,
+        match_type: str | None = None,
+    ) -> list[MatchScore]:
+        _validate_non_empty_string(jd_id, "jd_id")
+        if match_type is not None:
+            _validate_non_empty_string(match_type, "match_type")
+            rows = self._conn.execute(
+                """
+                SELECT *
+                FROM match_scores
+                WHERE jd_id = ? AND match_type = ?
+                ORDER BY score DESC, id ASC
+                """,
+                (jd_id, match_type),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """
+                SELECT *
+                FROM match_scores
+                WHERE jd_id = ?
+                ORDER BY score DESC, id ASC
+                """,
+                (jd_id,),
+            ).fetchall()
+
+        return [_match_score_from_row(row) for row in rows]
+
+    def get_top_candidates(self, jd_id: str, top_n: int = 10) -> list[Candidate]:
+        _validate_non_empty_string(jd_id, "jd_id")
+        if not _is_positive_int(top_n):
+            raise ValueError("top_n must be a positive integer")
+
+        rows = self._conn.execute(
+            """
+            SELECT candidates.*
+            FROM match_scores
+            JOIN candidates ON candidates.id = match_scores.candidate_id
+            WHERE match_scores.jd_id = ?
+              AND match_scores.match_type = 'final'
+            ORDER BY match_scores.score DESC, candidates.id ASC
+            LIMIT ?
+            """,
+            (jd_id, top_n),
+        ).fetchall()
+        return [_candidate_from_row(row) for row in rows]
+
+    def _candidate_exists(self, candidate_id: int) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM candidates WHERE id = ?",
+            (candidate_id,),
+        ).fetchone()
+        return row is not None
+
     def search(
         self,
         filters: CandidateFilter | None = None,
@@ -1020,6 +1163,19 @@ def _candidate_from_row(row: sqlite3.Row) -> Candidate:
     return Candidate.from_dict(data)
 
 
+def _match_score_from_row(row: sqlite3.Row) -> MatchScore:
+    return MatchScore(
+        id=int(row["id"]),
+        candidate_id=int(row["candidate_id"]),
+        jd_id=row["jd_id"],
+        match_type=row["match_type"],
+        score=float(row["score"]),
+        dimensions=_json_loads(row["dimensions"], None, "match_scores.dimensions"),
+        reason=row["reason"],
+        created_at=row["created_at"],
+    )
+
+
 def _candidate_where_clause(filters: CandidateFilter | None) -> tuple[str, tuple[Any, ...]]:
     if filters is None:
         return "", ()
@@ -1114,6 +1270,18 @@ def _placeholders(values: list[Any]) -> str:
 
 def _is_positive_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _validate_non_empty_string(value: Any, field_name: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+
+
+def _validate_score(score: Any) -> None:
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        raise ValueError("score must be a number between 0 and 100")
+    if score < 0 or score > 100:
+        raise ValueError("score must be between 0 and 100")
 
 
 def _safe_fts_query(query: str) -> str:

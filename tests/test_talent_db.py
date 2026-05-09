@@ -10,6 +10,7 @@ from scripts.talent_models import (
     Candidate,
     CandidateDetail,
     CandidateFilter,
+    MatchScore,
     SortSpec,
     SourceProfile,
 )
@@ -1393,6 +1394,208 @@ def test_resolve_merge_invalid_action_and_pending_id(db: TalentDB):
 
     with pytest.raises(ValueError):
         db.resolve_merge(pending_id, "maybe")
+
+
+class TestScoring:
+    def test_update_overall_score_writes_score_version_and_event(
+        self, db_with_candidate: tuple[TalentDB, int]
+    ):
+        db, candidate_id = db_with_candidate
+        with db._conn:
+            db._conn.execute(
+                """
+                UPDATE candidates
+                SET overall_score = 45.0, score_version = 2, updated_at = ?
+                WHERE id = ?
+                """,
+                ("2026-05-01T00:00:00", candidate_id),
+            )
+
+        db.update_overall_score(
+            candidate_id,
+            88.5,
+            "manual_review",
+            {"source": "interview", "dimensions": {"skills": 90}},
+        )
+
+        candidate = db.get(candidate_id)
+        event = db._conn.execute(
+            """
+            SELECT old_score, new_score, trigger_type, trigger_detail
+            FROM score_events
+            WHERE candidate_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (candidate_id,),
+        ).fetchone()
+
+        assert candidate.overall_score == 88.5
+        assert candidate.score_version == 3
+        assert candidate.updated_at != "2026-05-01T00:00:00"
+        assert dict(event) == {
+            "old_score": 45.0,
+            "new_score": 88.5,
+            "trigger_type": "manual_review",
+            "trigger_detail": json.dumps(
+                {"source": "interview", "dimensions": {"skills": 90}},
+                ensure_ascii=False,
+            ),
+        }
+
+    def test_update_overall_score_rejects_nonexistent_candidate(self, db: TalentDB):
+        with pytest.raises(ValueError):
+            db.update_overall_score(999999, 80.0, "manual_review")
+
+    @pytest.mark.parametrize("score", [0, 100, 72.5])
+    def test_update_overall_score_accepts_score_boundaries(
+        self, db_with_candidate: tuple[TalentDB, int], score: float
+    ):
+        db, candidate_id = db_with_candidate
+
+        db.update_overall_score(candidate_id, score, "manual_review")
+
+        assert db.get(candidate_id).overall_score == float(score)
+
+    @pytest.mark.parametrize("score", [-0.01, 100.01, "90", True])
+    def test_update_overall_score_rejects_invalid_score(
+        self, db_with_candidate: tuple[TalentDB, int], score: object
+    ):
+        db, candidate_id = db_with_candidate
+
+        with pytest.raises(ValueError):
+            db.update_overall_score(candidate_id, score, "manual_review")
+
+    def test_save_match_score_and_get_match_scores_roundtrip(
+        self, db_with_candidate: tuple[TalentDB, int]
+    ):
+        db, candidate_id = db_with_candidate
+
+        db.save_match_score(
+            candidate_id,
+            "jd-001",
+            "coarse",
+            76.5,
+            dimensions={"skill": 0.8, "industry": {"score": 0.7}},
+            reason="Skill coverage is strong.",
+        )
+
+        scores = db.get_match_scores("jd-001")
+
+        assert len(scores) == 1
+        assert isinstance(scores[0], MatchScore)
+        assert scores[0].candidate_id == candidate_id
+        assert scores[0].jd_id == "jd-001"
+        assert scores[0].match_type == "coarse"
+        assert scores[0].score == 76.5
+        assert scores[0].dimensions == {"skill": 0.8, "industry": {"score": 0.7}}
+        assert scores[0].reason == "Skill coverage is strong."
+        assert scores[0].created_at
+
+    def test_save_match_score_upserts_same_candidate_jd_and_type(
+        self, db_with_candidate: tuple[TalentDB, int]
+    ):
+        db, candidate_id = db_with_candidate
+
+        db.save_match_score(candidate_id, "jd-001", "final", 60.0, reason="old")
+        db.save_match_score(
+            candidate_id,
+            "jd-001",
+            "final",
+            91.0,
+            dimensions={"final": 0.91},
+            reason="new",
+        )
+
+        scores = db.get_match_scores("jd-001", "final")
+        row_count = db._conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM match_scores
+            WHERE candidate_id = ? AND jd_id = ? AND match_type = ?
+            """,
+            (candidate_id, "jd-001", "final"),
+        ).fetchone()[0]
+
+        assert row_count == 1
+        assert len(scores) == 1
+        assert scores[0].score == 91.0
+        assert scores[0].dimensions == {"final": 0.91}
+        assert scores[0].reason == "new"
+
+    def test_get_match_scores_filters_by_match_type_and_orders_by_score(
+        self, db: TalentDB
+    ):
+        low_id = db.ingest({"name": "Low Score"}, platform="boss")
+        high_id = db.ingest({"name": "High Score"}, platform="boss")
+
+        db.save_match_score(low_id, "jd-001", "final", 70.0)
+        db.save_match_score(high_id, "jd-001", "final", 95.0)
+        db.save_match_score(high_id, "jd-001", "coarse", 50.0)
+
+        final_scores = db.get_match_scores("jd-001", "final")
+        all_scores = db.get_match_scores("jd-001")
+
+        assert [score.candidate_id for score in final_scores] == [high_id, low_id]
+        assert {score.match_type for score in final_scores} == {"final"}
+        assert [score.score for score in all_scores] == [95.0, 70.0, 50.0]
+
+    def test_get_top_candidates_only_uses_final_scores_ordered_and_limited(
+        self, db: TalentDB
+    ):
+        a_id = db.ingest({"name": "Candidate A"}, platform="boss")
+        b_id = db.ingest({"name": "Candidate B"}, platform="boss")
+        c_id = db.ingest({"name": "Candidate C"}, platform="boss")
+
+        db.save_match_score(a_id, "jd-001", "final", 80.0)
+        db.save_match_score(b_id, "jd-001", "final", 97.0)
+        db.save_match_score(c_id, "jd-001", "final", 90.0)
+        db.save_match_score(a_id, "jd-001", "coarse", 99.0)
+
+        top = db.get_top_candidates("jd-001", top_n=2)
+
+        assert [candidate.id for candidate in top] == [b_id, c_id]
+        assert all(isinstance(candidate, Candidate) for candidate in top)
+
+    def test_get_top_candidates_returns_empty_without_final_scores(self, db: TalentDB):
+        candidate_id = db.ingest({"name": "Coarse Only"}, platform="boss")
+        db.save_match_score(candidate_id, "jd-001", "coarse", 99.0)
+        db.save_match_score(candidate_id, "jd-001", "llm", 98.0)
+
+        assert db.get_top_candidates("jd-001") == []
+
+    def test_save_match_score_rejects_nonexistent_candidate(self, db: TalentDB):
+        with pytest.raises(ValueError):
+            db.save_match_score(999999, "jd-001", "final", 90.0)
+
+    @pytest.mark.parametrize(
+        ("method_name", "args"),
+        [
+            ("save_match_score", ("candidate", "", "final", 90.0)),
+            ("save_match_score", ("candidate", "   ", "final", 90.0)),
+            ("save_match_score", ("candidate", "jd-001", "", 90.0)),
+            ("save_match_score", ("candidate", "jd-001", "   ", 90.0)),
+            ("get_match_scores", ("",)),
+            ("get_match_scores", ("jd-001", "")),
+            ("get_top_candidates", ("",)),
+            ("get_top_candidates", ("jd-001", 0)),
+            ("get_top_candidates", ("jd-001", -1)),
+            ("get_top_candidates", ("jd-001", True)),
+        ],
+    )
+    def test_scoring_methods_reject_invalid_inputs(
+        self,
+        db_with_candidate: tuple[TalentDB, int],
+        method_name: str,
+        args: tuple[object, ...],
+    ):
+        db, candidate_id = db_with_candidate
+        normalized_args = tuple(
+            candidate_id if arg == "candidate" else arg for arg in args
+        )
+
+        with pytest.raises(ValueError):
+            getattr(db, method_name)(*normalized_args)
 
 
 def _embedding(prefix: list[float]) -> list[float]:
