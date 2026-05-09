@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re as _re
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,8 @@ from scripts.pipeline_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_MODEL = os.environ.get("LLM_MODEL", "intelligence")
 
 RANK_PROMPT_TEMPLATE = """你是一位资深猎头，专注 AI/大模型方向的人才评估。
 
@@ -193,7 +196,7 @@ def rank_single_batch(
     jd_text: str,
     candidates: list[dict],
     keywords: list[str] | None = None,
-    model: str = "claude-sonnet-4-6",
+    model: str = DEFAULT_MODEL,
 ) -> list[RankScore]:
     expected_ids = [c.get("id", "") for c in candidates]
     prompt = build_rank_prompt(jd_text, candidates, keywords)
@@ -208,7 +211,7 @@ def load_or_rank(
     jd_text: str,
     cache_dir: Path,
     client: Any | None = None,
-    model: str = "claude-sonnet-4-6",
+    model: str = DEFAULT_MODEL,
     keywords: list[str] | None = None,
     force: bool = False,
 ) -> RankScore | None:
@@ -251,7 +254,7 @@ def rank_candidates(
     candidates: list[dict],
     batch_size: int = 10,
     keywords: list[str] | None = None,
-    model: str = "claude-sonnet-4-6",
+    model: str = DEFAULT_MODEL,
     cache_dir: Path | None = None,
 ) -> list[RankScore]:
     all_results: list[RankScore] = []
@@ -318,7 +321,7 @@ def calibration_round(
     candidates_map: dict[str, dict],
     batch_size: int = 10,
     top_per_batch: int = 3,
-    model: str = "claude-sonnet-4-6",
+    model: str = DEFAULT_MODEL,
 ) -> list[RankScore]:
     config = load_scoring_config()
     cal_config = config.get("calibration", {})

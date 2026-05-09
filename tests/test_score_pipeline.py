@@ -63,3 +63,39 @@ class TestCmdClearCache:
         args = types.SimpleNamespace(jd_id="jd-test")
         cmd_clear_cache(args, cache_dir=cache_dir)
         assert not cache_dir.exists()
+
+
+def test_run_pipeline_passes_provider_to_client(mocker):
+    from scripts.score_pipeline import run_pipeline
+    from scripts.jd_analyzer import JDAnalysis
+
+    fake_client = mocker.MagicMock()
+    create_client = mocker.patch(
+        "scripts.score_pipeline.create_llm_client", return_value=fake_client
+    )
+    mocker.patch(
+        "scripts.score_pipeline.load_or_analyze",
+        return_value=JDAnalysis(
+            core_skills=["AI"],
+            supplement_skills=[],
+            position_type="AI产品经理",
+            experience_range=(3, 10),
+            education_requirement="本科",
+            industry_preference=[],
+            exclusion_criteria=[],
+            raw_jd="jd",
+            jd_hash="hash",
+        ),
+    )
+    mocker.patch("scripts.score_pipeline.screen_candidates", return_value=[])
+
+    result = run_pipeline(
+        jd_id="jd-test",
+        jd_text="jd",
+        candidates=[],
+        provider="openai-compatible",
+        model="deepseek-chat",
+    )
+
+    create_client.assert_called_once_with(provider="openai-compatible", model="deepseek-chat")
+    assert result["ranked"] == []

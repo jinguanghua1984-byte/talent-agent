@@ -16,11 +16,15 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import shutil
 import sys
 import time
 from pathlib import Path
 from typing import Any
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -41,7 +45,8 @@ from scripts.pipeline_utils import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_PROVIDER = os.environ.get("LLM_PROVIDER", "anthropic")
+DEFAULT_MODEL = os.environ.get("LLM_MODEL", "intelligence")
 DEFAULT_COARSE_LIMIT = 50
 DEFAULT_FINAL_TOP = 10
 DEFAULT_BATCH_SIZE = 10
@@ -125,6 +130,7 @@ def run_pipeline(
     coarse_limit: int = DEFAULT_COARSE_LIMIT,
     final_top: int = DEFAULT_FINAL_TOP,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    provider: str = DEFAULT_PROVIDER,
     model: str = DEFAULT_MODEL,
     cache_dir: Path | None = None,
     force: bool = False,
@@ -136,7 +142,7 @@ def run_pipeline(
     if cache_dir is None:
         cache_dir = ensure_cache_dir(jd_id)
 
-    client = create_llm_client()
+    client = create_llm_client(provider=provider, model=model)
 
     # --- Step 1: JD 分析 ---
     print("\n[1/4] JD 分析...", file=sys.stderr)
@@ -231,6 +237,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         coarse_limit=args.coarse_limit,
         final_top=args.final_top,
         batch_size=args.batch_size,
+        provider=args.provider,
         model=args.model,
         force=args.force,
     )
@@ -289,6 +296,7 @@ def cmd_resume(args: argparse.Namespace) -> None:
         coarse_limit=args.coarse_limit,
         final_top=args.final_top,
         batch_size=args.batch_size,
+        provider=args.provider,
         model=args.model,
         force=False,
     )
@@ -417,6 +425,7 @@ def main() -> None:
     run_parser.add_argument("--coarse-limit", type=int, default=DEFAULT_COARSE_LIMIT)
     run_parser.add_argument("--final-top", type=int, default=DEFAULT_FINAL_TOP)
     run_parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    run_parser.add_argument("--provider", default=DEFAULT_PROVIDER)
     run_parser.add_argument("--model", default=DEFAULT_MODEL)
     run_parser.add_argument("--force", action="store_true")
 
@@ -427,6 +436,7 @@ def main() -> None:
     resume_parser.add_argument("--coarse-limit", type=int, default=DEFAULT_COARSE_LIMIT)
     resume_parser.add_argument("--final-top", type=int, default=DEFAULT_FINAL_TOP)
     resume_parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    resume_parser.add_argument("--provider", default=DEFAULT_PROVIDER)
     resume_parser.add_argument("--model", default=DEFAULT_MODEL)
 
     report_parser = subparsers.add_parser("report", help="生成报告")
