@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from scripts.talent_db import TalentDB
@@ -120,6 +122,33 @@ def test_migrates_sources_with_multiple_source_profiles(tmp_path: Path):
         db.close()
 
 
+def test_migrates_source_object_as_primary_source(tmp_path: Path):
+    json_dir = tmp_path / "json"
+    json_dir.mkdir()
+    db_path = tmp_path / "talent.db"
+    payload = _legacy_candidate(sources=[])
+    payload["_source"] = {
+        "channel": "maimai",
+        "platform_id": "source-object-id",
+        "url": "https://maimai.example/source-object",
+    }
+    _write_json(json_dir / "alice.json", payload)
+
+    result = migrate_candidates(json_dir, db_path)
+
+    db = _read_db(db_path)
+    try:
+        candidate_id = db.fulltext_search("Alice")[0].id
+        sources = db.get_sources(candidate_id)
+        assert result.created == 1
+        assert [
+            (source.platform, source.platform_id, source.profile_url)
+            for source in sources
+        ] == [("maimai", "source-object-id", "https://maimai.example/source-object")]
+    finally:
+        db.close()
+
+
 def test_migrates_work_experience_and_detail(tmp_path: Path):
     json_dir = tmp_path / "json"
     json_dir.mkdir()
@@ -149,6 +178,33 @@ def test_migrates_work_experience_and_detail(tmp_path: Path):
         assert detail.summary == "Strong product background."
         assert detail.raw_data["legacy"]["raw_data"] == {"legacy_id": "old-1"}
         assert detail.raw_data["legacy_json"]["name"] == "Alice Chen"
+    finally:
+        db.close()
+
+
+def test_migrates_nested_detail_fields(tmp_path: Path):
+    json_dir = tmp_path / "json"
+    json_dir.mkdir()
+    db_path = tmp_path / "talent.db"
+    nested_work = [{"company": "NestedCo", "title": "Architect"}]
+    payload = _legacy_candidate()
+    del payload["summary"]
+    payload["detail"] = {
+        "work_experience": nested_work,
+        "summary": "Nested detail summary.",
+        "raw_data": {"nested": True},
+    }
+    _write_json(json_dir / "alice.json", payload)
+
+    migrate_candidates(json_dir, db_path)
+
+    db = _read_db(db_path)
+    try:
+        candidate_id = db.fulltext_search("Alice")[0].id
+        detail = db.get_detail(candidate_id)
+        assert detail.work_experience == tuple(nested_work)
+        assert detail.summary == "Nested detail summary."
+        assert detail.raw_data["legacy"]["raw_data"] == {"nested": True}
     finally:
         db.close()
 
@@ -245,3 +301,31 @@ def test_db_closes_on_exception_path(tmp_path: Path, monkeypatch):
     assert result.errors == 1
     assert "forced ingest failure" in result.error_details[0]
     assert closed == [tmp_path / "talent.db"]
+
+
+def test_script_cli_runs_directly_from_project_root(tmp_path: Path):
+    json_dir = tmp_path / "json"
+    json_dir.mkdir()
+    db_path = tmp_path / "talent.db"
+    _write_json(json_dir / "alice.json", _legacy_candidate())
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/talent_migrate.py",
+            "--json-dir",
+            str(json_dir),
+            "--db-path",
+            str(db_path),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert (
+        "Migration summary: created=1, merged=0, pending=0, errors=0"
+        in completed.stdout
+    )

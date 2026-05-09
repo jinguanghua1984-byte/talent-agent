@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.talent_db import TalentDB
 from scripts.talent_models import IngestResult
@@ -46,7 +50,7 @@ def migrate_candidates(json_dir: Path, db_path: Path) -> IngestResult:
                 continue
             try:
                 legacy = _load_legacy_json(json_file)
-                sources = _normalize_sources(legacy.get("sources"))
+                sources = _normalize_sources(legacy)
                 primary_source = sources[0] if sources else {}
                 candidate_data = _to_ingest_data(legacy, primary_source)
                 db.ingest(candidate_data, platform=_platform_for(primary_source))
@@ -74,12 +78,16 @@ def _load_legacy_json(path: Path) -> dict[str, Any]:
     return payload
 
 
-def _normalize_sources(value: Any) -> list[dict[str, Any]]:
-    if value is None:
-        return []
-    if not isinstance(value, list):
-        return []
-    return [dict(item) for item in value if isinstance(item, dict)]
+def _normalize_sources(legacy: dict[str, Any]) -> list[dict[str, Any]]:
+    sources: list[dict[str, Any]] = []
+    source = legacy.get("_source")
+    if isinstance(source, dict):
+        sources.append(dict(source))
+
+    legacy_sources = legacy.get("sources")
+    if isinstance(legacy_sources, list):
+        sources.extend(dict(item) for item in legacy_sources if isinstance(item, dict))
+    return sources
 
 
 def _to_ingest_data(legacy: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
@@ -96,16 +104,45 @@ def _to_ingest_data(legacy: dict[str, Any], source: dict[str, Any]) -> dict[str,
         "legacy_json": legacy,
     }
 
-    detail = {field: legacy[field] for field in _DETAIL_FIELDS if field in legacy}
+    detail = _detail_data_for(legacy)
     raw_data = {
         "legacy_json": legacy,
     }
-    if "raw_data" in legacy:
-        raw_data["legacy"] = {"raw_data": legacy["raw_data"]}
+    legacy_raw_data = _raw_data_for(legacy)
+    if legacy_raw_data is not None:
+        raw_data["legacy"] = {"raw_data": legacy_raw_data}
     if "active_state" in legacy:
         raw_data["active_state"] = legacy["active_state"]
     data["detail"] = {**detail, "raw_data": raw_data}
     return data
+
+
+def _detail_data_for(legacy: dict[str, Any]) -> dict[str, Any]:
+    nested = legacy.get("detail")
+    detail: dict[str, Any] = {}
+    if isinstance(nested, dict):
+        detail.update({field: nested[field] for field in _DETAIL_FIELDS if field in nested})
+    detail.update(
+        {
+            field: legacy[field]
+            for field in _DETAIL_FIELDS
+            if field in legacy and not _is_empty(legacy[field])
+        }
+    )
+    return detail
+
+
+def _raw_data_for(legacy: dict[str, Any]) -> Any:
+    if "raw_data" in legacy:
+        return legacy["raw_data"]
+    nested = legacy.get("detail")
+    if isinstance(nested, dict) and "raw_data" in nested:
+        return nested["raw_data"]
+    return None
+
+
+def _is_empty(value: Any) -> bool:
+    return value is None or value == "" or value == [] or value == {}
 
 
 def _platform_for(source: dict[str, Any]) -> str:
