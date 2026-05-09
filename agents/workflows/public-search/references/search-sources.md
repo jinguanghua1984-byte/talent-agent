@@ -78,8 +78,8 @@ repo:alibaba/druid contributors
 - 注意：GitHub 信息需交叉验证，用户名不等于真实姓名
 
 **数据获取方式**:
-- 使用 `mcp__github__search_users` 搜索用户
-- 使用 `mcp__github__search_code` 搜索代码确认技术栈
+- 使用 `web.search.github_users` 搜索用户
+- 使用 `web.search.github_code` 搜索代码确认技术栈
 - 搜索结果 URL 作为 source
 
 ---
@@ -96,7 +96,7 @@ author:"张三" "deep learning" institution:"清华大学"
 "large language model" author:"李四" site:scholar.google.com
 
 # 知网
-# 通过 WebSearch 搜索知网收录的论文
+# 通过 web.search 搜索知网收录的论文
 site:cnki.net "张三" "自然语言处理"
 ```
 
