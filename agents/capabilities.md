@@ -1,0 +1,19 @@
+# Agent Capabilities Contract
+
+本项目的工作流只描述通用能力，不绑定具体 agent 运行时。
+
+| 通用能力 | 语义 | Claude Code 映射 | Codex 映射 |
+| --- | --- | --- | --- |
+| `file.read` | 读取项目内文本文件 | Read | shell / filesystem |
+| `file.write` | 创建或更新项目内文本文件 | Write / Edit | apply_patch |
+| `shell.run` | 执行本地命令 | Bash | shell_command |
+| `web.search` | 搜索公开网页 | WebSearch / MCP search | web search / browser skill |
+| `web.fetch` | 抓取网页正文 | MCP fetch / reader | web open / browser skill |
+| `browser.operate` | 操作本地浏览器或调试端口 | MCP browser / Playwright | browser plugin / Playwright |
+| `human.confirm` | 需要用户确认后继续 | 直接询问用户 | 直接询问用户 |
+
+工作流规则：
+
+1. `agents/workflows/*/AGENT.md` 只使用上表中的通用能力名称。
+2. 运行时私有工具名称只能出现在 `agents/adapters/*` 或对应运行时目录中。
+3. 可执行 Python 代码必须放在项目根目录 `scripts/` 包内，不能放在运行时私有目录中。
