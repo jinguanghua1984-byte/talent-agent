@@ -41,3 +41,6 @@ def test_claude_skill_files_are_adapters_to_canonical_workflows():
         text = path.read_text(encoding="utf-8")
         assert f"agents/workflows/{name}/AGENT.md" in text
         assert "Claude Code Adapter" in text
+        assert "## Adapter Steps" in text
+        assert "agents/capabilities.md" in text
+        assert "运行时私有入口" in text
