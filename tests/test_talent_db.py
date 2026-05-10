@@ -1069,6 +1069,26 @@ def test_delete_candidate_rejects_missing_candidate(db: TalentDB):
         db.delete_candidate(999)
 
 
+def test_delete_candidate_removes_vector_when_available(db_with_candidate):
+    db, candidate_id = db_with_candidate
+    if not db._vec_available:
+        pytest.skip("sqlite-vec extension is not available")
+
+    embedding = _embedding([0.1])
+    db.save_embedding(candidate_id, embedding)
+    assert db.vector_search(embedding, limit=1)[0].id == candidate_id
+
+    result = db.delete_candidate(candidate_id)
+
+    row_count = db._conn.execute(
+        "SELECT COUNT(*) FROM candidate_vectors WHERE candidate_id = ?",
+        (candidate_id,),
+    ).fetchone()[0]
+    assert result.vectors_deleted == 1
+    assert row_count == 0
+    assert db.vector_search(embedding, limit=1) == []
+
+
 def test_search_all_with_pagination(search_db: tuple[TalentDB, dict[str, int]]):
     db, ids = search_db
 

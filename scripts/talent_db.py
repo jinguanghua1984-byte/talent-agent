@@ -903,6 +903,11 @@ class TalentDB:
             )
 
         with self._conn:
+            if self._vec_available:
+                self._conn.execute(
+                    "DELETE FROM candidate_vectors WHERE candidate_id = ?",
+                    (candidate_id,),
+                )
             self._conn.execute(
                 "DELETE FROM candidates WHERE id = ?",
                 (candidate_id,),
