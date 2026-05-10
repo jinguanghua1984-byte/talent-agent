@@ -32,6 +32,8 @@ data/candidates/*.json
 
 使用规则：
 
+旧 `data/candidates/*.json` 只作为迁移和兼容入口。
+
 1. 旧 JSON 只作为迁移、兼容读取或用户明确指定的导入入口。
 2. 新增候选人默认不写旧 JSON。
 3. SQLite 删除不会隐式删除旧 JSON；如需删除旧 JSON，必须单独确认。
