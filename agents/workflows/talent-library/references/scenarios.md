@@ -79,7 +79,7 @@
 2. 展示当前候选人摘要和即将修改的字段。
 3. 对用户输入做字段校验；来源类数据只能追加。
 4. 批量更新或高风险字段更新必须先 dry-run。
-5. 结构化字段更新调用 `TalentDB.update_candidate(candidate_id, patch)`。
+5. 结构化字段更新调用 `TalentDB.update_candidate(candidate_id, patch)`；处理待确认合并时调用 `TalentDB.resolve_merge(candidate_id, merge_decision)`。
 6. 详情或来源补全调用 `TalentDB.enrich(candidate_id, details, source)`。
 7. 综合分修正调用 `TalentDB.update_overall_score(candidate_id, score, event_detail)`。
 8. JD 匹配分修正调用 `TalentDB.save_match_score(candidate_id, jd_id, score, detail)`。
