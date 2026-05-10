@@ -4,6 +4,7 @@ dist/
 .DS_Store
 .vscode/
 .idea/
+.worktrees/
 *.tsbuildinfo
 
 # agent-browser session data
