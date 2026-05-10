@@ -231,6 +231,39 @@ class IngestResult:
         return self.created + self.merged + self.pending
 
 
+@dataclass(frozen=True)
+class DeleteResult:
+    candidate_id: int
+    candidate_deleted: bool
+    details_deleted: int = 0
+    sources_deleted: int = 0
+    score_events_deleted: int = 0
+    match_scores_deleted: int = 0
+    vectors_deleted: int = 0
+
+    @property
+    def related_rows_deleted(self) -> int:
+        return (
+            self.details_deleted
+            + self.sources_deleted
+            + self.score_events_deleted
+            + self.match_scores_deleted
+            + self.vectors_deleted
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "candidate_deleted": self.candidate_deleted,
+            "details_deleted": self.details_deleted,
+            "sources_deleted": self.sources_deleted,
+            "score_events_deleted": self.score_events_deleted,
+            "match_scores_deleted": self.match_scores_deleted,
+            "vectors_deleted": self.vectors_deleted,
+            "related_rows_deleted": self.related_rows_deleted,
+        }
+
+
 @dataclass
 class CandidateFilter:
     companies: list[str] | None = None

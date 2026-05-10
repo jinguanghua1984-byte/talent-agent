@@ -8,6 +8,7 @@ from scripts.talent_models import (
     Candidate,
     CandidateDetail,
     CandidateFilter,
+    DeleteResult,
     IngestResult,
     MatchScore,
     PageResult,
@@ -139,6 +140,30 @@ class TestIngestResult:
         result = IngestResult(created=5, merged=2, pending=1, errors=0, error_details=[])
         assert result.created == 5
         assert result.total == 8
+
+
+def test_delete_result_total_related_rows():
+    result = DeleteResult(
+        candidate_id=42,
+        candidate_deleted=True,
+        details_deleted=1,
+        sources_deleted=2,
+        score_events_deleted=3,
+        match_scores_deleted=4,
+        vectors_deleted=1,
+    )
+
+    assert result.related_rows_deleted == 11
+    assert result.to_dict() == {
+        "candidate_id": 42,
+        "candidate_deleted": True,
+        "details_deleted": 1,
+        "sources_deleted": 2,
+        "score_events_deleted": 3,
+        "match_scores_deleted": 4,
+        "vectors_deleted": 1,
+        "related_rows_deleted": 11,
+    }
 
 
 class TestPageResult:
