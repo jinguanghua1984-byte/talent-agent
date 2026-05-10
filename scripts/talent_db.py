@@ -13,6 +13,7 @@ from scripts.talent_models import (
     Candidate,
     CandidateDetail,
     CandidateFilter,
+    DeleteResult,
     IngestResult,
     MatchScore,
     PageResult,
@@ -879,6 +880,44 @@ class TalentDB:
             raise ValueError(f"Candidate does not exist: {candidate_id}")
         return updated
 
+    def delete_candidate(self, candidate_id: int) -> DeleteResult:
+        if not self._candidate_exists(candidate_id):
+            raise ValueError(f"Candidate does not exist: {candidate_id}")
+
+        details_deleted = _count_rows(
+            self._conn, "candidate_details", "candidate_id", candidate_id
+        )
+        sources_deleted = _count_rows(
+            self._conn, "source_profiles", "candidate_id", candidate_id
+        )
+        score_events_deleted = _count_rows(
+            self._conn, "score_events", "candidate_id", candidate_id
+        )
+        match_scores_deleted = _count_rows(
+            self._conn, "match_scores", "candidate_id", candidate_id
+        )
+        vectors_deleted = 0
+        if self._vec_available:
+            vectors_deleted = _count_rows(
+                self._conn, "candidate_vectors", "candidate_id", candidate_id
+            )
+
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM candidates WHERE id = ?",
+                (candidate_id,),
+            )
+
+        return DeleteResult(
+            candidate_id=candidate_id,
+            candidate_deleted=True,
+            details_deleted=details_deleted,
+            sources_deleted=sources_deleted,
+            score_events_deleted=score_events_deleted,
+            match_scores_deleted=match_scores_deleted,
+            vectors_deleted=vectors_deleted,
+        )
+
     def update_overall_score(
         self,
         candidate_id: int,
@@ -1220,6 +1259,14 @@ def _json_loads(value: str | None, default: Any, field_name: str) -> Any:
         return json.loads(value)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Invalid JSON in TalentDB field {field_name}") from exc
+
+
+def _count_rows(conn: sqlite3.Connection, table: str, column: str, value: Any) -> int:
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM {table} WHERE {column} = ?",
+        (value,),
+    ).fetchone()
+    return int(row[0])
 
 
 def _candidate_from_row(row: sqlite3.Row) -> Candidate:

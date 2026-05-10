@@ -1025,6 +1025,50 @@ def test_update_candidate_rejects_missing_candidate(db: TalentDB):
         db.update_candidate(999, {"city": "Shanghai"})
 
 
+def test_delete_candidate_removes_candidate_and_related_rows(db_with_candidate):
+    db, candidate_id = db_with_candidate
+    db.enrich(
+        candidate_id,
+        {
+            "work_experience": [{"company": "ByteDance", "title": "PM"}],
+            "raw_data": {"source": "detail"},
+            "summary": "Experienced product manager",
+        },
+    )
+    db.update_overall_score(
+        candidate_id,
+        88.0,
+        trigger="manual_evaluation",
+        detail={"reason": "测试"},
+    )
+    db.save_match_score(
+        candidate_id,
+        jd_id="jd-delete-test",
+        match_type="final",
+        score=91.0,
+        dimensions={"岗位匹配度": 90},
+        reason="匹配",
+    )
+
+    result = db.delete_candidate(candidate_id)
+
+    assert result.candidate_id == candidate_id
+    assert result.candidate_deleted is True
+    assert result.details_deleted == 1
+    assert result.sources_deleted == 1
+    assert result.score_events_deleted == 1
+    assert result.match_scores_deleted == 1
+    assert db.get(candidate_id) is None
+    assert db.get_detail(candidate_id) is None
+    assert db.get_sources(candidate_id) == []
+    assert db.get_match_scores("jd-delete-test") == []
+
+
+def test_delete_candidate_rejects_missing_candidate(db: TalentDB):
+    with pytest.raises(ValueError, match="Candidate does not exist"):
+        db.delete_candidate(999)
+
+
 def test_search_all_with_pagination(search_db: tuple[TalentDB, dict[str, int]]):
     db, ids = search_db
 
