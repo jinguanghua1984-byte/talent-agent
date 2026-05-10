@@ -46,6 +46,22 @@ _SORT_FIELDS = {
     "created_at": "candidates.created_at",
     "name": "candidates.name",
 }
+_CANDIDATE_UPDATE_FIELDS = {
+    "name",
+    "gender",
+    "age",
+    "city",
+    "work_years",
+    "education",
+    "current_company",
+    "current_title",
+    "expected_salary",
+    "expected_city",
+    "expected_title",
+    "hunting_status",
+    "skill_tags",
+    "data_level",
+}
 
 
 class TalentDB:
@@ -819,6 +835,49 @@ class TalentDB:
             )
             for row in rows
         ]
+
+    def update_candidate(self, candidate_id: int, patch: dict[str, Any]) -> Candidate:
+        if not patch:
+            existing = self.get(candidate_id)
+            if existing is None:
+                raise ValueError(f"Candidate does not exist: {candidate_id}")
+            return existing
+
+        unsupported = sorted(set(patch) - _CANDIDATE_UPDATE_FIELDS)
+        if unsupported:
+            raise ValueError(
+                "Unsupported candidate update field(s): " + ", ".join(unsupported)
+            )
+
+        if not self._candidate_exists(candidate_id):
+            raise ValueError(f"Candidate does not exist: {candidate_id}")
+
+        assignments: list[str] = []
+        params: list[Any] = []
+        for field, value in patch.items():
+            assignments.append(f"{field} = ?")
+            if field == "skill_tags":
+                params.append(_json_dumps(value))
+            else:
+                params.append(value)
+
+        assignments.append("updated_at = datetime('now')")
+        params.append(candidate_id)
+
+        with self._conn:
+            self._conn.execute(
+                f"""
+                UPDATE candidates
+                SET {", ".join(assignments)}
+                WHERE id = ?
+                """,
+                tuple(params),
+            )
+
+        updated = self.get(candidate_id)
+        if updated is None:
+            raise ValueError(f"Candidate does not exist: {candidate_id}")
+        return updated
 
     def update_overall_score(
         self,

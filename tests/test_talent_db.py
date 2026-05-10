@@ -989,6 +989,42 @@ def test_get_sources_empty(db: TalentDB):
     assert db.get_sources(999999) == []
 
 
+def test_update_candidate_updates_allowed_fields_without_losing_sources(db_with_candidate):
+    db, candidate_id = db_with_candidate
+
+    db.update_candidate(
+        candidate_id,
+        {
+            "current_company": "OpenAI",
+            "current_title": "Senior Product Manager",
+            "skill_tags": ["AI", "Python", "Agents"],
+        },
+    )
+
+    candidate = db.get(candidate_id)
+    assert candidate is not None
+    assert candidate.current_company == "OpenAI"
+    assert candidate.current_title == "Senior Product Manager"
+    assert candidate.skill_tags == ("AI", "Python", "Agents")
+
+    sources = db.get_sources(candidate_id)
+    assert len(sources) == 1
+    assert sources[0].platform == "maimai"
+    assert sources[0].platform_id == "maimai-1"
+
+
+def test_update_candidate_rejects_unknown_fields(db_with_candidate):
+    db, candidate_id = db_with_candidate
+
+    with pytest.raises(ValueError, match="Unsupported candidate update field"):
+        db.update_candidate(candidate_id, {"not_a_field": "value"})
+
+
+def test_update_candidate_rejects_missing_candidate(db: TalentDB):
+    with pytest.raises(ValueError, match="Candidate does not exist"):
+        db.update_candidate(999, {"city": "Shanghai"})
+
+
 def test_search_all_with_pagination(search_db: tuple[TalentDB, dict[str, int]]):
     db, ids = search_db
 
