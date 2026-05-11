@@ -71,6 +71,15 @@ description: "猎头顾问人才库管理。用于人才导入、人才查询、
 
 执行具体场景时，必须读取 `agents/workflows/talent-library/references/scenarios.md` 并按对应二级标题执行。涉及平台抓取和详情补全时，复用 `agents/workflows/platform-match/AGENT.md`；涉及 JD 匹配评分时，复用 `agents/workflows/screen/AGENT.md` 或 `scripts/score_pipeline.py`。
 
+`detail` 场景支持扩展参数：
+
+- `--ids <candidate_id,candidate_id>`：从人才库候选人 ID 生成脉脉批量详情目标 JSON。
+- `--top10-file <path>`：从 `talent-library match/search` 的 TopN 结构化推荐 JSON 生成脉脉批量详情目标 JSON。
+- `--recommendation-file <path>`：从包含 `top10`、`candidates`、`matches`、`results` 或 `items` 的推荐 JSON 生成脉脉批量详情目标 JSON。
+- `--out <path>`：指定给 `maimai-scraper` 导入的目标 JSON 路径；未指定时写入 `data/output/maimai-detail-targets-{YYYY-MM-DD}.json`。
+
+运行时接收到上述参数时，应调用本仓库统一业务入口 `scripts/talent_library.py detail`，而不是要求用户直接调用底层转换脚本。
+
 所有数据库读写都通过 TalentDB API 完成，不在 workflow 中拼接 SQL。
 
 ## 安全执行

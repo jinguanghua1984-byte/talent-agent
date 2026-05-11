@@ -8,16 +8,25 @@ if (!window.__maimaiScraperV2) {
   var TARGET_PATHS = [
     "/api/pc/search/",
     "/api/pc/u/",
+    "/api/pc/profile/",
+    "/api/pc/user/",
+    "/api/profile/",
+    "/api/user/",
     "/api/ent/",
     "/api/web/",
     "/ent/v41/",
+    "/profile/detail",
   ];
 
   function shouldCapture(url) {
     try {
-      return TARGET_PATHS.some(function (p) {
-        return url.indexOf(p) !== -1;
-      });
+      var value = String(url || "");
+      if (TARGET_PATHS.some(function (p) {
+        return value.indexOf(p) !== -1;
+      })) {
+        return true;
+      }
+      return /\/api\/.*(profile|detail|user|resume|contact)/i.test(value);
     } catch (e) {
       return false;
     }
@@ -27,6 +36,10 @@ if (!window.__maimaiScraperV2) {
     var o = {};
     if (h instanceof Headers) {
       h.forEach(function (v, k) { o[k] = v; });
+    } else if (Array.isArray(h)) {
+      h.forEach(function (pair) {
+        if (pair && pair.length >= 2) o[pair[0]] = pair[1];
+      });
     } else if (typeof h === "object" && h !== null) {
       Object.assign(o, h);
     }
@@ -35,6 +48,100 @@ if (!window.__maimaiScraperV2) {
 
   function safeParse(text) {
     try { return JSON.parse(text); } catch (e) { return null; }
+  }
+
+  function headerNames(headers) {
+    return Object.keys(headers || {}).sort();
+  }
+
+  function firstNumber(values, fallback) {
+    for (var i = 0; i < values.length; i++) {
+      var value = Number(values[i]);
+      if (Number.isFinite(value) && value > 0) return value;
+    }
+    return fallback;
+  }
+
+  function extractContactsFromData(data) {
+    if (!data || !data.data) return [];
+    return data.data.contacts || data.data.list || data.data.items || [];
+  }
+
+  function extractPageMeta(record) {
+    var data = record && record.responseData && record.responseData.data ? record.responseData.data : {};
+    var body = record && record.requestBody ? safeParse(record.requestBody) : null;
+    var search = body && body.search ? body.search : {};
+    var paginationParam = search.paginationParam || (body && body.paginationParam) || {};
+    var contacts = extractContactsFromData(record.responseData);
+    var total = firstNumber([
+      data.total,
+      data.total_match,
+      data.totalCount,
+      data.total_count,
+      search.total,
+      search.total_match,
+    ], contacts.length || 0);
+    var pagesize = firstNumber([
+      data.pagesize,
+      data.pageSize,
+      data.limit,
+      data.size,
+      data.count,
+      paginationParam.size,
+      search.size,
+      body && body.size,
+      contacts.length,
+    ], 30);
+    var page = firstNumber([
+      data.page,
+      data.pageNum,
+      data.pageNo,
+      paginationParam.page,
+      search.page ? search.page + 1 : null,
+      body && body.page,
+    ], 1);
+    return {
+      total: total,
+      total_match: firstNumber([data.total_match, search.total_match], total),
+      pagesize: pagesize,
+      page: page,
+      headerNames: headerNames(record.requestHeaders || {}),
+    };
+  }
+
+  function setIfPresent(target, key, value) {
+    if (target && Object.prototype.hasOwnProperty.call(target, key)) {
+      target[key] = value;
+    }
+  }
+
+  function applyPagerPage(body, page, pagesize) {
+    body = body || {};
+    var size = pagesize || 30;
+    if (body.search && body.search.paginationParam) {
+      body.search.paginationParam.page = page;
+      body.search.paginationParam.size = size;
+      setIfPresent(body.search, "page", Math.max(0, page - 1));
+      setIfPresent(body.search, "size", size);
+    } else if (body.paginationParam) {
+      body.paginationParam.page = page;
+      body.paginationParam.size = size;
+    }
+
+    setIfPresent(body, "page", page);
+    setIfPresent(body, "pageNum", page);
+    setIfPresent(body, "pageNo", page);
+    setIfPresent(body, "pagesize", size);
+    setIfPresent(body, "pageSize", size);
+    setIfPresent(body, "limit", size);
+    setIfPresent(body, "count", size);
+
+    if (!body.search && !body.paginationParam && !Object.prototype.hasOwnProperty.call(body, "page")) {
+      body.page = page;
+      body.pageNum = page;
+      body.pageNo = page;
+    }
+    return body;
   }
 
   // ---- 拦截 fetch（捕获请求 + 响应）----
@@ -146,19 +253,18 @@ if (!window.__maimaiScraperV2) {
   function saveSearchTemplate(record) {
     var data = record.responseData;
     if (!data || !data.data) return;
-    var contacts = data.data.contacts || data.data.list || data.data.items || [];
+    var contacts = extractContactsFromData(data);
     if (contacts.length === 0) return;
 
-    var pageMeta = {
-      total: data.data.total || data.data.totalCount || data.data.count || 0,
-      pagesize: data.data.pagesize || data.data.pageSize || data.data.limit || data.data.size || 30,
-      page: data.data.page || data.data.pageNum || data.data.pageNo || 1,
-    };
+    var pageMeta = extractPageMeta(record);
+    var requestHeaders = record.requestHeaders || {};
 
     window.__maimaiSearchTemplate = {
       url: record.url,
       method: record.method,
-      headers: record.requestHeaders || {},
+      headers: requestHeaders,
+      requestHeaders: requestHeaders,
+      headerNames: headerNames(requestHeaders),
       body: record.requestBody ? safeParse(record.requestBody) : null,
       pageMeta: pageMeta,
       contactCount: contacts.length,
@@ -205,9 +311,7 @@ if (!window.__maimaiScraperV2) {
         body.q = params.body.query;
       }
       if (params.body.page !== undefined) {
-        body.page = params.body.page;
-        body.pageNum = params.body.page;
-        body.pageNo = params.body.page;
+        applyPagerPage(body, params.body.page, params.body.pagesize || tpl.pageMeta.pagesize);
       }
       if (params.body.pagesize !== undefined) {
         body.pagesize = params.body.pagesize;
@@ -303,10 +407,11 @@ if (!window.__maimaiScraperV2) {
       return;
     }
 
-    var body = JSON.parse(JSON.stringify(tpl.body || {}));
-    body.page = page;
-    body.pageNum = page;
-    body.pageNo = page;
+    var body = applyPagerPage(
+      JSON.parse(JSON.stringify(tpl.body || {})),
+      page,
+      tpl.pageMeta && tpl.pageMeta.pagesize
+    );
 
     var headers = JSON.parse(JSON.stringify(tpl.headers || {}));
     if (!headers["Content-Type"] && !headers["content-type"]) {
@@ -325,6 +430,11 @@ if (!window.__maimaiScraperV2) {
       });
     })
     .then(function (result) {
+      var pageMeta = extractPageMeta({
+        responseData: result.data,
+        requestBody: JSON.stringify(body),
+        requestHeaders: headers,
+      });
       window.postMessage({
         type: "__MAIMAI_PAGER_FETCH_RESULT__",
         requestId: requestId,
@@ -332,6 +442,8 @@ if (!window.__maimaiScraperV2) {
         httpStatus: result.status,
         data: result.data,
         raw: result.body,
+        pageMeta: pageMeta,
+        headerNames: pageMeta.headerNames,
       }, "*");
     })
     .catch(function (err) {
@@ -342,6 +454,183 @@ if (!window.__maimaiScraperV2) {
         error: err.message,
       }, "*");
     });
+  });
+
+  function detailEndpointUrls(job) {
+    var id = encodeURIComponent(String(job && job.id ? job.id : ""));
+    var token = job && job.trackable_token ? encodeURIComponent(String(job.trackable_token)) : "";
+    return {
+      basic: "/api/ent/talent/basic?channel=www&data_version=3.1&need_ai_info=0&resume_project_id=&show_tip=0&to_uid=" +
+        id + "&trackable_token=" + token + "&version=1.0.0",
+      projects: "/api/ent/candidate/associated/project/list?channel=www&data_version=4.1&fr=profile&to_uid=" +
+        id + "&version=1.0.0",
+      job_preference: "/api/ent/talent/job_preference?channel=www&page=0&size=20&to_uid=" +
+        id + "&version=1.0.0",
+      contact_btn: "/api/ent/v3/search/contact_btn?channel=www&to_uids=" +
+        id + "&version=1.0.0",
+    };
+  }
+
+  function looksLikeAuthOrCaptcha(text) {
+    var value = String(text || "").toLowerCase();
+    return value.indexOf("login") !== -1 ||
+      value.indexOf("captcha") !== -1 ||
+      value.indexOf("验证码") !== -1 ||
+      value.indexOf("验证") !== -1 ||
+      value.indexOf("权限") !== -1 ||
+      value.indexOf("forbidden") !== -1;
+  }
+
+  function fetchDetailEndpoint(name, url) {
+    return origFetch.call(window, url, {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        "Accept": "application/json, text/plain, */*",
+      },
+    }).then(function (response) {
+      return response.text().then(function (text) {
+        var data = safeParse(text);
+        return {
+          name: name,
+          ok: response.status >= 200 && response.status < 300 && Boolean(data),
+          httpStatus: response.status,
+          url: url,
+          data: data,
+          raw: text,
+          error: data ? null : "非 JSON 响应",
+          authFailure: response.status === 401 || response.status === 403 || response.status === 429 || (!data && looksLikeAuthOrCaptcha(text)),
+        };
+      });
+    }).catch(function (err) {
+      return {
+        name: name,
+        ok: false,
+        httpStatus: 0,
+        url: url,
+        data: null,
+        raw: "",
+        error: err.message,
+        authFailure: true,
+      };
+    });
+  }
+
+  function normalizeDetailData(endpointResult) {
+    if (!endpointResult || !endpointResult.data) return null;
+    return endpointResult.data.data || endpointResult.data;
+  }
+
+  // ---- 批量详情：在 MAIN world 中重放详情接口 ----
+  window.addEventListener("message", function (e) {
+    if (e.source !== window) return;
+    if (!e.data || e.data.type !== "__MAIMAI_DETAIL_FETCH__") return;
+
+    var requestId = e.data.requestId;
+    var job = e.data.job || {};
+    var jobId = job.id ? String(job.id) : "";
+    var errors = [];
+    var endpoints = {};
+
+    if (!jobId) {
+      window.postMessage({
+        type: "__MAIMAI_DETAIL_FETCH_RESULT__",
+        requestId: requestId,
+        ok: false,
+        jobId: jobId,
+        endpoints: endpoints,
+        detail: null,
+        errors: ["missing_id"],
+        error: "missing_id",
+      }, "*");
+      return;
+    }
+
+    if (!job.trackable_token) {
+      endpoints.basic = {
+        name: "basic",
+        ok: false,
+        httpStatus: 0,
+        data: null,
+        raw: "",
+        error: "missing_trackable_token",
+        authFailure: false,
+      };
+      window.postMessage({
+        type: "__MAIMAI_DETAIL_FETCH_RESULT__",
+        requestId: requestId,
+        ok: false,
+        jobId: jobId,
+        endpoints: endpoints,
+        detail: null,
+        errors: ["missing_trackable_token"],
+        error: "missing_trackable_token",
+      }, "*");
+      return;
+    }
+
+    var urls = detailEndpointUrls(job);
+    fetchDetailEndpoint("basic", urls.basic)
+      .then(function (basic) {
+        endpoints.basic = basic;
+        if (!basic.ok) {
+          errors.push(basic.error || ("basic_http_" + basic.httpStatus));
+          window.postMessage({
+            type: "__MAIMAI_DETAIL_FETCH_RESULT__",
+            requestId: requestId,
+            ok: false,
+            jobId: jobId,
+            endpoints: endpoints,
+            detail: null,
+            errors: errors,
+            error: errors[0],
+          }, "*");
+          return null;
+        }
+
+        return fetchDetailEndpoint("projects", urls.projects)
+          .then(function (projects) {
+            endpoints.projects = projects;
+            if (!projects.ok) errors.push(projects.error || ("projects_http_" + projects.httpStatus));
+            return fetchDetailEndpoint("job_preference", urls.job_preference);
+          })
+          .then(function (jobPreference) {
+            if (!jobPreference) return null;
+            endpoints.job_preference = jobPreference;
+            if (!jobPreference.ok) errors.push(jobPreference.error || ("job_preference_http_" + jobPreference.httpStatus));
+            return fetchDetailEndpoint("contact_btn", urls.contact_btn);
+          })
+          .then(function (contactBtn) {
+            if (!contactBtn) return;
+            endpoints.contact_btn = contactBtn;
+            if (!contactBtn.ok) errors.push(contactBtn.error || ("contact_btn_http_" + contactBtn.httpStatus));
+
+            var basicData = normalizeDetailData(endpoints.basic) || {};
+            var detail = Object.assign({}, basicData);
+            var projectsData = normalizeDetailData(endpoints.projects);
+            var jobPreferenceData = normalizeDetailData(endpoints.job_preference);
+            if (projectsData) {
+              detail.user_project = projectsData.list || projectsData.items || projectsData.projects || projectsData;
+            }
+            if (jobPreferenceData) {
+              detail.job_preferences = jobPreferenceData;
+            }
+            if (!detail.id) {
+              detail.id = jobId;
+            }
+
+            window.postMessage({
+              type: "__MAIMAI_DETAIL_FETCH_RESULT__",
+              requestId: requestId,
+              ok: true,
+              jobId: jobId,
+              endpoints: endpoints,
+              detail: detail,
+              errors: errors,
+              error: errors.length ? errors[0] : null,
+            }, "*");
+          });
+      });
   });
 
   console.log("[Maimai Scraper v2] 已安装 — 被动拦截 + 主动搜索 + DOM 抓取就绪");

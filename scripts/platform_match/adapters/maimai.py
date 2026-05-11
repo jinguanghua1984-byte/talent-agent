@@ -183,17 +183,18 @@ class MaimaiAdapter:
             if salary:
                 result["expected_salary"] = salary
 
-        projects = api_data.get("user_project", [])
+        raw_projects = api_data.get("user_project")
+        projects = raw_projects if isinstance(raw_projects, list) else []
         if projects:
             result["project_experience"] = [
                 {
-                    "name": p.get("name", ""),
-                    "period": _normalize_period(p.get("period", "")),
-                    "role": p.get("role", ""),
+                    "name": p.get("name") or p.get("project_name", ""),
+                    "period": _normalize_period(p.get("period") or p.get("v", "")),
+                    "role": p.get("role") or p.get("project_role", ""),
                     "description": p.get("description", ""),
                 }
                 for p in projects
-                if p.get("name")
+                if p.get("name") or p.get("project_name")
             ]
 
         uid = api_data.get("id", "")

@@ -14,6 +14,7 @@
   <div class="tabs">
     <button class="tab active" data-tab="capture">被动拦截</button>
     <button class="tab" data-tab="search">主动搜索</button>
+    <button class="tab" data-tab="detail">批量详情</button>
     <button class="tab" data-tab="dom">DOM 抓取</button>
   </div>
 
@@ -23,6 +24,7 @@
     <div class="stats" id="capture-stats">
       <span>请求: <b id="req-count">0</b></span>
       <span>联系人: <b id="contact-count">0</b></span>
+      <span>详情: <b id="detail-count">0</b></span>
     </div>
     <div class="btn-row">
       <button id="btn-refresh">刷新</button>
@@ -86,13 +88,58 @@
     <div id="search-result" class="result-box"></div>
   </div>
 
+  <!-- 批量详情模式 -->
+  <div class="tab-content" id="tab-detail">
+    <p class="hint">在脉脉列表页使用；低速顺序执行，触发验证/权限异常会暂停。导出后需本地 dry-run 再入库。</p>
+    <div class="stats detail-stats">
+      <span>Jobs: <b id="detail-jobs-count">0</b></span>
+      <span>完成: <b id="detail-done-count">0</b></span>
+      <span>失败: <b id="detail-failed-count">0</b></span>
+      <span>跳过: <b id="detail-skipped-count">0</b></span>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>策略</label>
+        <select id="detail-mode">
+          <option value="safe">safe</option>
+          <option value="test">test</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>每日上限</label>
+        <input type="number" id="detail-daily-limit" value="100" min="1" max="150" />
+      </div>
+    </div>
+    <div class="form-group">
+      <label>导入联系人 JSON</label>
+      <input type="file" id="detail-import-file" accept="application/json,.json" />
+    </div>
+    <div class="btn-row">
+      <button id="btn-start-detail-batch" class="primary">开始详情</button>
+      <button id="btn-pause-detail-batch">暂停</button>
+      <button id="btn-resume-detail-batch">继续</button>
+      <button id="btn-stop-detail-batch">停止</button>
+    </div>
+    <div class="btn-row">
+      <button id="btn-refresh-detail-batch">刷新</button>
+      <button id="btn-export-detail-batch">导出 JSON</button>
+      <button id="btn-reset-detail-batch">重置</button>
+    </div>
+    <div class="progress-bar" id="detail-progress">
+      <div class="progress-fill detail-progress-fill" id="detail-progress-fill"></div>
+    </div>
+    <div class="progress-text" id="detail-progress-text">等待联系人来源...</div>
+    <pre class="detail-log" id="detail-batch-log">safe 模式：每人 5-12 秒，每 30 人暂停 5-10 分钟。</pre>
+    <div class="detail-log-title">执行日志（最近 50 条）</div>
+    <div class="detail-log-list" id="detail-log-list"></div>
+  </div>
+
   <!-- DOM 抓取模式 -->
   <div class="tab-content" id="tab-dom">
     <p class="hint">从页面 DOM 直接提取已渲染的人才卡片</p>
     <button id="btn-dom-scrape" class="primary">抓取当前页面</button>
     <div id="dom-result" class="result-box"></div>
   </div>
-</body>
 <script src="popup.js"></script>
 </body>
 </html>

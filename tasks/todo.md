@@ -24,6 +24,168 @@
 
 ---
 
+# maimai-scraper 批量详情 30/42 停滞诊断与日志增强（2026-05-11）
+> 当前状态：**已完成**
+> 问题：用户反馈 42 条详情抓取任务停在 30，怀疑高频 API 触发反爬，但日志没有相关输出。
+
+## 任务清单
+
+- [x] Task 1：定位 30/42 停滞根因，确认是否为 safe 策略批间暂停或真实风控失败
+- [x] Task 2：先补扩展契约测试，覆盖批间暂停文案、暂停窗口状态、429/风控日志
+- [x] Task 3：增强调度器状态，持久化批间休息窗口和恢复时间
+- [x] Task 4：增强 background/popup/悬浮球日志与展示，明确“批间休息”和失败原因
+- [x] Task 5：运行聚焦测试、JS 语法检查和必要回归
+- [x] Task 6：记录调试经验到 `memory/error-log.md`
+
+## 调查记录
+
+- `extensions/maimai-scraper/detail_batch.js` 的 safe 策略 `batchSize=30`，每 30 个已处理任务后会等待 5-10 分钟再继续。
+- 当前 `detail_batch_paused` 事件的日志只显示 `批量详情已暂停: batch_pause`，没有展示休息时长、预计恢复时间或 30/42 进度。
+- 批间休息期间 `state.status` 仍保持 `running`，悬浮球和状态轮询看起来像“执行中但进度不动”。
+- `inject.js` / `detail_batch.js` 目前只把 401/403 或验证码文本视作认证/风控失败，429 限流响应未纳入熔断判断。
+
+## Review
+
+- 根因判断：42 条任务停在 30，高概率是 safe 模式 `batchSize=30` 触发的 5-10 分钟批间休息；旧 UI/日志没有展示休息时长与预计恢复时间。
+- 导出核对：`C:\Users\Administrator\Downloads\maimai-capture-2026-05-11 (2).json` 中 `contacts=42`，但 `detailJobs=0`、`metadata.total_jobs=0`、`detailBatchLogs=0`，不是可用于复盘这轮 30/42 运行态的完整 job 导出。
+- 修复：`DetailBatch` 持久化 `batch_pause_started_at`、`batch_pause_until`、`batch_pause_delay_ms`、`batch_pause_completed`；background 日志显示“批间暂停：已完成 x/y，休息 n 分钟后继续”；popup/悬浮球显示“批间休息中”。
+- 风控日志增强：429 响应纳入认证/风控失败判断；单个详情 job 失败会记录 `detail_batch_job_failed`，日志包含联系人、原因、接口状态和“疑似登录失效、风控或限流”提示。
+- 验证：`python -m pytest tests/test_maimai_scraper_extension.py -q` -> **23 passed**。
+- 验证：`node --check extensions/maimai-scraper/detail_batch.js/background.js/popup.js/content.js/inject.js` -> **PASS**。
+- 验证：`python -m pytest tests/test_maimai_detail_targets.py tests/test_maimai_scraper_extension.py tests/test_maimai_detail_import.py scripts/test_maimai.py -q` -> **56 passed**。
+- 验证：`python -m pytest tests scripts -q` -> **400 passed, 1 warning**。
+- 打包：Chrome `--pack-extension` 使用现有 pem 重新打包成功。
+
+---
+
+# maimai-scraper 自动翻页请求头与分页元信息修复（2026-05-11）
+> 当前状态：**已完成**
+> 问题：被动拦截搜索翻页时的请求头内容缺少可视化追踪；自动翻页抓取传递的分页信息不正确，导致抓取数据总数不对。
+
+## 任务清单
+
+- [x] Task 1：追踪被动拦截搜索请求模板、请求头、分页字段和自动翻页重放数据流
+- [x] Task 2：补失败测试，覆盖请求头追踪、分页字段识别和总数统计
+- [x] Task 3：修复 `inject.js` 中搜索模板保存和 pager fetch 的分页参数传递
+- [x] Task 4：修复 `autopager/background/popup` 的总数统计和可观测日志
+- [x] Task 5：运行扩展聚焦测试、JS 语法检查、相关回归和打包
+- [x] Task 6：把根因和修复记录到 `memory/error-log.md`
+
+## 调查记录
+
+- 导出样本 `C:\Users\Administrator\Downloads\maimai-capture-2026-05-11 (2).json` 中真实搜索请求为 `/api/ent/v3/search/basic?...`，请求头至少包含 `x-csrf-token`。
+- 真实请求 body 的分页字段位于 `search.paginationParam.page/size`，同时存在 `search.page=0`、`search.size=30`、`search.total=1000`、`search.total_match=1000`。
+- 响应总数字段位于 `responseData.data.total=1000`、`total_match=1000`，单页数量位于 `count=30`，联系人列表位于 `list`。
+- 旧 `pagerFetch` 只改顶层 `body.page/pageNum/pageNo`，没有改 `search.paginationParam.page`，导致自动翻页可能重复请求第一页或错误页。
+
+## Review
+
+- 修复 `inject.js`：新增 `extractPageMeta()` 和 `applyPagerPage()`，保存模板时记录 `requestHeaders/headerNames`；自动翻页重放时同步更新 `search.paginationParam.page/size`、`search.page` 和已有顶层分页字段。
+- 修复 `content.js`：`pagerFetch` 响应回传 `pageMeta/headerNames`。
+- 修复 `autopager.js`：每页响应后用 `updatePageMetaFromResponse()` 回写 `totalFromApi/pagesize/totalPages`，避免总数只依赖初始模板。
+- 修复 `background.js` / `popup.js`：启动 pager 响应和导出元数据包含 `headerNames`；popup 模板区显示“请求头: ...”。
+- 验证：新增扩展契约测试先红后绿，`python -m pytest tests/test_maimai_scraper_extension.py -q` -> **25 passed**。
+- 验证：Node smoke 模拟真实脉脉请求体，自动翻页到第 2 页时 `search.paginationParam.page=2`、`search.page=1`、`pageMeta.total=1000`、请求头名包含 `x-csrf-token`。
+- 验证：`node --check extensions/maimai-scraper/inject.js/autopager.js/content.js/background.js/popup.js` -> **PASS**。
+- 验证：`python -m pytest tests/test_maimai_scraper_extension.py tests/test_maimai_detail_targets.py tests/test_maimai_detail_import.py scripts/test_maimai.py -q` -> **58 passed**。
+- 验证：`python -m pytest tests scripts -q` -> **402 passed, 1 warning**。
+- 打包：Chrome `--pack-extension` 使用现有 pem 重新打包成功。
+
+---
+
+# maimai-scraper 批量详情逐条执行日志增强（2026-05-11）
+> 当前状态：**已完成**
+> 问题：用户需要在批量详情执行日志中看到每一条详情请求是否执行成功。
+
+## 任务清单
+
+- [x] Task 1：确认当前详情 job 成功/失败事件和 popup 日志展示链路
+- [x] Task 2：补契约测试，覆盖逐条成功日志、逐条失败日志和 popup 明细展示数量
+- [x] Task 3：在 `detail_batch.js` 成功完成单个 job 时发出明确事件
+- [x] Task 4：在 `background.js` 中生成包含联系人、进度、接口状态的成功/失败日志
+- [x] Task 5：调整 popup 日志展示，确保能看到更多逐条执行明细
+- [x] Task 6：运行聚焦测试、JS 语法检查、相关回归和打包
+
+## 调查记录
+
+- 旧链路中失败 job 已有 `detail_batch_job_failed` 事件，成功 job 只有 `detail_batch_progress`，日志文案是“批量详情进度 x/y”，无法看出每个联系人是否成功。
+- popup 日志列表只展示 `logs.slice(-8)`，批量详情任务较多时很容易看不到逐条结果。
+
+## Review
+
+- 修复 `detail_batch.js`：单个 job 成功保存后发出 `detail_batch_job_succeeded`，携带联系人摘要、接口状态和可选 warning。
+- 修复 `background.js`：新增“详情抓取成功: 姓名，进度 x/y；接口状态 basic=200...”日志；失败日志保持“详情抓取失败: ...”，同样带接口状态。
+- 修复 `popup.js`：执行日志展示从最后 8 条扩展为最后 50 条，便于查看每一条详情的成功/失败结果。
+- 验证：`python -m pytest tests/test_maimai_scraper_extension.py -q` -> **26 passed**。
+- 验证：`node --check extensions/maimai-scraper/detail_batch.js/background.js/popup.js` -> **PASS**。
+- 验证：`python -m pytest tests/test_maimai_scraper_extension.py tests/test_maimai_detail_targets.py tests/test_maimai_detail_import.py scripts/test_maimai.py -q` -> **59 passed**。
+- 验证：`python -m pytest tests scripts -q` -> **403 passed, 1 warning**。
+- 打包：Chrome `--pack-extension` 使用现有 pem 重新打包成功。
+
+---
+
+# maimai-scraper 批量详情日志不可见修复（2026-05-11）
+> 当前状态：**已完成**
+> 问题：用户反馈页面上没有显示批量详情执行日志。
+
+## 任务清单
+
+- [x] Task 1：检查 popup HTML/CSS/JS 的日志容器、渲染函数和状态刷新链路
+- [x] Task 2：补契约测试，覆盖日志容器可见、日志刷新触发和实时事件追加
+- [x] Task 3：修复 popup 日志不可见或不实时更新的问题
+- [x] Task 4：必要时增强悬浮球/主页面入口对日志状态的提示
+- [x] Task 5：运行聚焦测试、JS 语法检查、相关回归和打包
+
+## 调查记录
+
+- `popup.html` 已有 `detail-log-list` 容器，但没有“执行日志”标题，用户不容易识别日志区域。
+- `popup.js` 收到 `detail_batch_*` 实时事件时只调用 `renderDetailBatchState(msg)`，没有立刻刷新 `detailBatchLogs`；日志列表要等 5 秒轮询才更新。
+- `popup.css` 的日志列表高度只有 120px，逐条日志较多时可见区域太小。
+
+## Review
+
+- 修复 `popup.html`：在批量详情状态区下方新增“执行日志（最近 50 条）”标题。
+- 修复 `popup.js`：收到任意 `detail_batch_*` 事件后立即调用 `refreshDetailBatchStatus()`，实时拉取并渲染持久化日志。
+- 修复 `popup.css`：日志列表高度从 120px 增加到 220px。
+- 验证：`python -m pytest tests/test_maimai_scraper_extension.py -q` -> **26 passed**。
+- 验证：`node --check extensions/maimai-scraper/popup.js` -> **PASS**。
+- 验证：`python -m pytest tests/test_maimai_scraper_extension.py tests/test_maimai_detail_targets.py tests/test_maimai_detail_import.py scripts/test_maimai.py -q` -> **59 passed**。
+- 验证：`python -m pytest tests scripts -q` -> **403 passed, 1 warning**。
+- 打包：Chrome `--pack-extension` 使用现有 pem 重新打包成功。
+
+## Follow-up Review - 实时请求日志仍不显示
+
+- 用户截图显示新版日志区域已经出现，但只显示“已导入 90 条详情联系人”；状态为 `running — 13/90`，说明 job 状态和计数在更新，但 job 事件日志没有稳定写入。
+- 根因：`detail_batch.js` 的 `emit(onEvent, event)` 没有等待 `background.appendDetailBatchLog()` 完成；多个 progress/success/failed 事件并发读写 `chrome.storage.local.detailBatchLogs`，读-改-写互相覆盖，导致只剩导入/启动类日志。
+- 修复：`emit()` 改为 async，并把所有 `emit(onEvent, ...)` 调整为 `await emit(onEvent, ...)`，让日志写入串行化。
+- 验证：`python -m pytest tests/test_maimai_scraper_extension.py -q` -> **26 passed**。
+- 验证：`node --check extensions/maimai-scraper/detail_batch.js` -> **PASS**。
+- 验证：`python -m pytest tests/test_maimai_scraper_extension.py tests/test_maimai_detail_targets.py tests/test_maimai_detail_import.py scripts/test_maimai.py -q` -> **59 passed**。
+- 验证：`python -m pytest tests scripts -q` -> **403 passed, 1 warning**。
+- 打包：Chrome `--pack-extension` 使用现有 pem 重新打包成功。
+
+# maimai-scraper Chrome 扩展加载失败修复（2026-05-10）
+
+> 当前状态：**已完成**
+> 报错：`Invalid value for key 'declarative_net_request.rule_resources': The provided path 'rules.json' is invalid. 无法加载清单。`
+
+## 任务清单
+
+- [x] Task 1：检查 `extensions/maimai-scraper` 的 manifest 与资源文件
+- [x] Task 2：定位 `declarative_net_request.rule_resources` 引用失败的根因
+- [x] Task 3：实施最小修复，避免影响扩展其他功能
+- [x] Task 4：验证 JSON/manifest 规则与项目测试
+
+## Review
+
+- 根因：`manifest.json` 声明了 `declarative_net_request.rule_resources`，但扩展目录缺少被引用的 `rules.json`，Chrome 因悬空规则资源拒绝加载清单。
+- 修复：移除未使用的 `declarativeNetRequest` 权限和 `declarative_net_request` 配置，避免继续声明不存在的规则集。
+- 静态验证：PowerShell `ConvertFrom-Json` 解析 manifest 成功，且无 `declarative_net_request` / `declarativeNetRequest` 残留。
+- 扩展验证：`chrome.exe --pack-extension="D:\workspace\talent-agent\extensions\maimai-scraper"` 退出码 0。
+- 全量测试：`python -m pytest tests scripts -q`，结果 **356 passed, 1 warning**。
+
+---
+
 # talent-library Skill 实施清单（2026-05-10）
 
 > 当前状态：**已完成**
@@ -46,3 +208,274 @@
 - Workflow/adapter 测试：`python -m pytest tests/test_agent_architecture.py tests/test_talent_library_workflow.py -q`，结果 **9 passed**。
 - 全量测试：`python -m pytest tests scripts -q`，结果 **367 passed, 1 warning**。
 - 架构扫描：``rg -n "Claude Code|WebSearch|mcp__|`Read`|`Write`|`Bash`|\\.claude/skills" agents/workflows``，结果 **无输出**。
+
+---
+
+# talent-library import 导入脉脉抓取结果（2026-05-10）
+
+> 当前状态：**已完成**
+> 输入文件：`C:\Users\Administrator\Downloads\maimai-capture-2026-05-08 (6).json`
+> 主数据源：`data/talent.db`
+
+## 任务清单
+
+- [x] Task 1：读取 `talent-library` import workflow、数据契约和安全规则
+- [x] Task 2：检查输入 JSON 存在性和结构
+- [x] Task 3：执行 dry-run，统计预计新增/合并/待确认/失败
+- [x] Task 4：用户确认后正式写入 SQLite 人才库
+- [x] Task 5：生成导入报告并验证数据库结果
+
+## Review
+
+- dry-run：输入 `923` 条联系人，映射 `923` 条候选人，缺失姓名 `0` 条；当前 `data/talent.db` 不存在，临时库预计 `created=923, merged=0, pending=0, errors=0`。
+- 正式导入：用户确认后新建 `data/talent.db`，结果 `before=0, created=923, merged=0, pending=0, errors=0, after=923`。
+- 数据库验证：`TalentDB.count()` 为 `923`，`CandidateFilter(platforms=["maimai"])` 为 `923`；抽样候选人包含 maimai 来源、结构化字段和 detail 数据。
+- 测试验证：`python -m pytest tests/test_talent_db.py tests/test_talent_models.py -q`，结果 **131 passed**。
+- 导入报告：`data/output/talent-import-2026-05-10-maimai-capture.md`。
+
+---
+
+# talent-library match 阿里云 AI Agent PM JD（2026-05-10）
+
+> 当前状态：**已完成**
+> JD：`data/jds/jd-20260410-alibaba-cloud-ai-agent-pm.json`
+> 候选人库：`data/talent.db`
+
+## 任务清单
+
+- [x] Task 1：读取 JD、`talent-library match` 场景和 `screen` 评分框架
+- [x] Task 2：对 923 位候选人执行本地五维匹配评分
+- [x] Task 3：生成 Top10 详细报告
+- [x] Task 4：验证报告内容和记录结果
+
+## Review
+
+- 候选池：从 `data/talent.db` 读取并评估 `923` 位候选人。
+- 评分方法：按 `screen` 五维框架本地规则评分，未调用外部 LLM，未写回 `match_scores`。
+- Top3：范青 `88`、黄赟 `85`、吴佳硕 `82`。
+- 输出报告：`data/output/talent-match-2026-05-10-alibaba-cloud-ai-agent-pm-top10.md`。
+- 结构化明细：`data/output/talent-match-2026-05-10-alibaba-cloud-ai-agent-pm-top10.json`。
+- 报告验证：Markdown 使用 `utf-8-sig` 写出，中文标题和固定文案已复查正常。
+
+---
+
+# 脉脉 Top10 详情抓取实现确认（2026-05-10）
+> 当前状态：**调查中**
+> 目标：确认仓库中是否已有非 CDP 的人选详情批量抓取方法，避免重复尝试不可行路径。
+
+## 任务清单
+
+- [x] Task 1：搜索仓库中 `maimai`、`detail`、`scraper`、`profile` 相关实现
+- [x] Task 2：核对 `scripts/platform_match` 中详情抓取是否依赖 CDP / Playwright fetch
+- [x] Task 3：核对 `extensions/maimai-scraper` 是否支持被动捕获详情接口和 JSON 导出
+- [x] Task 4：给出可复用路径和下一步执行方案
+
+## Review
+
+- 现有 Python 详情入口为 `scripts/platform_match/adapters/maimai.py::MaimaiAdapter.get_detail()`，实现依赖 `page.evaluate(fetch)` 请求 `https://maimai.cn/api/pc/u/{platform_id}`，属于 CDP/Playwright 路径，不作为本次抓取方案。
+- `extensions/maimai-scraper/inject.js` 已被动拦截 `/api/pc/u/`，可在用户手动打开详情页时捕获详情接口响应。
+- 现有 `maimai-capture-2026-05-08 (6).json` 是分页联系人导出，仅包含 `contacts`，无 `requests` 和 `/api/pc/u/` 详情响应。
+- git 历史未发现可直接复用的非 CDP Python 批量详情抓取 CLI；旧 `maimai-scraper` 方案主要是设计/TypeScript 表单与导出模块，未保留可执行 Python 详情批量抓取脚本。
+
+---
+
+# 脉脉 Top10 详情补全（2026-05-10）
+> 当前状态：**执行中**
+> 路径：真实 Chrome 登录态在脉脉列表页内点击候选人详情弹窗，`maimai-scraper` 被动捕获详情相关接口，导出 JSON 后由本地脚本解析入库。
+
+## 任务清单
+
+- [x] Task 1：生成 Top10 详情页打开清单
+- [ ] Task 2：用户在 Chrome 中用 `maimai-scraper` 清空旧数据并在列表页逐个点击 10 个详情弹窗
+- [x] Task 3：用户导出详情捕获 JSON 并提供本地路径
+- [x] Task 4：解析导出 JSON，dry-run 展示可补全字段和风险
+- [x] Task 5：用户确认后写入 `data/talent.db`
+- [x] Task 6：生成详情补全报告
+- [x] Task 7：把成功实践更新到 `talent-library detail` 执行方法
+
+## 执行记录
+
+- 2026-05-10：用户反馈详情页未捕获，截图显示请求数为 0。定位为扩展只匹配 `maimai.cn`，未覆盖 `www.maimai.cn` 子域，且 UI 未单独展示详情响应。
+- 2026-05-10：已将 `extensions/maimai-scraper` 升级到 2.2，补充 `*://*.maimai.cn/*`，扩大详情相关 API 匹配，并在导出 JSON 中新增 `details` / `totalDetails`。
+- 2026-05-10：用户实测列表页内手动点击弹出的详情可以捕获，外部链接打开的新详情页无法捕获。执行路径改为列表页内点击详情弹窗，不再要求逐个打开外部 profile URL。
+- 2026-05-10：用户导出的 `maimai-capture-2026-05-10.json` 仍是联系人列表，验证为 `contacts=30, details=0, requests=0`。定位为导出按钮优先走 IndexedDB 分页导出，未包含 `chrome.storage.local` 中的详情捕获；已新增 `exportFullJson` 并让清除同步清 `PagerDB`。
+- 2026-05-10：新导出文件验证通过：`details=10, requests=178, contacts=70`。dry-run 成功匹配本地 Top10 的 10/10 人；工作经历将由 2 条扩展到 2-8 条，吴佳硕新增 2 条项目经历，小蝴蝶帕鲁新增 3 条项目经历。
+- 2026-05-10：用户确认后已写入 `data/talent.db`。10/10 候选人验证通过：`data_level=detailed`，`raw_data.maimai_detail_capture` 存在；最终报告 `data/output/talent-detail-2026-05-10-maimai-top10.md`，结构化结果 `data/output/talent-detail-2026-05-10-maimai-top10-result.json`。
+- 2026-05-10：已将成功实践写入 `agents/workflows/talent-library/references/scenarios.md` 的 `detail` 场景，明确脉脉详情补全采用列表页弹窗捕获、完整导出、dry-run、确认写入和逐人验证流程。
+
+---
+
+# 脉脉批量详情抓取实施计划（2026-05-11）
+> 当前状态：**计划已完成，待实施确认**
+> 设计文档：`docs/design-discussions/2026-05-10-maimai-batch-detail-capture-design.md`
+> 实施计划：`docs/superpowers/plans/2026-05-10-maimai-batch-detail-capture.md`
+
+## 任务清单
+
+- [x] Task 1：新增扩展静态契约测试
+- [x] Task 2：新增 `DetailDB` 详情任务存储
+- [x] Task 3：新增 MAIN world 详情接口重放
+- [x] Task 4：新增批量详情调度器、限流和熔断
+- [x] Task 5：新增 popup “批量详情”界面
+- [x] Task 6：新增本地详情导入 dry-run/apply CLI
+- [x] Task 7：更新 `talent-library detail` 执行文档
+- [x] Task 8：执行 Chrome 扩展打包和真实页面小批量验证
+- [x] Task 9：全量测试、行为回归和 Review 记录
+
+## Review
+
+- 计划来源：已读取 `docs/design-discussions/2026-05-10-maimai-batch-detail-capture-design.md`。
+- 现状核对：已核对 `extensions/maimai-scraper` 当前 `manifest/background/content/inject/popup/idb/autopager` 结构，确认当前只有手动详情捕获和分页联系人抓取，没有批量详情 job 状态机。
+- 范围决策：首轮实施 Phase 1-3 和必要的本地入库工具化；Phase 4 自动点击兜底延后单独设计。
+- 本次未进入代码实现，未运行项目测试；下一步需要用户确认后按实施计划逐项执行。
+
+## Task 1 Review - Extension Contract Tests
+
+- [x] Step 1.1: 新增 `tests/test_maimai_scraper_extension.py`，使用 `pathlib/json` 做扩展静态契约测试。
+- [x] Step 1.2: 运行 `python -m pytest tests/test_maimai_scraper_extension.py -q`，结果为 **8 failed**，失败点覆盖 manifest 版本、detail_batch 加载、DetailDB、批量详情消息、detailFetch、MAIN world 详情重放、popup detail tab、detailJobs 导出。
+
+## Task 2 Review - DetailDB 存储和导出增强
+
+- [x] Step 2.1: 在 `idb.js` 抽出 IndexedDB helper，保持 `PagerDB` 外部 API 不变。
+- [x] Step 2.2: 新增 `DetailDB`，包含 jobs/details stores 和公开 API。
+- [x] Step 2.3: 增强 `clearAll`，同步清理 PagerDB、DetailDB 和相关 storage 字段。
+- [x] Step 2.4: 增强 `exportFullJson`，合并导出 contacts/details/detailJobs 和 detail metadata。
+- [x] Step 2.5: 运行 `node --check` 和 `pytest` 验证。
+
+验证结果：
+- `node --check extensions/maimai-scraper/idb.js`：PASS。
+- `node --check extensions/maimai-scraper/background.js`：PASS。
+- `python -m pytest tests/test_maimai_scraper_extension.py -q`：6 failed, 2 passed；`DetailDB` 和 `exportFullJson/detailJobs` 相关断言已通过，剩余失败属于 manifest/detail_batch 消息、content/inject 桥接和 popup UI 后续任务。
+
+## Task 3-5 Review - 扩展批量详情闭环
+
+- [x] Task 3：`content.js` 新增 `detailFetch` 桥接，`inject.js` 新增 `__MAIMAI_DETAIL_FETCH__`，顺序请求 `/api/ent/talent/basic`、项目、求职意向和联系按钮接口。
+- [x] Task 4：新增 `detail_batch.js` 状态机，支持 jobs 生成、低速限流、暂停、继续、停止、失败记录、每日上限和连续认证/风控失败熔断；`background.js` 新增 `startDetailBatch`、`pauseDetailBatch`、`resumeDetailBatch`、`stopDetailBatch`、`getDetailBatchStatus`、`importDetailContacts`。
+- [x] Task 5：`popup.html/js/css` 新增“批量详情”Tab，包含联系人导入、safe/test 策略、每日上限、开始/暂停/继续/停止/刷新/导出和进度展示。
+
+验证结果：
+- `node --check extensions/maimai-scraper/background.js`：PASS。
+- `node --check extensions/maimai-scraper/detail_batch.js`：PASS。
+- `node --check extensions/maimai-scraper/content.js`：PASS。
+- `node --check extensions/maimai-scraper/inject.js`：PASS。
+- `node --check extensions/maimai-scraper/idb.js`：PASS。
+- `node --check extensions/maimai-scraper/popup.js`：PASS。
+- `python -m pytest tests/test_maimai_scraper_extension.py -q`：**8 passed**。
+
+## Task 6 Review - 本地详情导入 CLI
+
+- [x] 新增 `scripts/maimai_detail_import.py`，支持 `dry-run` 和 `apply`。
+- [x] dry-run 校验导出 JSON 顶层 `details` 或 `detailJobs`，按 `source_profiles.platform='maimai'` 与 `platform_id` 精确匹配，不修改数据库。
+- [x] apply 必须带 `--confirm "确认写入脉脉详情"`，只写入精确匹配人选，写入后逐人验证 `data_level='detailed'` 和 `raw_data.maimai_detail_capture`。
+- [x] 新增 `tests/test_maimai_detail_import.py` 覆盖 dry-run、apply 和确认语句。
+
+验证结果：
+- `python -m pytest tests/test_maimai_detail_import.py -q`：**3 passed**。
+- `python -m py_compile scripts/maimai_detail_import.py`：PASS。
+- `python -m pytest scripts/test_maimai.py tests/test_talent_db.py::test_get_detail_after_enrich -q`：**28 passed**。
+- `python scripts/maimai_detail_import.py --help`：PASS。
+
+## Task 7 Review - Workflow 文档
+
+- [x] 已在 `agents/workflows/talent-library/references/scenarios.md` 的 `detail` 场景新增“脉脉详情补全：批量详情接口重放”流程。
+- [x] 原“列表页弹窗捕获”调整为小批量或失败记录兜底路径。
+
+## Task 8-9 Review - 打包、回归和最终验证
+
+- Chrome pack：`chrome.exe` 不在 PATH；改用 `C:\Program Files\Google\Chrome\Application\chrome.exe` 并复用既有 `extensions/maimai-scraper.pem` 执行打包，结果 **PASS**。
+- 扩展语法检查：`node --check extensions/maimai-scraper/idb.js detail_batch.js background.js content.js inject.js popup.js`，结果 **PASS**。
+- 扩展契约测试：`python -m pytest tests/test_maimai_scraper_extension.py -q`，结果 **8 passed**。
+- 本地详情导入测试：`python -m pytest tests/test_maimai_detail_import.py -q`，结果 **3 passed**。
+- 映射/入库聚焦回归：`python -m pytest scripts/test_maimai.py tests/test_talent_db.py::test_get_detail_after_enrich -q`，结果 **28 passed**。
+- 全量测试：`python -m pytest tests scripts -q`，结果 **379 passed, 1 warning**。
+- 架构扫描：`rg -n "Claude Code|WebSearch|mcp__|`Read`|`Write`|`Bash`|\\.claude/skills" agents/workflows`，结果 **无输出**。
+- 代码审查：轻量最终审查发现 2 个问题（显式导入联系人优先级、popup HTML 结构），已修复并复审 **APPROVED**。
+- 真实页面验证：用户反馈 **测试通过**。
+
+---
+
+# 推荐列表驱动脉脉批量详情抓取（2026-05-11）
+> 当前状态：**执行中**
+> 实施计划：`docs/superpowers/plans/2026-05-11-maimai-recommendation-detail-targets.md`
+
+## 任务清单
+
+- [x] Task 1：新增推荐列表转详情目标 JSON 的测试
+- [x] Task 2：实现 `scripts/maimai_detail_targets.py`
+- [x] Task 3：扩展导入逻辑兼容 `top10/candidates/matches/results`
+- [x] Task 4：更新 `talent-library detail` 推荐列表业务流文档
+- [x] Task 5：聚焦测试、扩展语法检查和全量验证
+
+## Review
+
+- 计划来源：用户反馈真实业务流是先 `talent-library search/match` 得到推荐列表，再导入 `maimai-scraper` 批量抓详情，而不是直接对全量列表 JSON 抓详情。
+- 设计决策：保持既有批量详情实现一致，新增本地转换工具输出顶层 `contacts`，同时让扩展导入路径直接识别常见推荐列表 JSON 结构。
+
+## Task 1-4 Review
+
+- 新增 `tests/test_maimai_detail_targets.py`，覆盖 match `top10` JSON、显式 candidate_id 列表、推荐项自带 `profile_url` 三种输入。
+- 新增 `scripts/maimai_detail_targets.py`，支持：
+  - `from-file --input <recommendation.json> --db data/talent.db --out <targets.json>`
+  - `from-ids --ids 1,2,3 --db data/talent.db --out <targets.json>`
+- 扩展 `importDetailContacts` 已兼容 `contacts`、`detailJobs`、`top10`、`candidates`、`matches`、`results`、`items` 和原始数组。
+- `popup.js` 文件导入改为把完整 JSON 交给 background 归一化，避免前端提前丢失 `top10/results`。
+- `talent-library detail` 文档已新增“推荐列表驱动的批量详情”流程。
+
+验证记录：
+- `python -m pytest tests/test_maimai_detail_targets.py -q`：**3 passed**。
+- `python -m py_compile scripts/maimai_detail_targets.py`：PASS。
+- `node --check extensions/maimai-scraper/background.js; node --check extensions/maimai-scraper/popup.js`：PASS。
+- `python -m pytest tests/test_maimai_detail_targets.py tests/test_maimai_scraper_extension.py -q`：**12 passed**。
+- 真实 Top10 match JSON smoke：`data/output/talent-match-2026-05-10-alibaba-cloud-ai-agent-pm-top10.json` 转换结果 `total_input=10, total_contacts=10, missing=0`。
+
+## Task 5 Review
+
+- 聚焦回归：`python -m pytest tests/test_maimai_detail_targets.py tests/test_maimai_scraper_extension.py tests/test_maimai_detail_import.py scripts/test_maimai.py -q`，结果 **42 passed**。
+- 扩展语法检查：`node --check extensions/maimai-scraper/idb.js detail_batch.js background.js content.js inject.js popup.js`，结果 **PASS**。
+- Chrome pack：复用既有 `extensions/maimai-scraper.pem` 打包，结果 **PASS**。
+- 全量测试：`python -m pytest tests scripts -q`，结果 **383 passed, 1 warning**。
+- 架构扫描：`rg -n "Claude Code|WebSearch|mcp__|`Read`|`Write`|`Bash`|\\.claude/skills" agents/workflows`，结果 **无输出**。
+
+## talent-library detail 入口集成（2026-05-11）
+
+- [x] 新增 `scripts/talent_library.py detail` 统一业务入口，支持 `--ids`、`--top10-file`、`--recommendation-file`、`--out`、`--db`。
+- [x] 新增 `tests/test_talent_library_cli.py`，覆盖通过 ids 和 top10 file 生成 `maimai-detail-targets.json`。
+- [x] 更新 `agents/workflows/talent-library/AGENT.md`，声明 `detail` 场景扩展参数。
+- [x] 更新 `agents/workflows/talent-library/references/scenarios.md`，将用户入口改为 `talent-library detail --ids/--top10-file`，底层脚本仅作为运行时映射。
+
+验证记录：
+- `python -m pytest tests/test_talent_library_cli.py -q`：**3 passed**。
+- `python -m py_compile scripts/talent_library.py`：PASS。
+- `python -m pytest tests/test_talent_library_cli.py tests/test_maimai_detail_targets.py tests/test_talent_library_workflow.py tests/test_agent_architecture.py -q`：**15 passed**。
+- `python scripts/talent_library.py detail --top10-file data\output\talent-match-2026-05-10-alibaba-cloud-ai-agent-pm-top10.json --db data\talent.db --out %TEMP%\maimai-detail-targets-entry-smoke.json`：联系人 **10**，缺失 **0**。
+- `python scripts/talent_library.py detail --ids 440,747 --db data\talent.db --out %TEMP%\maimai-detail-targets-ids-smoke.json`：联系人 **2**，缺失 **0**。
+- `python -m pytest tests scripts -q`：**386 passed, 1 warning**。
+- 架构扫描：`rg -n "Claude Code|WebSearch|mcp__|`Read`|`Write`|`Bash`|\\.claude/skills" agents/workflows`，结果 **无输出**。
+
+---
+
+# maimai-scraper 批量详情与悬浮球优化（2026-05-11）
+> 当前状态：**计划已完成，待实施确认**
+> 实施计划：`docs/superpowers/plans/2026-05-11-maimai-scraper-ops-overlay.md`
+
+## 任务清单
+
+- [x] Task 1：新增扩展契约测试，覆盖日志、reset、job 替换和悬浮球
+- [x] Task 2：扩展 `DetailDB` 和 `DetailBatch` reset 契约
+- [x] Task 3：增强 `background.js` 日志、summary、reset，并修复陈旧 jobs 混入
+- [x] Task 4：增强 popup 批量详情页实时日志和重置操作
+- [x] Task 5：在 `content.js` 注入页面右侧三态悬浮球
+- [x] Task 6：版本升级、语法检查、聚焦测试、全量测试和 Chrome pack
+- [ ] Task 7：真实脉脉页面手工验收
+
+## Review
+
+- 扩展契约测试：`python -m pytest tests/test_maimai_scraper_extension.py -q`，结果 **20 passed**。
+- JS 语法检查：`node --check extensions/maimai-scraper/idb.js detail_batch.js background.js content.js inject.js popup.js`，结果 **PASS**。
+- 关联回归：`python -m pytest tests/test_maimai_detail_targets.py tests/test_maimai_detail_import.py tests/test_talent_library_cli.py tests/test_maimai_scraper_extension.py -q`，结果 **29 passed**。
+- maimai 聚焦回归：`python -m pytest tests/test_maimai_detail_targets.py tests/test_maimai_scraper_extension.py tests/test_maimai_detail_import.py scripts/test_maimai.py -q`，结果 **53 passed**。
+- 全量测试：`python -m pytest tests scripts -q`，结果 **397 passed, 1 warning**。
+- Chrome pack：`& "C:\Program Files\Google\Chrome\Application\chrome.exe" --pack-extension="D:\workspace\talent-agent\extensions\maimai-scraper" --pack-extension-key="D:\workspace\talent-agent\extensions\maimai-scraper.pem"`，结果 **PASS**。
+- 最终代码复审：已修复 reset 旧异步写回、reset 后 contacts 残留、悬浮球实时轮询、popup `total_jobs` 实时事件兼容、导出 token 过滤缺口；最终复审 **无 Critical / Important / Minor**。
+- 最终复验：`python -m pytest tests/test_maimai_scraper_extension.py -q` **20 passed**；`python -m pytest tests scripts -q` **397 passed, 1 warning**；`git diff --check` 无 whitespace error（仅提示 `scripts/test_maimai.py` CRLF 将被 Git 转 LF）。
+- 真实脉脉页面手工验收待执行：重载扩展后验证悬浮球三态、3 联系人导入只生成 3 个 jobs、实时日志、导出 JSON 和 reset。

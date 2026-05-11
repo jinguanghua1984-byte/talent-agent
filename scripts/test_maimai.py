@@ -190,6 +190,29 @@ class TestMapToSchema(unittest.TestCase):
         self.assertEqual(result["_source"]["channel"], "maimai")
         self.assertEqual(result["_source"]["platform_id"], "12345")
 
+    def test_project_experience_uses_detail_field_names(self):
+        """详情接口的 project_name/project_role/v 应映射为项目经历。"""
+        result = self._call({
+            "name": "测试",
+            "user_project": [
+                {
+                    "project_name": "智能创作项目",
+                    "project_role": "负责人",
+                    "v": "2023-08至2024-04",
+                    "description": "负责 AIGC 功能落地",
+                }
+            ],
+        })
+
+        self.assertEqual(result["project_experience"], [
+            {
+                "name": "智能创作项目",
+                "period": "2023 - 2024",
+                "role": "负责人",
+                "description": "负责 AIGC 功能落地",
+            }
+        ])
+
     def test_minimal_data(self):
         """仅姓名的 API 数据应只映射基本字段。"""
         result = self._call({"name": "李四"})

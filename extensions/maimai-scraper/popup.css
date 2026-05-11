@@ -45,3 +45,51 @@ details pre { white-space: pre-wrap; word-break: break-all; max-height: 200px; o
 .progress-bar { height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden; margin: 6px 0; }
 .progress-fill { height: 100%; background: #1a73e8; border-radius: 3px; transition: width 0.3s ease; width: 0%; }
 .progress-text { font-size: 11px; color: #666; text-align: center; }
+
+.detail-stats { gap: 10px; flex-wrap: wrap; }
+.detail-progress-fill { background: #2e7d32; }
+.detail-log {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow: auto;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.detail-log-list {
+  max-height: 220px;
+  overflow: auto;
+  margin-top: 4px;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background: #fafafa;
+}
+
+.detail-log-title {
+  margin-top: 8px;
+  color: #333;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.detail-log-item,
+.detail-log-empty {
+  padding: 5px 6px;
+  border-bottom: 1px solid #eeeeee;
+  color: #444;
+  font-size: 11px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.detail-log-item:last-child {
+  border-bottom: 0;
+}
+
+.detail-log-empty {
+  color: #888;
+}

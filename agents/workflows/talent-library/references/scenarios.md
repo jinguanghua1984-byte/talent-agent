@@ -69,6 +69,79 @@
 6. 详情数据完成字段映射后调用 `TalentDB.enrich(candidate_id, details, source)`。
 7. 更新数据级别，记录来源、抓取时间和置信度，生成 `data/output/talent-detail-{YYYY-MM-DD}-{slug}.md`。
 
+### 脉脉详情补全：批量详情接口重放
+
+脉脉批量详情补全优先使用 `extensions/maimai-scraper` 的“批量详情”Tab，在真实 Chrome 登录态和脉脉列表页上下文中低速顺序重放详情接口。该路径不使用 CDP，不打开外部 `profile/detail` 新页，也不自动绕过验证或权限异常。
+
+#### 推荐列表驱动的批量详情
+
+当用户先通过 `talent-library search` 或 `talent-library match` 得到推荐人选列表时，不要把全量脉脉联系人列表直接交给批量详情。应先把推荐结果转换为详情目标 JSON，再导入扩展。
+
+推荐流程：
+
+1. 运行 `talent-library search` 或 `talent-library match`，得到推荐报告。优先使用结构化 JSON 报告，例如 `data/output/talent-match-...json`。
+2. 通过 `talent-library detail` 扩展参数生成 `maimai-scraper` 可导入的联系人清单。用户只需要表达业务入口：
+
+```text
+talent-library detail --top10-file data/output/<recommendation>.json --out data/output/maimai-detail-targets.json
+```
+
+3. 如果已经人工确定候选人 ID，也可以直接按候选人 ID 生成：
+
+```text
+talent-library detail --ids 440,747,727 --out data/output/maimai-detail-targets.json
+```
+
+4. 当前运行时将上述业务入口映射为 `scripts/talent_library.py detail`，生成目标 JSON；不要让用户直接记忆或调用底层转换脚本。
+5. 在 Chrome 的 `maimai-scraper` 中切到“批量详情”，导入 `data/output/maimai-detail-targets.json`。
+6. 执行批量详情抓取，完成或暂停后导出完整 JSON。
+7. 本地执行 `maimai_detail_import.py dry-run`，确认匹配和字段差异。
+8. 用户明确确认后执行 `maimai_detail_import.py apply`。
+
+扩展也兼容直接导入包含 `top10`、`candidates`、`matches`、`results` 或 `items` 的推荐 JSON；但正式流程优先使用 `talent-library detail --top10-file/--ids`，因为它会通过 `data/talent.db` 补齐 `source_profiles.platform_id` 和 `profile_url`。
+
+执行方法：
+
+1. 先用分页抓取或导入 JSON 准备联系人；联系人至少应包含 `id`，最好包含 `trackable_token`、姓名、公司和职位。
+2. 打开真实 Chrome 的脉脉列表页，确认 `maimai-scraper` 已重新加载并启用。
+3. 在扩展中切到“批量详情”Tab，选择 `safe` 模式；只做小样本验证时才使用 `test` 模式。
+4. 点击“开始详情”，扩展会按低速顺序执行 `/api/ent/talent/basic` 及配套项目、求职意向、联系按钮接口。
+5. 如果出现连续权限异常、验证码、非 JSON 响应或熔断提示，立即停止盲目重试，先导出完整 JSON 并复盘失败原因。
+6. 任务完成或暂停后，使用扩展“导出 JSON”。导出文件必须包含顶层 `contacts`、`details`、`detailJobs`、`requests`。
+7. 本地先执行 dry-run：
+
+```bash
+python scripts/maimai_detail_import.py dry-run --capture-file <export.json> --db data/talent.db
+```
+
+8. dry-run 报告必须展示匹配人数、未匹配人数、失败 jobs，以及每位候选人的工作、教育、项目经历旧值与新值数量。
+9. 用户确认后再执行写入：
+
+```bash
+python scripts/maimai_detail_import.py apply --capture-file <export.json> --db data/talent.db --confirm "确认写入脉脉详情"
+```
+
+10. apply 只写入 `source_profiles.platform='maimai'` 且 `platform_id` 精确匹配的人选；未匹配和失败 job 不写入。
+11. 写入后逐人验证 `data_level='detailed'`、`candidate_details` 存在、`raw_data.maimai_detail_capture` 存在，再生成最终报告。
+
+### 脉脉详情补全：列表页弹窗捕获
+
+小批量补全或批量详情失败记录兜底时，使用 `extensions/maimai-scraper` 的真实 Chrome 被动捕获路径，不使用 CDP 抓取，也不依赖外部 profile 链接直接打开的新详情页。
+
+执行方法：
+
+1. 从 `source_profiles` 读取目标候选人的 `platform_id`、`profile_url`、姓名、公司和职位，生成列表页点击勾选清单。
+2. 让用户在真实 Chrome 中打开脉脉候选人列表页，例如 `/ent/v41/recruit/talents`，确认 `maimai-scraper` 已重新加载并启用。
+3. 在扩展中点击“清除”，清空旧 `contacts`、`details`、`requests` 和分页 IndexedDB 缓存。
+4. 用户按清单在列表页内定位候选人，点击候选人卡片或详情入口，等待弹出的详情面板加载完成；不要打开外部 `profile/detail` 链接。
+5. 每个候选人完成后检查扩展计数：`请求` 应增长，`详情` 最好增长。若无增长，刷新列表页后重新点击详情弹窗。
+6. 10 人或目标批次完成后，使用扩展“导出 JSON”。导出文件必须包含顶层 `details`、`totalDetails`、`requests`；若只有 `contacts`，说明导出路径错误，不能入库。
+7. 解析导出 JSON 后，用详情 payload 的 `id` 与本地 `source_profiles.platform_id` 精确匹配；匹配不到的候选人不写入。
+8. 使用 `scripts.platform_match.adapters.maimai.MaimaiAdapter.map_to_schema()` 做字段映射；详情接口项目字段可能是 `project_name`、`project_role`、`v`，必须映射到 `project_experience`。
+9. 写库前生成 dry-run 报告，展示每位候选人的工作经历、教育经历、项目经历旧值与新值数量，并等待用户明确确认。
+10. 用户确认后调用 `TalentDB.enrich()` 写入 `candidate_details`；保留原始详情响应到 `raw_data.maimai_detail_capture`，包含 `capture_file`、`platform_id`、`profile_url`、`record_url`、`record_id` 和原始 payload。
+11. 写入后逐人验证 `data_level='detailed'`、详情条数和 `raw_data.maimai_detail_capture` 存在，再生成最终报告。
+
 ## update：人才更新
 
 适用于更新结构化字段、补充履历、合并来源、修正综合分、修正 JD 匹配分或处理待确认合并。

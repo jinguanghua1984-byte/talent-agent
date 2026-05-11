@@ -16,11 +16,46 @@ var AutoPager = (function () {
       totalPages: totalPages,
       currentPage: 0,
       totalFromApi: total,
+      pagesize: pagesize,
       running: false,
       aborted: false,
       sendPageRequest: sendPageRequest,
       onResponse: null,
     };
+  }
+
+  function firstNumber(values, fallback) {
+    for (var i = 0; i < values.length; i++) {
+      var value = Number(values[i]);
+      if (Number.isFinite(value) && value > 0) return value;
+    }
+    return fallback;
+  }
+
+  function updatePageMetaFromResponse(state, result) {
+    var data = result && result.data && result.data.data ? result.data.data : {};
+    var pageMeta = result && result.pageMeta ? result.pageMeta : {};
+    var contacts = extractContacts(result && result.data);
+    var pagesize = firstNumber([
+      pageMeta.pagesize,
+      data.pagesize,
+      data.pageSize,
+      data.limit,
+      data.size,
+      data.count,
+      contacts.length,
+    ], state.pagesize || 30);
+    var total = firstNumber([
+      pageMeta.total,
+      data.total,
+      data.total_match,
+      data.totalCount,
+      data.total_count,
+    ], state.totalFromApi || contacts.length || 0);
+    state.pagesize = pagesize;
+    state.totalFromApi = total;
+    state.totalPages = Math.ceil(total / pagesize) || state.totalPages || 1;
+    return state;
   }
 
   function randomDelay(min, max) {
@@ -85,6 +120,11 @@ var AutoPager = (function () {
         break;
       }
 
+      updatePageMetaFromResponse(state, result);
+      targetPages = mode === "all"
+        ? state.totalPages
+        : Math.min(maxPages || 1, state.totalPages);
+
       var contacts = extractContacts(result.data);
       if (contacts.length > 0) {
         await PagerDB.append(contacts);
@@ -96,6 +136,7 @@ var AutoPager = (function () {
         type: "pager_progress",
         currentPage: state.currentPage,
         totalPages: targetPages,
+        totalFromApi: state.totalFromApi,
         contactsInPage: contacts.length,
         totalContacts: await PagerDB.getCount(),
       });
@@ -107,6 +148,7 @@ var AutoPager = (function () {
       type: state.aborted ? "pager_cancelled" : "pager_complete",
       currentPage: state.currentPage,
       totalPages: targetPages,
+      totalFromApi: state.totalFromApi,
       totalContacts: await PagerDB.getCount(),
     });
   }

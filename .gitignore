@@ -31,8 +31,10 @@ data/jds/*.json
 data/screens/*.json
 data/search-strategies/instances/*.md
 data/output/*.md
+data/output/*.json
 data/rules/preferences.json
 data/token-tracker/*.jsonl
+data/*.db
 *.pyc
 __pycache__/
 
@@ -49,3 +51,7 @@ data/boss-captured-requests.json
 data/boss-search-response.json
 data/cache/
 .env
+
+# Chrome extension packaging artifacts
+*.crx
+*.pem
