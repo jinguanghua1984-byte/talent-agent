@@ -538,7 +538,7 @@
 
 # 人才库联系方式与微信聊天记录设计（2026-05-12）
 
-> 当前状态：设计文档已完成，待用户评审；尚未进入实现。
+> 当前状态：实施计划已完成，待选择执行方式；尚未进入实现。
 
 ## 任务清单
 
@@ -549,8 +549,8 @@
 - [x] Task 5：呈现推荐设计，覆盖架构、组件、数据流、错误处理和测试策略，并等待用户确认。
 - [x] Task 6：用户确认后写入 `docs/superpowers/specs/2026-05-12-talent-contact-and-wechat-timeline-design.md`。
 - [x] Task 7：设计文档自检，排除占位符、矛盾、范围漂移和歧义。
-- [ ] Task 8：等待用户评审设计文档。
-- [ ] Task 9：用户批准后再进入实施计划编写。
+- [x] Task 8：等待用户评审设计文档。
+- [x] Task 9：用户批准后再进入实施计划编写。
 
 ## Review
 
@@ -558,3 +558,5 @@
 - 已确认微信聊天记录同步为手动触发 skill，通过已安装的 `wechat-cli export` 导出 markdown，支持指定联系人、时间范围和数量上限。
 - 推荐方案为轻量结构化字段 + 独立微信聊天归档 skill：联系方式写候选人结构化字段，聊天正文写 `data/wechat-timelines/*.md`，SQLite 只保存归档索引。
 - 设计文档已写入 `docs/superpowers/specs/2026-05-12-talent-contact-and-wechat-timeline-design.md`；自检无占位符、矛盾、范围漂移和歧义。
+- 用户已审核设计并确认进入实施计划编写。
+- 实施计划已写入 `docs/superpowers/plans/2026-05-12-talent-contact-and-wechat-timeline.md`，等待选择 Subagent-Driven 或 Inline Execution。
