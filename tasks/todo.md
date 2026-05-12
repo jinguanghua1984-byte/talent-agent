@@ -491,8 +491,9 @@
 - [x] Task 3：比较扩展现有插件、新建 Boss 插件、只做 Python/CDP 三种方案
 - [x] Task 4：形成推荐设计：现有插件渠道化，Boss 只做被动监听和低风险页面辅助
 - [x] Task 5：写入正式设计文档并完成自检
-- [ ] Task 6：用户评审设计文档
-- [ ] Task 7：用户确认后进入实施计划编写
+- [x] Task 6：用户评审设计文档
+- [x] Task 7：用户确认后进入实施计划编写
+- [x] Task 8：写入实施计划并完成自检
 
 ## Review
 
@@ -500,3 +501,4 @@
 - 插件策略：新建 `extensions/talent-channel-scraper`，从现有 `maimai-scraper` 迁移公共能力，过渡期保留旧插件目录以降低回归风险。
 - 数据策略：统一 capture envelope，`source_profiles.platform` 区分渠道，`platform_id` 只在同平台内精确匹配，跨渠道保持保守合并。
 - 机制差异：脉脉可主动重放接口；Boss 禁止主动 `fetch`、禁止自动详情页导航、禁止新开页面探测登录态。
+- 计划记录：用户已确认设计，实施计划已写入 `docs/superpowers/plans/2026-05-12-boss-channel-browser-extension.md`；自检无占位符，`git diff --check` 通过。
