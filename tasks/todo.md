@@ -533,3 +533,28 @@
 - 写库结果：原始联系人 2519，跨文件重复 724，去重后 1795；写入 `created=1781, merged=14, pending=0, errors=0`；`data/talent.db` 候选人总数从 952 增至 2733。
 - 写后验证：脉脉 `platform_id` 重复数为 0；同一批数据写后 dry-run 为 `created=0, merged=1795, pending=0, errors=0`，符合今日重复只导入一次。
 - 验证命令：`python -m pytest tests/test_talent_library_cli.py -q` -> 5 passed；`python -m pytest tests/test_talent_library_cli.py tests/test_talent_db.py::test_batch_ingest_mixed_created_merged_errors tests/test_talent_db.py::test_same_platform_id_merges_even_when_identity_fields_change -q` -> 7 passed；`python -m pytest tests/test_talent_library_cli.py tests/test_maimai_detail_targets.py tests/test_talent_migrate.py tests/test_talent_library_workflow.py -q` -> 28 passed；`python -m pytest tests scripts -q` -> 405 passed, 1 warning。
+
+---
+
+# 人才库联系方式与微信聊天记录设计（2026-05-12）
+
+> 当前状态：设计文档已完成，待用户评审；尚未进入实现。
+
+## 任务清单
+
+- [x] Task 1：探索项目上下文，核对现有人才库模型、导入、更新、workflow 和测试契约。
+- [x] Task 2：判断是否需要视觉辅助；本次为数据模型/workflow 设计，默认不需要。
+- [x] Task 3：逐一澄清联系方式与微信聊天记录的产品边界、数据来源和同步方式。
+- [x] Task 4：提出 2-3 个设计方案，比较表结构、导入路径、隐私风险和后续扩展性。
+- [x] Task 5：呈现推荐设计，覆盖架构、组件、数据流、错误处理和测试策略，并等待用户确认。
+- [x] Task 6：用户确认后写入 `docs/superpowers/specs/2026-05-12-talent-contact-and-wechat-timeline-design.md`。
+- [x] Task 7：设计文档自检，排除占位符、矛盾、范围漂移和歧义。
+- [ ] Task 8：等待用户评审设计文档。
+- [ ] Task 9：用户批准后再进入实施计划编写。
+
+## Review
+
+- 已确认联系方式第一版每类只保留一个当前值：邮箱、手机号、微信号、预留微信 id。
+- 已确认微信聊天记录同步为手动触发 skill，通过已安装的 `wechat-cli export` 导出 markdown，支持指定联系人、时间范围和数量上限。
+- 推荐方案为轻量结构化字段 + 独立微信聊天归档 skill：联系方式写候选人结构化字段，聊天正文写 `data/wechat-timelines/*.md`，SQLite 只保存归档索引。
+- 设计文档已写入 `docs/superpowers/specs/2026-05-12-talent-contact-and-wechat-timeline-design.md`；自检无占位符、矛盾、范围漂移和歧义。
