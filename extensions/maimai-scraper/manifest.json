@@ -12,6 +12,12 @@
     "default_popup": "popup.html",
     "default_title": "Maimai Scraper"
   },
+  "web_accessible_resources": [
+    {
+      "resources": ["automation.html", "automation.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "content_scripts": [
     {
       "matches": ["*://maimai.cn/*", "*://*.maimai.cn/*"],

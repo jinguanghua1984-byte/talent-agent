@@ -804,3 +804,22 @@
 - 全量测试：`python -m pytest tests scripts -q` -> **432 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` 的 `asyncio.get_event_loop()` deprecation。
 - Whitespace：`git diff --check` -> **PASS**。
 - 残余风险：本轮只解锁扩展上下文内的无人导出和消息桥；尚未用真实 Chrome CDP 打开 `chrome-extension://<id>/automation.html` 做端到端调用，也尚未跑真实脉脉小样本搜索。
+
+## 2026-05-12 Bridge Smoke 复核
+
+- [x] 补 `manifest.json` 的 `web_accessible_resources`，允许 CDP 直接打开 `automation.html` / `automation.js`。
+- [x] 用隔离浏览器验证 extension automation bridge：Chrome 147 未接受当前 `--load-extension` 参数挂载仓库扩展；Edge 隔离 profile 成功加载仓库扩展并完成 smoke。
+- [x] 记录 smoke 输出到 `data/output/raw/maimai-ai-infra-automation-bridge-smoke-2026-05-12.json`。
+- [x] 更新 `data/output/maimai-ai-infra-feasibility-2026-05-12.md`，将扩展自动化桥与无人导出门禁从未验证提升为隔离扩展上下文内通过。
+
+### Review
+
+- RED：`python -m pytest tests/test_maimai_scraper_extension.py::test_automation_page_exposes_detail_bridge_without_popup_dom -q` -> **1 failed**，原因是 `manifest.json` 未暴露 automation 资源。
+- GREEN：同一命令复跑 -> **1 passed**。
+- Edge CDP smoke：`clearAll`、`importDetailContacts`、`getDetailBatchStatus`、`getFullExportData`、`exportFullJson(saveAs:false)` 均通过；无活跃脉脉标签页时 `startDetailBatch` 返回受控错误 `请在脉脉列表页使用批量详情`。
+- 扩展契约：`python -m pytest tests/test_maimai_scraper_extension.py -q` -> **28 passed**。
+- AI Infra 聚焦：`python -m pytest tests/test_maimai_ai_infra_strategy.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py -q` -> **11 passed**。
+- Manifest JSON：解析通过。
+- 全量测试：`python -m pytest tests scripts -q` -> **432 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` 的 `asyncio.get_event_loop()` deprecation。
+- Whitespace：`git diff --check` -> **PASS**。
+- 仍未通过：真实已登录 Chrome 的标准 CDP 端点；当前 9222 返回 404，无法验证真实登录态会话健康和真实详情启动。

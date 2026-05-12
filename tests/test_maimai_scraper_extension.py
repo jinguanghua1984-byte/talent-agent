@@ -88,6 +88,7 @@ def test_full_export_supports_unattended_data_return():
 def test_automation_page_exposes_detail_bridge_without_popup_dom():
     automation_html = read_extension_file("automation.html")
     automation_js = read_extension_file("automation.js")
+    manifest = json.loads(read_extension_file("manifest.json"))
 
     assert "automation.js" in automation_html
     assert "function sendCommand" in automation_js
@@ -100,6 +101,14 @@ def test_automation_page_exposes_detail_bridge_without_popup_dom():
     ]:
         assert message_type in automation_js
     assert "document.getElementById(\"popup\"" not in automation_js
+    resources = manifest.get("web_accessible_resources", [])
+    resource_names = {
+        item
+        for group in resources
+        for item in group.get("resources", [])
+    }
+    assert "automation.html" in resource_names
+    assert "automation.js" in resource_names
 
 
 def test_detail_import_accepts_recommendation_shapes():
