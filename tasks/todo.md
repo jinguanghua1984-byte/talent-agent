@@ -560,7 +560,6 @@
 - 设计文档已写入 `docs/superpowers/specs/2026-05-12-talent-contact-and-wechat-timeline-design.md`；自检无占位符、矛盾、范围漂移和歧义。
 - 用户已审核设计并确认进入实施计划编写。
 - 实施计划已写入 `docs/superpowers/plans/2026-05-12-talent-contact-and-wechat-timeline.md`，等待选择 Subagent-Driven 或 Inline Execution。
-
 ---
 
 # 人才库联系方式 Task 1 实施（2026-05-12）
@@ -621,8 +620,102 @@
 
 ---
 
+# 脉脉 AI Infra 搜索计划自动化执行方案（2026-05-12）
+> 当前状态：已完成
+> 目标：盘点现有工具与实践经验，先验证核心可行性，再交付人工仅参与策略确认和最终审查的自动化方案。
+> 方案文档：`docs/superpowers/plans/2026-05-12-maimai-ai-infra-automated-search.md`
+
+## 任务清单
+
+- [x] Task 1：盘点仓库内工具、扩展、workflow、测试和既有输出记录
+- [x] Task 2：验证核心链路：采集数据导入、候选人检索/评分、详情目标生成、扩展契约检查
+- [x] Task 3：形成可直接落地的自动化执行方案，明确人工参与点、模块边界、数据流和验证步骤
+- [x] Task 4：写入正式设计文档并完成关键字、路径和格式校验
+
+## Review
+
+- 已盘点可复用工具：`extensions/maimai-scraper`、`scripts/talent_library.py import/detail`、`scripts/maimai_detail_import.py`、`scripts/talent_db.py`、`scripts/platform_match/search.py`、`scripts/platform_match/adapters/maimai.py` 以及相关测试。
+- 核心测试：`python -m pytest tests/test_talent_library_cli.py tests/test_maimai_detail_targets.py tests/test_maimai_detail_import.py tests/test_maimai_scraper_extension.py -q`，结果 **37 passed**。
+- 导入链路实跑：`talent_library import` 对 Downloads 下 11 个 `maimai-capture-2026-05-12*.json` dry-run，结果原始 2519、去重 1795、新建 0、合并 1795、待确认 0、失败 0。
+- 详情目标链路实跑：`talent_library detail --top10-file data/output/talent-match-2026-05-10-alibaba-cloud-ai-agent-pm-top10.json`，结果联系人 10、缺失 0。
+- 搜索请求可自动化证据：历史 capture 中 `/api/ent/v3/search/basic` 请求体包含 `search.query`、`positions`、`allcompanies`、`degrees`、`worktimes`、`age`、`query_relation` 和 `paginationParam`。
+- 本地策略检索 POC：`data/talent.db` 当前 2733 人、脉脉来源 2733、目标公司宽口径命中 1610、硬排除标题命中 309、宽口径策略交集 1306；说明需要新增规则评分器，不应只靠搜索命中。
+- 扩展语法检查：`node --check extensions/maimai-scraper/*.js` 等价逐文件检查通过。
+- 方案已写入 `docs/superpowers/plans/2026-05-12-maimai-ai-infra-automated-search.md`，覆盖人工门禁、数据流、评分规则、文件边界、实施任务和验收命令。
+- 文档校验：`rg -n "37 passed|2519|1795|maimai_ai_infra_search_runner|auto_apply_after_clean_dry_run|query_relation|人工参与点|熔断" docs/superpowers/plans/2026-05-12-maimai-ai-infra-automated-search.md` 命中关键内容。
+- `git diff --check -- docs/superpowers/plans/2026-05-12-maimai-ai-infra-automated-search.md tasks/todo.md ...` 通过，无 whitespace 报错。
+
+## 用户评审后的修订
+
+- 用户指出三个未充分验证点：Python CDP runner 可能触发反爬/登出、扩展导入/开始/导出依赖人工点击、`search_body_patch` 字段语义不明确。
+- 已补充 `tasks/lessons.md`：端到端无人执行不能用本地数据链路验证替代。
+- 调查结论：项目既有脉脉详情设计明确写过“CDP 抓取不可行，不作为方案基础”；Boss 渠道也有 `page.evaluate(fetch)` 触发强制登出的记录，因此 Python CDP 直接 fetch 不能作为默认主路径。
+- 扩展结论：`background.js` 已有 `clearAll/importDetailContacts/startDetailBatch/getDetailBatchStatus/exportFullJson` 等内部消息，逻辑可复用；但当前没有本地 Python 到扩展后台的稳定自动化桥，且 `exportFullJson` 使用 `saveAs: true`，不满足无人保存文件。
+- 字段结论：11 个历史搜索请求只验证了 `query/search_query`、分页、部分 `degrees/allcompanies/query_relation` 值存在；`positions/worktimes/age` 无有效样本，不能直接写入自动请求。
+- 方案修订：已在 `docs/superpowers/plans/2026-05-12-maimai-ai-infra-automated-search.md` 新增 Phase 0 可行性门禁，把 Python CDP 直接 fetch 降级为 POC，默认改为扩展/页面上下文模板重放或 UI 驱动 + 被动捕获；未验证字段只做本地过滤。
+
+# 脉脉 AI Infra 人才搜索计划文档整理（2026-05-12）
+> 当前状态：已完成
+> 目标文档：`docs/design-discussions/2026-05-12-maimai-ai-infra-talent-search-plan.md`
+
+## 任务清单
+
+- [x] Task 1：将脉脉手动搜索策略整理为结构化 Markdown 文档
+- [x] Task 2：覆盖公司优先级、关键词包、职位名称、搜索模板、筛选规则和执行节奏
+- [x] Task 3：校验文档已写入目标目录，且核心关键词可检索
+
+## Review
+
+- 已新增 `docs/design-discussions/2026-05-12-maimai-ai-infra-talent-search-plan.md`，覆盖搜索原则、字段填写规则、候选人分层、公司优先级、职位名称、关键词包、搜索模板、执行节奏、停止规则和记录字段。
+- 验证命令：`Get-Item docs\design-discussions\2026-05-12-maimai-ai-infra-talent-search-plan.md`，结果文件存在，大小 11910 字节。
+- 验证命令：`rg -n "AI Infra|DeepSeek|Token|vLLM|SGLang|Moonshot" docs\design-discussions\2026-05-12-maimai-ai-infra-talent-search-plan.md`，结果核心关键词均可检索。
+- 验证命令：`git diff --check -- docs\design-discussions\2026-05-12-maimai-ai-infra-talent-search-plan.md tasks\todo.md`，结果通过，无 whitespace 报错。
+
+# 合并 worktree talent-contact-wechat-timeline 到 main（2026-05-12）
+> 当前状态：已完成
+> 目标：将 `talent-contact-wechat-timeline` worktree 对应分支合并到 `main`，并保留当前 `main` 上已有未提交改动。
+
+## 任务清单
+
+- [x] Task 1：确认目标 worktree 与分支状态，核对分支干净且可合并。
+- [x] Task 2：保护当前 `main` 未提交改动，避免合并覆盖用户工作。
+- [x] Task 3：执行 `talent-contact-wechat-timeline` 到 `main` 的合并并处理冲突。
+- [x] Task 4：恢复合并前未提交改动，确认没有丢失。
+- [x] Task 5：运行项目验证命令并记录结果。
+
+## Review
+
+- 目标 worktree `D:/workspace/talent-agent/.worktrees/talent-contact-wechat-timeline` 干净，对应分支 `talent-contact-wechat-timeline`。
+- 合并方式：先 `git stash push --include-untracked -m "pre-merge-talent-contact-wechat-timeline-2026-05-12"` 保护当前 `main` 未提交改动，再 `git merge --ff-only talent-contact-wechat-timeline`；结果 fast-forward 到 `045d464`。
+- stash 恢复时 `tasks/todo.md` 发生追加段落冲突；已保留目标分支的联系方式/微信实现记录，以及合并前本地 AI Infra 文档记录和本次合并记录。
+- 验证命令：`python -m pytest tests scripts -q` -> **419 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` 的 `asyncio.get_event_loop()` deprecation。
+- 最终状态：`main` 当前领先 `origin/main` 8 个 commit；合并前的未提交改动已恢复为未暂存状态。
+
+---
+
+# 清理 worktree talent-contact-wechat-timeline（2026-05-12）
+> 当前状态：已完成
+> 目标：删除已合并的 `talent-contact-wechat-timeline` worktree 和本地分支。
+
+## 任务清单
+
+- [x] Task 1：确认目标 worktree 干净，且 `talent-contact-wechat-timeline` 与 `main` 指向同一提交。
+- [x] Task 2：删除 `.worktrees/talent-contact-wechat-timeline` worktree。
+- [x] Task 3：删除已合并的本地分支 `talent-contact-wechat-timeline`。
+- [x] Task 4：验证 worktree list、branch list 和当前工作区状态。
+
+## Review
+
+- 删除命令：`git worktree remove "D:/workspace/talent-agent/.worktrees/talent-contact-wechat-timeline"` -> 通过。
+- 删除分支：`git branch -d talent-contact-wechat-timeline` -> 删除本地分支 `045d464`。
+- 验证：`git worktree list --porcelain` 已不包含 `talent-contact-wechat-timeline`；`git branch --list talent-contact-wechat-timeline` 无输出；`Test-Path D:\workspace\talent-agent\.worktrees\talent-contact-wechat-timeline` -> `False`。
+- 当前状态：`main` 仍领先 `origin/main` 8 个 commit；已有未提交改动保持为未暂存状态。
+- Whitespace：`git diff --check` -> PASS。
+
+---
+
 # 脉脉 AI Infra 自动化搜索实施（2026-05-12）
-> 当前状态：实现与验证已完成，等待选择集成方式。
+> 当前状态：已实现并合并到 `main`。
 > 计划文件：`docs/superpowers/plans/2026-05-12-maimai-ai-infra-automated-search.md`
 > 工作区：`.worktrees/maimai-ai-infra-automated-search`
 
@@ -659,4 +752,5 @@
 - 验证：`python -m pytest tests scripts -q` -> **429 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` 的 `asyncio.get_event_loop()` deprecation。
 - 验证：`git diff --check` -> **PASS**。
 - Smoke：用主 checkout 的真实 `data/talent.db` 只读跑 `maimai_ai_infra_rank.py`，评估 2733 人，输出 A=281、B=556、C=817、淘汰=1079。
+- 合并：`maimai-ai-infra-automated-search` 已 fast-forward 合并到 `main`，commit `21dcc20`。
 - 残余风险：独立 review 子代理未在 5 分钟内返回结果，已关闭；本次没有取得额外审查 findings。真实脉脉页面执行仍受 Phase 0 门禁约束，当前交付是离线 dry-run/template、本地评分和报告闭环。

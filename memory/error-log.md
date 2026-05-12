@@ -5,3 +5,4 @@
 | 2026-05-11 | `maimai-scraper` 批量详情 42 条任务停在 30 且日志无说明 | safe 模式 `batchSize=30` 会批间休息 5-10 分钟，但旧日志只写 `batch_pause`，状态仍显示 running；429 也未纳入风控失败判断 | 持久化批间休息窗口并在 background/popup/悬浮球显示预计恢复时间；记录单个 job 失败接口状态；429 纳入风控/限流判断 |
 | 2026-05-11 | `maimai-scraper` 自动翻页抓取总数不对 | 真实脉脉搜索请求的分页字段在 `search.paginationParam.page/size`，旧重放逻辑只改顶层 `body.page/pageNum/pageNo`；模板也没有展示请求头或按响应持续回写总数 | 新增分页元信息提取和嵌套分页写入；回传并展示请求头名；每页响应后更新 `totalFromApi/pagesize/totalPages` |
 | 2026-05-11 | 批量详情状态进度更新但实时请求日志仍只显示导入日志 | `DetailBatch.run()` 发出的事件没有等待 `appendDetailBatchLog()` 完成，多个事件并发读写 `chrome.storage.local.detailBatchLogs` 时读-改-写互相覆盖 | 将 `emit()` 改为 async，并对所有批量详情事件 `await emit(...)`，串行化日志写入 |
+| 2026-05-12 | 生成中文 Markdown 报告时部分固定中文标题变成 `??` | PowerShell here-string 中直接写中文字面量，脚本内容在进入 Python 前已被终端编码破坏 | 改用 ASCII-only Python 脚本，固定中文文案使用 Unicode 转义，数据库/JSON 内容按 UTF-8 读写，并用 Python 读取回验标题 |
