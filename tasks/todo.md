@@ -823,3 +823,23 @@
 - 全量测试：`python -m pytest tests scripts -q` -> **432 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` 的 `asyncio.get_event_loop()` deprecation。
 - Whitespace：`git diff --check` -> **PASS**。
 - 仍未通过：真实已登录 Chrome 的标准 CDP 端点；当前 9222 返回 404，无法验证真实登录态会话健康和真实详情启动。
+---
+
+# 脉脉 AI Infra Phase 0 专用 CDP Profile 复核（2026-05-13）
+
+> 目标：在用户已登录的专用 Edge CDP profile 中，只做登录态健康检查与扩展 automation bridge smoke，不触发真实搜索、不绕过验证码、不执行批量抓取。
+
+## 任务清单
+
+- [x] Task 1：确认 `127.0.0.1:9888` CDP 页面列表、脉脉登录态与异常文本。
+- [x] Task 2：打开 `chrome-extension://mdhjdjdmkghiecabeolipnhlcdecgnpj/automation.html`，复跑 automation bridge smoke。
+- [x] Task 3：若存在已登录脉脉页面，只验证 `startDetailBatch` 前置链路的受控返回，不导入真实批量目标、不跑真实搜索。
+- [x] Task 4：更新 `data/output/maimai-ai-infra-feasibility-2026-05-12.md`，记录真机复核结论。
+- [x] Task 5：运行聚焦回归与 `git diff --check`。
+
+## Review
+
+- CDP 登录态健康：`127.0.0.1:9888` 可用，脉脉人才银行页与社区页均已登录且 `document.readyState=complete`，未见登录/验证码提示。
+- automation bridge 真机 smoke：通过，输出 `data/output/raw/maimai-ai-infra-automation-bridge-smoke-real-cdp-2026-05-13.json`；空队列 `startDetailBatch` 返回 `ok=true,totalJobs=0`，未触发真实详情请求；测试联系人已清理。
+- 过程记录：已更新 `data/output/maimai-ai-infra-feasibility-2026-05-12.md`。
+- 验证：`python -m pytest tests/test_maimai_scraper_extension.py -q` -> 28 passed；`python -m pytest tests/test_maimai_ai_infra_strategy.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py -q` -> 11 passed；`git diff --check` -> PASS。
