@@ -61,6 +61,29 @@ class TestCandidate:
             candidate.name = "李四"
 
 
+    def test_contact_fields_round_trip(self):
+        candidate = Candidate(
+            id=1,
+            name="张三",
+            email="zhangsan@example.com",
+            phone="13800138000",
+            wechat="zhangsan-wx",
+            wechat_id="wxid_zhangsan",
+        )
+
+        payload = candidate.to_dict()
+        restored = Candidate.from_dict(payload)
+
+        assert payload["email"] == "zhangsan@example.com"
+        assert payload["phone"] == "13800138000"
+        assert payload["wechat"] == "zhangsan-wx"
+        assert payload["wechat_id"] == "wxid_zhangsan"
+        assert restored.email == "zhangsan@example.com"
+        assert restored.phone == "13800138000"
+        assert restored.wechat == "zhangsan-wx"
+        assert restored.wechat_id == "wxid_zhangsan"
+
+
 class TestOtherModels:
     def test_create_record_models(self):
         detail = CandidateDetail(

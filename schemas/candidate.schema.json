@@ -66,6 +66,22 @@
       "enum": ["在职-看机会", "在职-不看", "离职-求职中", "离职-不求职"],
       "description": "Employment status"
     },
+    "email": {
+      "type": "string",
+      "description": "当前可用邮箱"
+    },
+    "phone": {
+      "type": "string",
+      "description": "当前可用手机号"
+    },
+    "wechat": {
+      "type": "string",
+      "description": "当前微信号或顾问可识别的微信名片标识"
+    },
+    "wechat_id": {
+      "type": "string",
+      "description": "预留微信内部 id 或稳定 id"
+    },
     "skill_tags": {
       "type": "array",
       "items": {

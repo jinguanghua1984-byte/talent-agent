@@ -60,6 +60,10 @@ _CANDIDATE_UPDATE_FIELDS = {
     "expected_city",
     "expected_title",
     "hunting_status",
+    "email",
+    "phone",
+    "wechat",
+    "wechat_id",
     "skill_tags",
     "data_level",
 }
@@ -101,6 +105,10 @@ class TalentDB:
                 expected_city TEXT,
                 expected_title TEXT,
                 hunting_status TEXT,
+                email TEXT,
+                phone TEXT,
+                wechat TEXT,
+                wechat_id TEXT,
                 skill_tags TEXT,
                 data_level TEXT DEFAULT 'lead',
                 overall_score REAL DEFAULT 0,
@@ -200,6 +208,7 @@ class TalentDB:
             CREATE INDEX IF NOT EXISTS idx_score_events_candidate ON score_events(candidate_id);
             """
         )
+        self._ensure_candidate_contact_columns()
         self._init_fts()
         self._init_vectors()
         self._conn.commit()
@@ -219,6 +228,12 @@ class TalentDB:
 
         self._sqlite_vec = sqlite_vec
         return True
+
+    def _ensure_candidate_contact_columns(self) -> None:
+        existing = _table_columns(self._conn, "candidates")
+        for column in ("email", "phone", "wechat", "wechat_id"):
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE candidates ADD COLUMN {column} TEXT")
 
     def _init_fts(self) -> None:
         self._conn.executescript(
@@ -573,9 +588,10 @@ class TalentDB:
                 name, gender, age, city, work_years, education,
                 current_company, current_title, expected_salary,
                 expected_city, expected_title, hunting_status,
+                email, phone, wechat, wechat_id,
                 skill_tags, data_level
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["name"],
@@ -590,6 +606,10 @@ class TalentDB:
                 data.get("expected_city"),
                 data.get("expected_title"),
                 data.get("hunting_status"),
+                data.get("email"),
+                data.get("phone"),
+                data.get("wechat"),
+                data.get("wechat_id"),
                 _json_dumps(skill_tags or []),
                 data_level,
             ),
@@ -624,6 +644,10 @@ class TalentDB:
             "expected_city",
             "expected_title",
             "hunting_status",
+            "email",
+            "phone",
+            "wechat",
+            "wechat_id",
         )
         for field in fill_only_fields:
             incoming = data.get(field)
@@ -1255,6 +1279,11 @@ def _json_dumps(value: Any) -> str | None:
     if value is None:
         return None
     return json.dumps(value, ensure_ascii=False)
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {str(row["name"]) for row in rows}
 
 
 def _json_loads(value: str | None, default: Any, field_name: str) -> Any:

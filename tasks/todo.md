@@ -560,3 +560,30 @@
 - 设计文档已写入 `docs/superpowers/specs/2026-05-12-talent-contact-and-wechat-timeline-design.md`；自检无占位符、矛盾、范围漂移和歧义。
 - 用户已审核设计并确认进入实施计划编写。
 - 实施计划已写入 `docs/superpowers/plans/2026-05-12-talent-contact-and-wechat-timeline.md`，等待选择 Subagent-Driven 或 Inline Execution。
+
+---
+
+# 人才库联系方式 Task 1 实施（2026-05-12）
+> 当前状态：实现与聚焦回归已完成，等待提交
+> 计划文件：`docs/superpowers/plans/2026-05-12-talent-contact-and-wechat-timeline.md`
+
+## 任务清单
+
+- [x] Task 1.1：补 Candidate 联系方式序列化失败测试，并确认 RED
+- [x] Task 1.2：实现 Candidate 的 `email`、`phone`、`wechat`、`wechat_id` 字段，并确认 GREEN
+- [x] Task 1.3：补 TalentDB 联系方式建库/更新失败测试，并确认 RED
+- [x] Task 1.4：实现 SQLite schema、迁移、插入、更新和合并填空逻辑，并确认 GREEN
+- [x] Task 1.5：补 batch ingest 联系方式填空不覆盖测试
+- [x] Task 1.6：更新 `schemas/candidate.schema.json`
+- [x] Task 1.7：运行聚焦回归并提交 `feat: add candidate contact fields`
+
+## Review
+
+- RED：`python -m pytest tests/test_talent_models.py::TestCandidate::test_contact_fields_round_trip -q` -> 1 failed，原因是 `Candidate.__init__()` 不接受 `email`。
+- GREEN：`python -m pytest tests/test_talent_models.py::TestCandidate::test_contact_fields_round_trip -q` -> 1 passed。
+- RED：`python -m pytest tests/test_talent_db.py::test_new_database_supports_candidate_contact_fields tests/test_talent_db.py::test_update_candidate_updates_contact_fields -q` -> 2 failed，原因是联系方式未入库且 update allowlist 拒绝新字段。
+- GREEN：`python -m pytest tests/test_talent_db.py::test_new_database_supports_candidate_contact_fields tests/test_talent_db.py::test_update_candidate_updates_contact_fields -q` -> 2 passed。
+- Fill-only：`python -m pytest tests/test_talent_db.py::test_batch_ingest_contact_fields_fill_empty_without_overwriting -q` -> 1 passed。
+- 聚焦回归：`python -m pytest tests/test_talent_models.py tests/test_talent_db.py::test_new_database_supports_candidate_contact_fields tests/test_talent_db.py::test_update_candidate_updates_contact_fields tests/test_talent_db.py::test_batch_ingest_contact_fields_fill_empty_without_overwriting -q` -> 20 passed。
+- Schema 校验：`python -c "import json, pathlib; json.loads(pathlib.Path('schemas/candidate.schema.json').read_text(encoding='utf-8')); print('schema json ok')"` -> schema json ok。
+- Commit：待提交。

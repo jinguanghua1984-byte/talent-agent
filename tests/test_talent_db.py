@@ -480,6 +480,48 @@ def test_same_platform_id_merges_even_when_identity_fields_change(db: TalentDB):
     assert sources[0].platform_id == "stable-source-id"
 
 
+def test_batch_ingest_contact_fields_fill_empty_without_overwriting(db: TalentDB):
+    candidate_id = db.ingest(
+        {
+            "name": "Contact Merge",
+            "current_company": "OldCo",
+            "current_title": "PM",
+            "city": "上海",
+            "education": "本科",
+            "platform_id": "contact-1",
+            "email": "old@example.com",
+        },
+        platform="maimai",
+    )
+
+    result = db.batch_ingest(
+        [
+            {
+                "name": "Contact Merge",
+                "current_company": "NewCo",
+                "current_title": "Director",
+                "city": "北京",
+                "education": "硕士",
+                "platform_id": "contact-1",
+                "email": "new@example.com",
+                "phone": "13800138000",
+                "wechat": "contact-wx",
+                "wechat_id": "wxid_contact",
+            }
+        ],
+        platform="maimai",
+    )
+
+    candidate = db.get(candidate_id)
+
+    assert result.merged == 1
+    assert candidate is not None
+    assert candidate.email == "old@example.com"
+    assert candidate.phone == "13800138000"
+    assert candidate.wechat == "contact-wx"
+    assert candidate.wechat_id == "wxid_contact"
+
+
 def test_missing_platform_id_exact_ingest_does_not_duplicate_source_profile(
     db: TalentDB,
 ):
@@ -1011,6 +1053,46 @@ def test_update_candidate_updates_allowed_fields_without_losing_sources(db_with_
     assert len(sources) == 1
     assert sources[0].platform == "maimai"
     assert sources[0].platform_id == "maimai-1"
+
+
+def test_new_database_supports_candidate_contact_fields(db: TalentDB):
+    candidate_id = db.ingest(
+        {
+            "name": "Contact Person",
+            "email": "contact@example.com",
+            "phone": "13900139000",
+            "wechat": "contact-wx",
+            "wechat_id": "wxid_contact",
+        },
+        platform="manual",
+    )
+
+    candidate = db.get(candidate_id)
+
+    assert candidate is not None
+    assert candidate.email == "contact@example.com"
+    assert candidate.phone == "13900139000"
+    assert candidate.wechat == "contact-wx"
+    assert candidate.wechat_id == "wxid_contact"
+
+
+def test_update_candidate_updates_contact_fields(db_with_candidate):
+    db, candidate_id = db_with_candidate
+
+    updated = db.update_candidate(
+        candidate_id,
+        {
+            "email": "alice@example.com",
+            "phone": "13800138000",
+            "wechat": "alice-wx",
+            "wechat_id": "wxid_alice",
+        },
+    )
+
+    assert updated.email == "alice@example.com"
+    assert updated.phone == "13800138000"
+    assert updated.wechat == "alice-wx"
+    assert updated.wechat_id == "wxid_alice"
 
 
 def test_update_candidate_rejects_unknown_fields(db_with_candidate):

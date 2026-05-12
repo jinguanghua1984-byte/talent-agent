@@ -49,6 +49,10 @@ class Candidate:
     expected_city: str | None = None
     expected_title: str | None = None
     hunting_status: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    wechat: str | None = None
+    wechat_id: str | None = None
     skill_tags: tuple[str, ...] = ()
     data_level: str = "lead"
     overall_score: float = 0.0
@@ -74,6 +78,10 @@ class Candidate:
             "expected_city": self.expected_city,
             "expected_title": self.expected_title,
             "hunting_status": self.hunting_status,
+            "email": self.email,
+            "phone": self.phone,
+            "wechat": self.wechat,
+            "wechat_id": self.wechat_id,
             "skill_tags": list(self.skill_tags),
             "data_level": self.data_level,
             "overall_score": self.overall_score,
@@ -98,6 +106,10 @@ class Candidate:
             expected_city=data.get("expected_city"),
             expected_title=data.get("expected_title"),
             hunting_status=data.get("hunting_status"),
+            email=data.get("email"),
+            phone=data.get("phone"),
+            wechat=data.get("wechat"),
+            wechat_id=data.get("wechat_id"),
             skill_tags=data.get("skill_tags"),
             data_level=data.get("data_level", "lead"),
             overall_score=data.get("overall_score", 0.0),
