@@ -618,3 +618,45 @@
 - CLI smoke：`python scripts/talent_library.py wechat-sync --help` -> PASS，输出包含 `--candidate-id`、`--chat-name`、`--start-time`、`--end-time`、`--out-dir`。
 - Whitespace：`git diff --check` -> PASS。
 - 已知限制：已用 monkeypatch 覆盖 `wechat-cli` 成功和失败路径；尚未在真实微信环境中执行手工导出验收，实际可用性仍取决于本机 `wechat-cli export`、微信数据库可访问性和用户提供的时间范围。
+
+---
+
+# 脉脉 AI Infra 自动化搜索实施（2026-05-12）
+> 当前状态：实现与验证已完成，等待选择集成方式。
+> 计划文件：`docs/superpowers/plans/2026-05-12-maimai-ai-infra-automated-search.md`
+> 工作区：`.worktrees/maimai-ai-infra-automated-search`
+
+## 任务清单
+
+- [x] Task 0：建立隔离 worktree，保护当前 `main` 上已有未提交改动。
+- [x] Task 1：新增策略配置与策略加载/校验测试。
+- [x] Task 2：新增搜索批次编译器与 CLI 输出。
+- [x] Task 3：新增搜索 runner 的请求体 patch、dry-run-template-only 和 POC 边界。
+- [x] Task 4：新增 run result -> import payload 与 dry-run/apply 流水线。
+- [x] Task 5：新增 AI Infra 本地评分与 shortlist 输出。
+- [x] Task 6：接入 Top 候选详情目标生成与扩展自动化桥可行性记录。
+- [x] Task 7：生成最终审查报告。
+- [x] Task 8：运行计划要求的聚焦回归、静态检查、`git diff --check` 和必要全量测试。
+
+## 执行约束
+
+- 第一版不得把 Python CDP 直接 `fetch` 作为默认主路径；未验证字段只做模板校验或本地过滤。
+- 真实网页自动化只能在 Phase 0 通过后开启；本次默认先交付 dry-run/template、本地评分和报告闭环。
+- 批量写库必须先 dry-run；只有策略显式授权并且 dry-run clean 时才允许 apply。
+
+## Review
+
+- 新增 `configs/maimai-ai-infra-search-strategy.json`，包含人工门禁、批次限额、公司梯队、别名、职位批次、关键词包、排除词和学校分组。
+- 新增 `scripts/maimai_ai_infra_search_plan.py`，可生成稳定批次 id、80/20 优先级搜索计划，且每个 batch 只含一个职位名称。
+- 新增 `scripts/maimai_ai_infra_search_runner.py`，默认只支持 `--dry-run-template-only`，只 patch 已验证字段：`query/search_query`、分页和 page size；真实 live search 在 Phase 0 通过前会直接拒绝。
+- 新增 `scripts/maimai_ai_infra_rank.py`，基于公司、职位、技术证据、学历和年限做 A/B/C/淘汰分层，不依赖 LLM。
+- 新增 `scripts/maimai_ai_infra_pipeline.py`，串联 plan、runner dry-run、contacts payload、import dry-run、shortlist、详情目标和最终审查报告；只有 `strategy_confirmed=true` 且 `auto_apply_after_clean_dry_run=true` 且 dry-run clean 时才 apply。
+- 新增测试：`tests/test_maimai_ai_infra_strategy.py`、`tests/test_maimai_ai_infra_runner.py`、`tests/test_maimai_ai_infra_pipeline.py`。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_strategy.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py -q` -> **10 passed**。
+- 验证：`python -m pytest tests/test_talent_library_cli.py tests/test_maimai_detail_targets.py tests/test_maimai_detail_import.py tests/test_maimai_scraper_extension.py -q` -> **40 passed**。
+- 验证：`node --check extensions/maimai-scraper/idb.js/detail_batch.js/background.js/content.js/inject.js/popup.js` -> **PASS**。
+- 验证：`python -m py_compile scripts/maimai_ai_infra_search_plan.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_rank.py scripts/maimai_ai_infra_pipeline.py` -> **PASS**。
+- 验证：`python -m pytest tests scripts -q` -> **429 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` 的 `asyncio.get_event_loop()` deprecation。
+- 验证：`git diff --check` -> **PASS**。
+- Smoke：用主 checkout 的真实 `data/talent.db` 只读跑 `maimai_ai_infra_rank.py`，评估 2733 人，输出 A=281、B=556、C=817、淘汰=1079。
+- 残余风险：独立 review 子代理未在 5 分钟内返回结果，已关闭；本次没有取得额外审查 findings。真实脉脉页面执行仍受 Phase 0 门禁约束，当前交付是离线 dry-run/template、本地评分和报告闭环。
