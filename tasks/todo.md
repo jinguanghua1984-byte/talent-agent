@@ -773,3 +773,34 @@
 - Python 编译：`python -m py_compile scripts/maimai_ai_infra_search_plan.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_rank.py scripts/maimai_ai_infra_pipeline.py` -> **PASS**。
 - 全量测试：`python -m pytest tests scripts -q` -> **430 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` 的 `asyncio.get_event_loop()` deprecation。
 - Whitespace：`git diff --check` -> **PASS**。
+
+---
+
+# maimai-scraper 无人导出与 Automation Bridge（2026-05-12）
+> 当前状态：已完成实现与验证
+> 目标：解锁 Phase 0 的扩展自动化桥与无人导出门禁，让本地 runner 后续可以在扩展上下文内调用批量详情链路，不依赖 popup DOM 或人工保存文件。
+
+## 任务清单
+
+- [x] Task 1：补扩展契约测试，覆盖 `getFullExportData`、`exportFullJson saveAs:false` 和 `automation.html/js`。
+- [x] Task 2：重构 `background.js` 完整导出数据组装，新增不下载的 JSON 返回通道。
+- [x] Task 3：新增 `automation.html` / `automation.js`，封装 `clearAll/importDetailContacts/startDetailBatch/getDetailBatchStatus/getFullExportData`。
+- [x] Task 4：运行扩展聚焦测试、JS 语法检查、AI Infra 回归、全量测试和 whitespace 检查。
+
+## 约束
+
+- 不改变真实脉脉请求执行策略；真实搜索仍必须等 Phase 0 小样本验证。
+- automation bridge 只暴露扩展内部消息编排，不绕过验证码、权限、风控或平台限制。
+- 导出默认 UI 行为保持人工下载；无人导出必须通过显式 `saveAs:false` 或 `getFullExportData`。
+
+## Review
+
+- RED：`python -m pytest tests/test_maimai_scraper_extension.py::test_full_export_supports_unattended_data_return tests/test_maimai_scraper_extension.py::test_automation_page_exposes_detail_bridge_without_popup_dom -q` -> **2 failed**，原因是缺少 `buildFullExportData/getFullExportData` 和 `automation.html`。
+- GREEN：同一命令复跑 -> **2 passed**。
+- 扩展契约：`python -m pytest tests/test_maimai_scraper_extension.py -q` -> **28 passed**。
+- JS 语法：`node --check extensions/maimai-scraper/idb.js detail_batch.js background.js content.js inject.js popup.js automation.js` -> **PASS**。
+- AI Infra 聚焦：`python -m pytest tests/test_maimai_ai_infra_strategy.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py -q` -> **11 passed**。
+- 既有导入/详情回归：`python -m pytest tests/test_talent_library_cli.py tests/test_maimai_detail_targets.py tests/test_maimai_detail_import.py tests/test_maimai_scraper_extension.py -q` -> **42 passed**。
+- 全量测试：`python -m pytest tests scripts -q` -> **432 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` 的 `asyncio.get_event_loop()` deprecation。
+- Whitespace：`git diff --check` -> **PASS**。
+- 残余风险：本轮只解锁扩展上下文内的无人导出和消息桥；尚未用真实 Chrome CDP 打开 `chrome-extension://<id>/automation.html` 做端到端调用，也尚未跑真实脉脉小样本搜索。

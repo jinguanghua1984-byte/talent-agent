@@ -120,6 +120,76 @@ function detailCircuitBreaker(detailBatchState) {
     { tripped: false, reason: null };
 }
 
+function buildFullExportData() {
+  return Promise.all([
+    PagerDB.getAll().catch(function () { return []; }),
+    DetailDB.getAllJobs().catch(function () { return []; }),
+    DetailDB.getAllDetails().catch(function () { return []; }),
+    new Promise(function (resolve) {
+      chrome.storage.local.get({
+        captured: [],
+        contacts: [],
+        details: [],
+        detailBatchState: null,
+        detailBatchLogs: [],
+        detailBatchRunToken: __detailBatchRunToken,
+      }, function (r) {
+        resolve(r);
+      });
+    }),
+  ]).then(function (parts) {
+    var pagerContacts = parts[0] || [];
+    var detailJobs = parts[1] || [];
+    var detailDbDetails = parts[2] || [];
+    var stored = parts[3] || { captured: [], contacts: [], details: [], detailBatchState: null };
+    var currentRunToken = stored.detailBatchRunToken || __detailBatchRunToken;
+    detailJobs = filterDetailBatchJobs(detailJobs, currentRunToken);
+    detailDbDetails = filterDetailBatchRecords(detailDbDetails, currentRunToken);
+    var storageDetails = filterDetailBatchRecords(stored.details || [], currentRunToken);
+    var detailLogs = filterDetailBatchRecords(stored.detailBatchLogs || [], currentRunToken);
+    var detailBatchState = detailBatchStateForToken(stored.detailBatchState, currentRunToken);
+    var statusCounts = detailStatusCounts(detailJobs, detailBatchState);
+    var contacts = dedupeByPreferredId((stored.contacts || []).concat(pagerContacts || []));
+    var details = dedupeByPreferredId(storageDetails.concat(detailDbDetails || []));
+    return {
+      exportTime: new Date().toISOString(),
+      metadata: {
+        export_type: "full",
+        detail_mode: (detailBatchState && detailBatchState.mode) || "batch_replay",
+        pager_contacts: pagerContacts.length,
+        captured_requests: (stored.captured || []).length,
+        captured_details: (stored.details || []).length,
+        total_jobs: detailJobs.length,
+        queued: statusCounts.queued,
+        running: statusCounts.running,
+        done: statusCounts.done,
+        failed: statusCounts.failed,
+        skipped: statusCounts.skipped,
+        circuit_breaker: detailCircuitBreaker(detailBatchState),
+      },
+      contacts: contacts,
+      totalContacts: contacts.length,
+      details: details,
+      totalDetails: details.length,
+      detailJobs: detailJobs,
+      detailBatchLogs: detailLogs,
+      requests: stored.captured || [],
+    };
+  });
+}
+
+function downloadJsonData(data, filename, saveAs, sendResponse) {
+  var jsonStr = JSON.stringify(data, null, 2);
+  var url = "data:application/json;charset=utf-8," + encodeURIComponent(jsonStr);
+  chrome.downloads.download({
+    url: url,
+    filename: filename || "maimai-export.json",
+    saveAs: saveAs !== false,
+  }, function (downloadId) {
+    sendResponse({ ok: true, downloadId: downloadId });
+  });
+}
+
 function activeMaimaiTab() {
   return new Promise(function (resolve, reject) {
     chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
@@ -568,71 +638,23 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
 
   // 导出完整 JSON 文件：合并 IndexedDB 分页联系人和 chrome.storage 捕获详情。
   if (msg.type === "exportFullJson") {
-    Promise.all([
-      PagerDB.getAll().catch(function () { return []; }),
-      DetailDB.getAllJobs().catch(function () { return []; }),
-      DetailDB.getAllDetails().catch(function () { return []; }),
-      new Promise(function (resolve) {
-        chrome.storage.local.get({
-          captured: [],
-          contacts: [],
-          details: [],
-          detailBatchState: null,
-          detailBatchLogs: [],
-          detailBatchRunToken: __detailBatchRunToken,
-        }, function (r) {
-          resolve(r);
-        });
-      }),
-    ]).then(function (parts) {
-      var pagerContacts = parts[0] || [];
-      var detailJobs = parts[1] || [];
-      var detailDbDetails = parts[2] || [];
-      var stored = parts[3] || { captured: [], contacts: [], details: [], detailBatchState: null };
-      var currentRunToken = stored.detailBatchRunToken || __detailBatchRunToken;
-      detailJobs = filterDetailBatchJobs(detailJobs, currentRunToken);
-      detailDbDetails = filterDetailBatchRecords(detailDbDetails, currentRunToken);
-      var storageDetails = filterDetailBatchRecords(stored.details || [], currentRunToken);
-      var detailLogs = filterDetailBatchRecords(stored.detailBatchLogs || [], currentRunToken);
-      var detailBatchState = detailBatchStateForToken(stored.detailBatchState, currentRunToken);
-      var statusCounts = detailStatusCounts(detailJobs, detailBatchState);
-      var contacts = dedupeByPreferredId((stored.contacts || []).concat(pagerContacts || []));
-      var details = dedupeByPreferredId(storageDetails.concat(detailDbDetails || []));
-      var data = {
-        exportTime: new Date().toISOString(),
-        metadata: {
-          export_type: "full",
-          detail_mode: (detailBatchState && detailBatchState.mode) || "batch_replay",
-          pager_contacts: pagerContacts.length,
-          captured_requests: (stored.captured || []).length,
-          captured_details: (stored.details || []).length,
-          total_jobs: detailJobs.length,
-          queued: statusCounts.queued,
-          running: statusCounts.running,
-          done: statusCounts.done,
-          failed: statusCounts.failed,
-          skipped: statusCounts.skipped,
-          circuit_breaker: detailCircuitBreaker(detailBatchState),
-        },
-        contacts: contacts,
-        totalContacts: contacts.length,
-        details: details,
-        totalDetails: details.length,
-        detailJobs: detailJobs,
-        detailBatchLogs: detailLogs,
-        requests: stored.captured || [],
-      };
-      var jsonStr = JSON.stringify(data, null, 2);
-      var url = "data:application/json;charset=utf-8," + encodeURIComponent(jsonStr);
-      chrome.downloads.download({
-        url: url,
-        filename: msg.filename || "maimai-export.json",
-        saveAs: true,
-      }, function (downloadId) {
-        sendResponse({ downloadId: downloadId });
-      });
+    buildFullExportData().then(function (data) {
+      if (msg.saveAs === false) {
+        sendResponse({ ok: true, data: data });
+        return;
+      }
+      downloadJsonData(data, msg.filename || "maimai-export.json", msg.saveAs, sendResponse);
     }).catch(function (err) {
-      sendResponse({ error: err.message });
+      sendResponse({ ok: false, error: err.message });
+    });
+    return true;
+  }
+
+  if (msg.type === "getFullExportData") {
+    buildFullExportData().then(function (data) {
+      sendResponse({ ok: true, data: data });
+    }).catch(function (err) {
+      sendResponse({ ok: false, error: err.message });
     });
     return true;
   }

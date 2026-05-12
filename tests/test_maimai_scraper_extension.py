@@ -76,6 +76,32 @@ def test_export_full_json_exports_detail_jobs():
     assert "detailJobs" in background
 
 
+def test_full_export_supports_unattended_data_return():
+    background = read_extension_file("background.js")
+
+    assert "function buildFullExportData" in background
+    assert "getFullExportData" in background
+    assert "msg.saveAs === false" in background
+    assert "sendResponse({ ok: true, data: data })" in background
+
+
+def test_automation_page_exposes_detail_bridge_without_popup_dom():
+    automation_html = read_extension_file("automation.html")
+    automation_js = read_extension_file("automation.js")
+
+    assert "automation.js" in automation_html
+    assert "function sendCommand" in automation_js
+    for message_type in [
+        "clearAll",
+        "importDetailContacts",
+        "startDetailBatch",
+        "getDetailBatchStatus",
+        "getFullExportData",
+    ]:
+        assert message_type in automation_js
+    assert "document.getElementById(\"popup\"" not in automation_js
+
+
 def test_detail_import_accepts_recommendation_shapes():
     background = read_extension_file("background.js")
     popup = read_extension_file("popup.js")
@@ -147,7 +173,7 @@ def test_background_summary_detail_exposes_popup_status_shape():
 
 def test_background_guards_stale_detail_batch_callbacks():
     background = read_extension_file("background.js")
-    export_block = background.split('if (msg.type === "exportFullJson")', 1)[1].split('if (msg.type === "exportJson")', 1)[0]
+    full_export_builder = background.split("function buildFullExportData()", 1)[1].split("function downloadJsonData", 1)[0]
 
     assert "__detailBatchRunToken" in background
     assert "__detailBatchRunToken++" in background
@@ -158,7 +184,9 @@ def test_background_guards_stale_detail_batch_callbacks():
     assert "filterDetailBatchRecords" in background
     assert "tagDetailBatchRecord(job, runToken)" in background
     assert "tagDetailBatchRecord(detail, runToken)" in background
-    assert "detailBatchRunToken: __detailBatchRunToken" in export_block
+    assert "detailBatchRunToken: __detailBatchRunToken" in full_export_builder
+    assert "filterDetailBatchJobs(detailJobs, currentRunToken)" in full_export_builder
+    assert "filterDetailBatchRecords(detailDbDetails, currentRunToken)" in full_export_builder
 
 
 def test_background_captures_detail_batch_token_before_start_prework():
