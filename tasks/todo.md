@@ -502,3 +502,34 @@
 - 数据策略：统一 capture envelope，`source_profiles.platform` 区分渠道，`platform_id` 只在同平台内精确匹配，跨渠道保持保守合并。
 - 机制差异：脉脉可主动重放接口；Boss 禁止主动 `fetch`、禁止自动详情页导航、禁止新开页面探测登录态。
 - 计划记录：用户已确认设计，实施计划已写入 `docs/superpowers/plans/2026-05-12-boss-channel-browser-extension.md`；自检无占位符，`git diff --check` 通过。
+
+---
+
+# talent-library import 导入 Downloads 脉脉捕获数据（2026-05-12）
+
+> 当前状态：已完成真实导入；import 路由写库收束到 `TalentDB.batch_ingest()`。
+
+## 任务清单
+
+- [x] Task 1：核对 `talent-library` import workflow、数据契约和安全规则。
+- [x] Task 2：核对 `scripts/talent_library.py` 是否已有 `import` 路由，以及现有 `detail` 路由边界。
+- [x] Task 3：核对 `TalentDB.batch_ingest()` 的输入契约、去重/合并行为和错误统计。
+- [x] Task 4：核对脉脉扩展 `contacts` JSON 到 batch ingest 输入的字段映射。
+- [x] Task 5：形成自洽执行方案：import 路由负责解析、去重、字段规范化、dry-run/report；写库只通过 `TalentDB.batch_ingest()`。
+- [x] Task 6：补 `talent-library import` CLI、dry-run/apply 报告和回归测试。
+- [x] Task 7：对 `C:\Users\Administrator\Downloads\maimai-capture-2026-05-12*.json` 执行 dry-run 与 apply。
+- [x] Task 8：写后验证重复数据不会再次新增，并运行全量测试。
+
+## Review
+
+- workflow 契约：`agents/workflows/talent-library/AGENT.md` 将 `import` 路由到 `TalentDB.batch_ingest()`；`references/scenarios.md` 要求批量写入前 dry-run，用户确认后再调用 batch ingest；`safety-rules.md` 要求批量写入先展示新增、修改、跳过、失败和待确认数量。
+- 当前代码缺口：`scripts/talent_library.py` 只有 `detail` 子命令，没有 `import` 子命令；不能把导入委托给 `talent_migrate.py` 作为正式入口。
+- `TalentDB.batch_ingest()` 契约：输入必须是已规范化候选人 dict；用 `platform + platform_id` 优先去重，再按姓名、公司、职位、城市、学历精确合并；返回 created/merged/pending/errors。
+- 脉脉映射注意点：`MaimaiAdapter.map_to_schema()` 会返回 `_source`、`status` 和列表型 `expected_city`，import 路由必须提升 `platform_id/profile_url`、转换 `status -> hunting_status`、把列表型文本字段转成可入库文本，并保留原始 contact 到 `raw_profile`。
+- 临时库试跑：未写真实 `data/talent.db`；11 个 Downloads 文件共 2519 条联系人，按脉脉 ID 去重后 1795 条；规范化后调用 `TalentDB.batch_ingest()` 得到 `created=1781, merged=14, pending=0, errors=0`。
+- 实现变更：`scripts/talent_library.py import` 支持 `--input/--input-dir/--pattern/--platform/--db/--out/--apply/--confirm`；默认 dry-run 使用临时 SQLite 副本，不写真实库；apply 必须带 `--confirm "确认导入人才"`。
+- 测试覆盖：`tests/test_talent_library_cli.py` 新增 dry-run 去重不写库、apply 字段规范化与来源写入测试。
+- 真实导入：dry-run 报告 `data/output/talent-import-2026-05-12-downloads-maimai-dry-run.md`；apply 报告 `data/output/talent-import-2026-05-12-downloads-maimai-apply.md`。
+- 写库结果：原始联系人 2519，跨文件重复 724，去重后 1795；写入 `created=1781, merged=14, pending=0, errors=0`；`data/talent.db` 候选人总数从 952 增至 2733。
+- 写后验证：脉脉 `platform_id` 重复数为 0；同一批数据写后 dry-run 为 `created=0, merged=1795, pending=0, errors=0`，符合今日重复只导入一次。
+- 验证命令：`python -m pytest tests/test_talent_library_cli.py -q` -> 5 passed；`python -m pytest tests/test_talent_library_cli.py tests/test_talent_db.py::test_batch_ingest_mixed_created_merged_errors tests/test_talent_db.py::test_same_platform_id_merges_even_when_identity_fields_change -q` -> 7 passed；`python -m pytest tests/test_talent_library_cli.py tests/test_maimai_detail_targets.py tests/test_talent_migrate.py tests/test_talent_library_workflow.py -q` -> 28 passed；`python -m pytest tests scripts -q` -> 405 passed, 1 warning。
