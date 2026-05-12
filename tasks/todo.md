@@ -479,3 +479,24 @@
 - 最终代码复审：已修复 reset 旧异步写回、reset 后 contacts 残留、悬浮球实时轮询、popup `total_jobs` 实时事件兼容、导出 token 过滤缺口；最终复审 **无 Critical / Important / Minor**。
 - 最终复验：`python -m pytest tests/test_maimai_scraper_extension.py -q` **20 passed**；`python -m pytest tests scripts -q` **397 passed, 1 warning**；`git diff --check` 无 whitespace error（仅提示 `scripts/test_maimai.py` CRLF 将被 Git 转 LF）。
 - 真实脉脉页面手工验收待执行：重载扩展后验证悬浮球三态、3 联系人导入只生成 3 个 jobs、实时日志、导出 JSON 和 reset。
+
+# Boss 渠道浏览器插件扩展设计（2026-05-12）
+> 当前状态：设计文档已完成，待用户评审
+> 设计文档：`docs/superpowers/specs/2026-05-12-boss-channel-browser-extension-design.md`
+
+## 任务清单
+
+- [x] Task 1：梳理现有脉脉插件、导入链路、Boss adapter、Boss 机制文档和数据模型
+- [x] Task 2：确认 Boss 第一版产品边界为“列表闭环 + 详情被动捕获实验区”
+- [x] Task 3：比较扩展现有插件、新建 Boss 插件、只做 Python/CDP 三种方案
+- [x] Task 4：形成推荐设计：现有插件渠道化，Boss 只做被动监听和低风险页面辅助
+- [x] Task 5：写入正式设计文档并完成自检
+- [ ] Task 6：用户评审设计文档
+- [ ] Task 7：用户确认后进入实施计划编写
+
+## Review
+
+- 关键决策：第一版不承诺 Boss 批量详情主动抓取；Boss 列表数据入库为 `partial`，详情只做被动捕获实验区。
+- 插件策略：新建 `extensions/talent-channel-scraper`，从现有 `maimai-scraper` 迁移公共能力，过渡期保留旧插件目录以降低回归风险。
+- 数据策略：统一 capture envelope，`source_profiles.platform` 区分渠道，`platform_id` 只在同平台内精确匹配，跨渠道保持保守合并。
+- 机制差异：脉脉可主动重放接口；Boss 禁止主动 `fetch`、禁止自动详情页导航、禁止新开页面探测登录态。
