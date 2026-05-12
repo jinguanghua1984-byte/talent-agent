@@ -32,6 +32,7 @@ data/screens/*.json
 data/search-strategies/instances/*.md
 data/output/*.md
 data/output/*.json
+data/output/raw/
 data/rules/preferences.json
 data/token-tracker/*.jsonl
 data/*.db
