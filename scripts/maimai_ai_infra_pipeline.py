@@ -14,7 +14,7 @@ if __package__ in {None, ""}:
 
 from scripts.maimai_ai_infra_rank import rank_candidates
 from scripts.maimai_ai_infra_search_plan import build_plan, load_strategy
-from scripts.maimai_ai_infra_search_runner import build_dry_run_result
+from scripts.maimai_ai_infra_search_runner import DEFAULT_TEMPLATE, build_dry_run_result
 from scripts.maimai_detail_targets import export_targets
 from scripts.talent_library import (
     _build_import_candidates,
@@ -166,7 +166,13 @@ def _clean_dry_run(result: dict[str, Any], metadata: dict[str, Any]) -> bool:
     )
 
 
-def run_pipeline(config: Path, db_path: Path, out_dir: Path, dry_run_template_only: bool = True) -> dict[str, Path]:
+def run_pipeline(
+    config: Path,
+    db_path: Path,
+    out_dir: Path,
+    dry_run_template_only: bool = True,
+    template_path: Path | None = None,
+) -> dict[str, Path]:
     today = date.today().isoformat()
     raw_dir = out_dir / "raw"
     strategy = load_strategy(config)
@@ -183,7 +189,8 @@ def run_pipeline(config: Path, db_path: Path, out_dir: Path, dry_run_template_on
     _write_json(plan_path, plan)
     if not dry_run_template_only:
         raise RuntimeError("live search requires Phase 0 verification and is disabled by default")
-    run_result = build_dry_run_result(plan, {"search": {"query": "", "search_query": "", "paginationParam": {"page": 1, "size": 30}, "page": 0, "size": 30}})
+    template = _load_json(template_path) if template_path else DEFAULT_TEMPLATE
+    run_result = build_dry_run_result(plan, template)
     _write_json(run_path, run_result)
     extract_contacts_payload(run_path, contacts_path)
 
@@ -262,11 +269,18 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--config", default="configs/maimai-ai-infra-search-strategy.json")
     run_parser.add_argument("--db", default="data/talent.db")
     run_parser.add_argument("--out-dir", default="data/output")
+    run_parser.add_argument("--template")
     run_parser.add_argument("--live", action="store_true")
     args = parser.parse_args(argv)
 
     if args.command == "run":
-        run_pipeline(Path(args.config), Path(args.db), Path(args.out_dir), dry_run_template_only=not args.live)
+        run_pipeline(
+            Path(args.config),
+            Path(args.db),
+            Path(args.out_dir),
+            dry_run_template_only=not args.live,
+            template_path=Path(args.template) if args.template else None,
+        )
         return 0
     return 1
 

@@ -754,3 +754,22 @@
 - Smoke：用主 checkout 的真实 `data/talent.db` 只读跑 `maimai_ai_infra_rank.py`，评估 2733 人，输出 A=281、B=556、C=817、淘汰=1079。
 - 合并：`maimai-ai-infra-automated-search` 已 fast-forward 合并到 `main`，commit `21dcc20`。
 - 残余风险：独立 review 子代理未在 5 分钟内返回结果，已关闭；本次没有取得额外审查 findings。真实脉脉页面执行仍受 Phase 0 门禁约束，当前交付是离线 dry-run/template、本地评分和报告闭环。
+
+## 2026-05-12 复核补强
+
+- [x] 补齐 Phase 0 请求模板证据：从 `data/output/raw/maimai-ai-infra-field-calibration-2026-05-12.json` 提取 `sample_request.body`，生成 `data/output/raw/maimai-ai-infra-search-template-2026-05-12.json`，并用 `--template` 重新跑 runner/pipeline。
+- [x] 增强 `run_pipeline()`：支持 `template_path` / CLI `--template`，避免流水线只使用默认空模板。
+- [x] 增强测试覆盖：新增 `run_pipeline()` 主链路测试，断言真实模板形状中的 `sid/sessionid/highlight_exp/data_version` 被保留；补充 runner 对 `search` 内会话字段的保留断言；补充二梯队技术岗、泛岗位强技术证据评分 fixture。
+- [x] 更新过程记录：`data/output/maimai-ai-infra-feasibility-2026-05-12.md` 已记录真实模板 dry-run 证据和保守结论。
+
+### Review
+
+- RED：`python -m pytest tests/test_maimai_ai_infra_pipeline.py::test_run_pipeline_uses_real_request_template_and_writes_outputs tests/test_maimai_ai_infra_strategy.py::test_ai_infra_score_grades_common_candidate_shapes tests/test_maimai_ai_infra_runner.py::test_patch_search_body_preserves_session_fields_and_patches_verified_fields -q` -> 1 failed, 2 passed，失败原因为 `run_pipeline()` 尚不支持 `template_path`。
+- GREEN：同一命令复跑 -> **3 passed**。
+- 聚焦验证：`python -m pytest tests/test_maimai_ai_infra_strategy.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py -q` -> **11 passed**。
+- 计划 Phase 0 聚焦：`python -m pytest tests/test_maimai_ai_infra_strategy.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_scraper_extension.py -q` -> **37 passed**。
+- 既有链路回归：`python -m pytest tests/test_talent_library_cli.py tests/test_maimai_detail_targets.py tests/test_maimai_detail_import.py tests/test_maimai_scraper_extension.py -q` -> **40 passed**。
+- JS 语法：`node --check extensions/maimai-scraper/idb.js/detail_batch.js/background.js/content.js/inject.js/popup.js` -> **PASS**。
+- Python 编译：`python -m py_compile scripts/maimai_ai_infra_search_plan.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_rank.py scripts/maimai_ai_infra_pipeline.py` -> **PASS**。
+- 全量测试：`python -m pytest tests scripts -q` -> **430 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` 的 `asyncio.get_event_loop()` deprecation。
+- Whitespace：`git diff --check` -> **PASS**。

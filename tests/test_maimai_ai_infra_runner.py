@@ -22,6 +22,10 @@ def _template_body():
             "paginationParam": {"page": 1, "size": 30},
             "page": 0,
             "size": 30,
+            "sid": "sid-search",
+            "sessionid": "session-search",
+            "data_version": "4.1",
+            "highlight_exp": 1,
         },
     }
 
@@ -53,6 +57,10 @@ def test_patch_search_body_preserves_session_fields_and_patches_verified_fields(
     assert patched["search"]["positions"] == ""
     assert patched["search"]["allcompanies"] == "一线互联网公司"
     assert patched["search"]["degrees"] == "2,3"
+    assert patched["search"]["sid"] == "sid-search"
+    assert patched["search"]["sessionid"] == "session-search"
+    assert patched["search"]["data_version"] == "4.1"
+    assert patched["search"]["highlight_exp"] == 1
 
 
 def test_patch_search_body_rejects_incompatible_template():

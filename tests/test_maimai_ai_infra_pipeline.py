@@ -4,8 +4,10 @@ from pathlib import Path
 from scripts.maimai_ai_infra_pipeline import (
     build_final_report,
     extract_contacts_payload,
+    run_pipeline,
     select_detail_candidate_ids,
 )
+from scripts.talent_db import TalentDB
 
 
 def test_extract_contacts_payload_from_runner_result(tmp_path: Path):
@@ -74,3 +76,70 @@ def test_build_final_report_contains_required_sections(tmp_path: Path):
     assert "详情补全结果" in text
     assert "异常批次" in text
     assert "下一轮建议" in text
+
+
+def test_run_pipeline_uses_real_request_template_and_writes_outputs(tmp_path: Path):
+    db_path = tmp_path / "talent.db"
+    out_dir = tmp_path / "output"
+    template_path = tmp_path / "template.json"
+    db = TalentDB(db_path)
+    try:
+        db.ingest(
+            {
+                "name": "Alice",
+                "current_company": "字节跳动",
+                "current_title": "大模型训练框架工程师",
+                "education": "硕士",
+                "work_years": 5,
+                "platform_id": "166812124",
+                "profile_url": (
+                    "https://maimai.cn/profile/detail?dstu=166812124&"
+                    "trackable_token=token-alice"
+                ),
+                "skill_tags": ["GPU", "vLLM", "分布式训练"],
+            },
+            platform="maimai",
+        )
+    finally:
+        db.close()
+    template_path.write_text(
+        json.dumps(
+            {
+                "search": {
+                    "query": "old",
+                    "search_query": "old",
+                    "paginationParam": {"page": 1, "size": 30},
+                    "page": 0,
+                    "size": 30,
+                    "sid": "real-sid",
+                    "sessionid": "real-session",
+                    "highlight_exp": 1,
+                    "data_version": "4.1",
+                    "allcompanies": "一线互联网公司",
+                    "positions": "",
+                    "degrees": "2,3",
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    outputs = run_pipeline(
+        Path("configs/maimai-ai-infra-search-strategy.json"),
+        db_path,
+        out_dir,
+        template_path=template_path,
+    )
+
+    run = json.loads(outputs["run"].read_text(encoding="utf-8-sig"))
+    patched_search = run["batches"][0]["patched_pages"][0]["body"]["search"]
+    assert patched_search["sid"] == "real-sid"
+    assert patched_search["sessionid"] == "real-session"
+    assert patched_search["highlight_exp"] == 1
+    assert patched_search["data_version"] == "4.1"
+    assert patched_search["query"] != "old"
+    assert outputs["contacts"].exists()
+    assert outputs["shortlist_json"].exists()
+    assert outputs["detail_targets"].exists()
+    assert outputs["final_report"].exists()

@@ -120,3 +120,55 @@ def test_ai_infra_score_grades_common_candidate_shapes():
     )
     assert weak_company["grade"] == "淘汰"
     assert "company_not_targeted" in weak_company["risk_flags"]
+
+    tier2_technical = score_candidate(
+        Candidate(
+            id=5,
+            name="Eve",
+            current_company="DeepSeek",
+            current_title="推理引擎工程师",
+            education="本科",
+            work_years=4,
+            skill_tags=("推理", "CUDA", "vLLM", "TensorRT"),
+        ),
+        strategy,
+        CandidateDetail(
+            candidate_id=5,
+            work_experience=[
+                {
+                    "company": "DeepSeek",
+                    "title": "推理引擎工程师",
+                    "description": "负责推理框架、算子优化、CUDA 加速和 vLLM 服务化",
+                }
+            ],
+        ),
+    )
+    assert tier2_technical["grade"] in {"A", "B"}
+    assert tier2_technical["tier"] == "tier2_priority"
+    assert tier2_technical["evidence"]["title_level"] == "precision"
+
+    generic_with_strong_tech = score_candidate(
+        Candidate(
+            id=6,
+            name="Frank",
+            current_company="字节跳动",
+            current_title="后端开发工程师",
+            education="本科",
+            work_years=6,
+            skill_tags=("分布式", "GPU", "SGLang", "推理平台"),
+        ),
+        strategy,
+        CandidateDetail(
+            candidate_id=6,
+            work_experience=[
+                {
+                    "company": "字节跳动",
+                    "title": "后端开发工程师",
+                    "description": "建设大模型推理平台、GPU 调度、SGLang 和 Token 调度链路",
+                }
+            ],
+        ),
+    )
+    assert generic_with_strong_tech["grade"] == "B"
+    assert generic_with_strong_tech["evidence"]["title_level"] == "generic"
+    assert "company_not_targeted" not in generic_with_strong_tech["risk_flags"]
