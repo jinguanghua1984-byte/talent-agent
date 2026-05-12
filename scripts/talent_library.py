@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +24,11 @@ from scripts.talent_models import IngestResult
 
 
 IMPORT_CONFIRM_TEXT = "确认导入人才"
+WECHAT_SOURCE_TOOL = "wechat-cli"
+WECHAT_MESSAGE_HEADING = re.compile(
+    r"^##\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}",
+    re.MULTILINE,
+)
 
 
 def _default_detail_targets_path() -> Path:
@@ -287,6 +295,80 @@ def _write_import_outputs(path: Path, summary: dict[str, Any]) -> None:
     )
 
 
+def _safe_filename_part(value: str) -> str:
+    cleaned = re.sub(r"[^\w\u4e00-\u9fff.-]+", "-", value, flags=re.UNICODE)
+    return cleaned.strip("-._") or "wechat"
+
+
+def _default_wechat_timeline_dir() -> Path:
+    return Path("data") / "wechat-timelines"
+
+
+def _wechat_cli_path() -> str:
+    executable = shutil.which("wechat-cli.exe") or shutil.which("wechat-cli")
+    if executable is None:
+        raise RuntimeError("wechat-cli is not available in PATH")
+    return executable
+
+
+def _count_wechat_markdown_messages(markdown: str) -> int | None:
+    count = len(WECHAT_MESSAGE_HEADING.findall(markdown))
+    return count if count > 0 else None
+
+
+def _build_wechat_export_command(
+    chat_name: str,
+    output_path: Path,
+    start_time: str,
+    end_time: str,
+    limit: int | None,
+) -> list[str]:
+    command = [
+        _wechat_cli_path(),
+        "export",
+        chat_name,
+        "--format",
+        "markdown",
+        "--output",
+        str(output_path),
+        "--start-time",
+        start_time,
+        "--end-time",
+        end_time,
+    ]
+    if limit is not None:
+        command.extend(["--limit", str(limit)])
+    return command
+
+
+def _render_wechat_timeline(
+    candidate_id: int,
+    candidate_name: str,
+    chat_name: str,
+    chat_identifier: str | None,
+    start_time: str,
+    end_time: str,
+    export_command: list[str],
+    body: str,
+) -> str:
+    synced_at = datetime.now().isoformat(timespec="seconds")
+    lines = [
+        "---",
+        f"candidate_id: {candidate_id}",
+        f"candidate_name: {candidate_name}",
+        f"chat_name: {chat_name}",
+        f"chat_identifier: {chat_identifier or ''}",
+        f"start_time: {start_time}",
+        f"end_time: {end_time}",
+        f"source_tool: {WECHAT_SOURCE_TOOL}",
+        f"synced_at: {synced_at}",
+        "export_command:",
+    ]
+    lines.extend(f"  - {part}" for part in export_command)
+    lines.extend(["---", "", body.rstrip(), ""])
+    return "\n".join(lines)
+
+
 def cmd_import(args: argparse.Namespace) -> int:
     if args.apply and args.confirm != IMPORT_CONFIRM_TEXT:
         raise ValueError(f"apply requires confirm text: {IMPORT_CONFIRM_TEXT}")
@@ -327,6 +409,104 @@ def cmd_import(args: argparse.Namespace) -> int:
             pending=summary["result"]["pending"],
             errors=summary["result"]["errors"],
             path=out_path,
+        )
+    )
+    return 0
+
+
+def cmd_wechat_sync(args: argparse.Namespace) -> int:
+    if not args.start_time or not args.end_time:
+        raise ValueError("wechat-sync requires both --start-time and --end-time")
+
+    db = TalentDB(args.db)
+    try:
+        candidate = db.get(args.candidate_id)
+        if candidate is None:
+            raise ValueError(f"Candidate does not exist: {args.candidate_id}")
+
+        contact_patch = {
+            key: value
+            for key, value in {
+                "email": args.email,
+                "phone": args.phone,
+                "wechat": args.wechat,
+                "wechat_id": args.wechat_id,
+            }.items()
+            if value is not None
+        }
+        if contact_patch:
+            candidate = db.update_candidate(args.candidate_id, contact_patch)
+
+        out_dir = Path(args.out_dir) if args.out_dir else _default_wechat_timeline_dir()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        filename = (
+            f"{args.candidate_id}-"
+            f"{_safe_filename_part(candidate.name)}-"
+            f"{stamp}.md"
+        )
+        final_path = out_dir / filename
+        temp_path = out_dir / f".{filename}.export.tmp"
+        command = _build_wechat_export_command(
+            args.chat_name,
+            temp_path,
+            args.start_time,
+            args.end_time,
+            args.limit,
+        )
+        try:
+            subprocess.run(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(
+                "wechat-cli export failed: " + (exc.stderr or exc.stdout or str(exc))
+            ) from exc
+
+        body = temp_path.read_text(encoding="utf-8-sig")
+        message_count = _count_wechat_markdown_messages(body)
+        final_path.write_text(
+            _render_wechat_timeline(
+                args.candidate_id,
+                candidate.name,
+                args.chat_name,
+                args.chat_identifier,
+                args.start_time,
+                args.end_time,
+                command,
+                body,
+            ),
+            encoding="utf-8",
+        )
+        temp_path.unlink(missing_ok=True)
+
+        timeline = db.add_wechat_timeline(
+            args.candidate_id,
+            {
+                "chat_name": args.chat_name,
+                "chat_identifier": args.chat_identifier,
+                "start_time": args.start_time,
+                "end_time": args.end_time,
+                "message_count": message_count,
+                "markdown_path": str(final_path),
+                "source_tool": WECHAT_SOURCE_TOOL,
+            },
+        )
+    finally:
+        db.close()
+
+    print(
+        "微信聊天同步完成：候选人 {candidate_id}，聊天 {chat_name}，消息 {message_count}，"
+        "归档 {path}，索引 {timeline_id}".format(
+            candidate_id=args.candidate_id,
+            chat_name=args.chat_name,
+            message_count=message_count if message_count is not None else "未知",
+            path=final_path,
+            timeline_id=timeline.id,
         )
     )
     return 0
@@ -374,6 +554,21 @@ def build_parser() -> argparse.ArgumentParser:
     import_parser.add_argument("--apply", action="store_true", help="确认后写入真实人才库")
     import_parser.add_argument("--confirm", default="", help=f"写库确认语：{IMPORT_CONFIRM_TEXT}")
     import_parser.set_defaults(func=cmd_import)
+
+    wechat_sync = subparsers.add_parser("wechat-sync", help="手动同步微信聊天记录")
+    wechat_sync.add_argument("--candidate-id", type=int, required=True, help="候选人 ID")
+    wechat_sync.add_argument("--chat-name", required=True, help="微信联系人名或群名")
+    wechat_sync.add_argument("--chat-identifier", help="可选微信稳定标识")
+    wechat_sync.add_argument("--start-time", required=True, help="起始时间 YYYY-MM-DD [HH:MM[:SS]]")
+    wechat_sync.add_argument("--end-time", required=True, help="结束时间 YYYY-MM-DD [HH:MM[:SS]]")
+    wechat_sync.add_argument("--limit", type=int, help="最大导出消息数")
+    wechat_sync.add_argument("--db", default="data/talent.db", help="人才库路径，默认 data/talent.db")
+    wechat_sync.add_argument("--out-dir", help="聊天 markdown 归档目录")
+    wechat_sync.add_argument("--email", help="同步前更新候选人邮箱")
+    wechat_sync.add_argument("--phone", help="同步前更新候选人手机号")
+    wechat_sync.add_argument("--wechat", help="同步前更新候选人微信号")
+    wechat_sync.add_argument("--wechat-id", help="同步前更新候选人微信 id")
+    wechat_sync.set_defaults(func=cmd_wechat_sync)
 
     detail = subparsers.add_parser("detail", help="详情补全入口")
     source = detail.add_mutually_exclusive_group(required=True)

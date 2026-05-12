@@ -1,5 +1,8 @@
 import json
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from scripts.talent_db import TalentDB
 from scripts.talent_library import main
@@ -177,5 +180,140 @@ def test_import_entry_apply_uses_batch_ingest_with_normalized_maimai_contacts(tm
         assert sources[0].platform == "maimai"
         assert sources[0].platform_id == "166812124"
         assert sources[0].raw_profile["maimai_contact"]["trackable_token"] == "token-alice"
+    finally:
+        db.close()
+
+
+def test_wechat_sync_exports_markdown_and_indexes_timeline(
+    tmp_path: Path, monkeypatch
+):
+    db_path = tmp_path / "talent.db"
+    output_dir = tmp_path / "wechat-timelines"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest({"name": "Alice Chen"}, platform="manual")
+    finally:
+        db.close()
+
+    def fake_which(name):
+        if name in {"wechat-cli.exe", "wechat-cli"}:
+            return "wechat-cli.exe"
+        return None
+
+    def fake_run(command, check, capture_output, text, encoding):
+        output_index = command.index("--output") + 1
+        Path(command[output_index]).write_text(
+            "## 2026-05-01 10:00:00 Alice\n你好\n\n"
+            "## 2026-05-01 10:01:00 顾问\n你好，方便聊聊吗？\n",
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("scripts.talent_library.shutil.which", fake_which)
+    monkeypatch.setattr("scripts.talent_library.subprocess.run", fake_run)
+
+    assert main(
+        [
+            "wechat-sync",
+            "--candidate-id",
+            str(candidate_id),
+            "--chat-name",
+            "Alice微信",
+            "--start-time",
+            "2026-05-01",
+            "--end-time",
+            "2026-05-12",
+            "--db",
+            str(db_path),
+            "--out-dir",
+            str(output_dir),
+            "--wechat",
+            "alice-wx",
+        ]
+    ) == 0
+
+    files = list(output_dir.glob("*.md"))
+    assert len(files) == 1
+    text = files[0].read_text(encoding="utf-8")
+    assert "candidate_id: " + str(candidate_id) in text
+    assert "chat_name: Alice微信" in text
+    assert "## 2026-05-01 10:00:00 Alice" in text
+
+    db = TalentDB(db_path)
+    try:
+        candidate = db.get(candidate_id)
+        timelines = db.get_wechat_timelines(candidate_id)
+    finally:
+        db.close()
+
+    assert candidate is not None
+    assert candidate.wechat == "alice-wx"
+    assert len(timelines) == 1
+    assert timelines[0].chat_name == "Alice微信"
+    assert timelines[0].message_count == 2
+
+
+def test_wechat_sync_requires_existing_candidate(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("scripts.talent_library.shutil.which", lambda name: "wechat-cli.exe")
+
+    with pytest.raises(ValueError, match="Candidate does not exist"):
+        main(
+            [
+                "wechat-sync",
+                "--candidate-id",
+                "999",
+                "--chat-name",
+                "张三",
+                "--start-time",
+                "2026-05-01",
+                "--end-time",
+                "2026-05-12",
+                "--db",
+                str(tmp_path / "talent.db"),
+            ]
+        )
+
+
+def test_wechat_sync_reports_cli_failure(tmp_path: Path, monkeypatch):
+    db_path = tmp_path / "talent.db"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest({"name": "Alice Chen"}, platform="manual")
+    finally:
+        db.close()
+
+    def fake_run(command, check, capture_output, text, encoding):
+        raise subprocess.CalledProcessError(
+            1,
+            command,
+            output="",
+            stderr="wechat database locked",
+        )
+
+    monkeypatch.setattr("scripts.talent_library.shutil.which", lambda name: "wechat-cli.exe")
+    monkeypatch.setattr("scripts.talent_library.subprocess.run", fake_run)
+
+    with pytest.raises(RuntimeError, match="wechat-cli export failed"):
+        main(
+            [
+                "wechat-sync",
+                "--candidate-id",
+                str(candidate_id),
+                "--chat-name",
+                "Alice微信",
+                "--start-time",
+                "2026-05-01",
+                "--end-time",
+                "2026-05-12",
+                "--db",
+                str(db_path),
+                "--out-dir",
+                str(tmp_path / "wechat-timelines"),
+            ]
+        )
+
+    db = TalentDB(db_path)
+    try:
+        assert db.get_wechat_timelines(candidate_id) == []
     finally:
         db.close()
