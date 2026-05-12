@@ -2,7 +2,14 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-WORKFLOWS = ["public-search", "platform-match", "screen", "report", "talent-library"]
+WORKFLOWS = [
+    "public-search",
+    "platform-match",
+    "screen",
+    "report",
+    "talent-library",
+    "wechat-chat-sync",
+]
 
 
 def test_canonical_workflow_files_exist():
