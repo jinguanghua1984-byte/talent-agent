@@ -587,3 +587,34 @@
 - 聚焦回归：`python -m pytest tests/test_talent_models.py tests/test_talent_db.py::test_new_database_supports_candidate_contact_fields tests/test_talent_db.py::test_update_candidate_updates_contact_fields tests/test_talent_db.py::test_batch_ingest_contact_fields_fill_empty_without_overwriting -q` -> 20 passed。
 - Schema 校验：`python -c "import json, pathlib; json.loads(pathlib.Path('schemas/candidate.schema.json').read_text(encoding='utf-8')); print('schema json ok')"` -> schema json ok。
 - Commit：待提交。
+
+---
+
+# 人才库联系方式与微信聊天记录实施（2026-05-12）
+
+> 当前状态：已完成实现与验证。
+> 设计文档：`docs/superpowers/specs/2026-05-12-talent-contact-and-wechat-timeline-design.md`
+> 实施计划：`docs/superpowers/plans/2026-05-12-talent-contact-and-wechat-timeline.md`
+
+## 任务清单
+
+- [x] Task 1：扩展候选人联系方式模型、SQLite schema、导入合并和更新契约。
+- [x] Task 2：新增微信聊天 markdown 归档索引表和 TalentDB API。
+- [x] Task 3：新增 `scripts/talent_library.py wechat-sync`，封装 `wechat-cli export`。
+- [x] Task 4：新增 `wechat-chat-sync` canonical workflow 和薄适配 skill。
+- [x] Task 5：更新 `talent-library` workflow 的联系方式和微信同步契约。
+- [x] Task 6：运行聚焦回归、全量测试和静态检查。
+
+## Review
+
+- Task 1 commit：`b6b66b7 feat: add candidate contact fields`；覆盖 `Candidate.email/phone/wechat/wechat_id`、SQLite 迁移、更新 allowlist、导入 fill-only 合并和 JSON schema。
+- Task 2 commit：`d018450 Add WeChat timeline index API`；新增 `WechatTimeline`、`candidate_wechat_timelines`、`TalentDB.add_wechat_timeline()`、`TalentDB.get_wechat_timelines()` 和删除级联计数。
+- Task 3 commit：`3ddf97e feat: add wechat chat sync cli`；新增 `talent-library wechat-sync`，支持候选人定位、可选联系方式更新、`wechat-cli export`、markdown front matter、消息计数和索引写入。
+- Task 4 commit：`c13c2e7 docs: add wechat chat sync workflow`；新增 runtime-neutral `wechat-chat-sync` workflow、CLI 契约、归档格式、模板和 `.claude` adapter。
+- Task 5 commit：`8cd4e0b docs: integrate contacts and wechat sync workflow`；`talent-library` 文档声明联系方式字段、时间线索引 API、`wechat-sync` 场景和隐私安全规则。
+- 聚焦回归：`python -m pytest tests/test_talent_models.py tests/test_talent_db.py tests/test_talent_library_cli.py tests/test_talent_library_workflow.py tests/test_wechat_chat_sync_workflow.py tests/test_agent_architecture.py -q` -> **159 passed**。
+- 全量测试：`python -m pytest tests scripts -q` -> **419 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` 的 `asyncio.get_event_loop()` deprecation。
+- 静态检查：`python -m py_compile scripts/talent_models.py scripts/talent_db.py scripts/talent_library.py` -> PASS。
+- CLI smoke：`python scripts/talent_library.py wechat-sync --help` -> PASS，输出包含 `--candidate-id`、`--chat-name`、`--start-time`、`--end-time`、`--out-dir`。
+- Whitespace：`git diff --check` -> PASS。
+- 已知限制：已用 monkeypatch 覆盖 `wechat-cli` 成功和失败路径；尚未在真实微信环境中执行手工导出验收，实际可用性仍取决于本机 `wechat-cli export`、微信数据库可访问性和用户提供的时间范围。
