@@ -843,3 +843,12 @@
 - automation bridge 真机 smoke：通过，输出 `data/output/raw/maimai-ai-infra-automation-bridge-smoke-real-cdp-2026-05-13.json`；空队列 `startDetailBatch` 返回 `ok=true,totalJobs=0`，未触发真实详情请求；测试联系人已清理。
 - 过程记录：已更新 `data/output/maimai-ai-infra-feasibility-2026-05-12.md`。
 - 验证：`python -m pytest tests/test_maimai_scraper_extension.py -q` -> 28 passed；`python -m pytest tests/test_maimai_ai_infra_strategy.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py -q` -> 11 passed；`git diff --check` -> PASS。
+
+## 下次恢复待办
+
+- [ ] 先确认专用 Edge CDP profile 仍在 `127.0.0.1:9888`，且脉脉人才银行页仍为已登录状态；只读检查，不搜索。
+- [ ] 做 UI/request diff 字段校准：由人工在页面触发一次小搜索，扩展只被动读取捕获到的 `/api/ent/v3/search/basic` 请求，校准 `query_relation`、`allcompanies`、`degrees` 的真实含义。
+- [ ] 将字段校准结果写入 `data/output/maimai-ai-infra-feasibility-2026-05-12.md` 和 raw calibration JSON；未校准字段继续只做本地过滤，不写入自动请求。
+- [ ] 字段校准通过后，再向用户确认是否执行搜索门禁；未确认前不跑自动搜索。
+- [ ] 搜索门禁范围固定为 3 个小批次、每批 1 页、dry-run only，不写库、不 apply、不跑详情抓取。
+- [ ] 熔断条件：登录失效、验证码、403、429、非 JSON、请求体结构不兼容或页面异常，出现任一项立即停止并写报告。
