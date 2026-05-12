@@ -17,6 +17,7 @@ from scripts.talent_models import (
     SortSpec,
     SourceProfile,
     VectorHit,
+    WechatTimeline,
 )
 
 
@@ -85,6 +86,24 @@ class TestCandidate:
 
 
 class TestOtherModels:
+    def test_create_wechat_timeline_model(self):
+        timeline = WechatTimeline(
+            id=1,
+            candidate_id=10,
+            chat_name="张三",
+            chat_identifier="wxid_zhangsan",
+            start_time="2026-05-01",
+            end_time="2026-05-12",
+            message_count=42,
+            markdown_path="data/wechat-timelines/10-zhangsan-20260512120000.md",
+            source_tool="wechat-cli",
+            synced_at="2026-05-12T12:00:00",
+        )
+
+        assert timeline.candidate_id == 10
+        assert timeline.chat_name == "张三"
+        assert timeline.source_tool == "wechat-cli"
+
     def test_create_record_models(self):
         detail = CandidateDetail(
             candidate_id=1,
@@ -174,9 +193,10 @@ def test_delete_result_total_related_rows():
         score_events_deleted=3,
         match_scores_deleted=4,
         vectors_deleted=1,
+        timelines_deleted=5,
     )
 
-    assert result.related_rows_deleted == 11
+    assert result.related_rows_deleted == 16
     assert result.to_dict() == {
         "candidate_id": 42,
         "candidate_deleted": True,
@@ -185,7 +205,8 @@ def test_delete_result_total_related_rows():
         "score_events_deleted": 3,
         "match_scores_deleted": 4,
         "vectors_deleted": 1,
-        "related_rows_deleted": 11,
+        "timelines_deleted": 5,
+        "related_rows_deleted": 16,
     }
 
 

@@ -22,6 +22,7 @@ from scripts.talent_models import (
     SortSpec,
     SourceProfile,
     VectorHit,
+    WechatTimeline,
 )
 
 
@@ -137,6 +138,19 @@ class TalentDB:
                 UNIQUE(platform, platform_id)
             );
 
+            CREATE TABLE IF NOT EXISTS candidate_wechat_timelines (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id INTEGER REFERENCES candidates(id) ON DELETE CASCADE,
+                chat_name TEXT NOT NULL,
+                chat_identifier TEXT,
+                start_time TEXT,
+                end_time TEXT,
+                message_count INTEGER,
+                markdown_path TEXT NOT NULL,
+                source_tool TEXT DEFAULT 'wechat-cli',
+                synced_at TEXT DEFAULT (datetime('now'))
+            );
+
             CREATE TABLE IF NOT EXISTS score_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 candidate_id INTEGER REFERENCES candidates(id) ON DELETE CASCADE,
@@ -203,6 +217,10 @@ class TalentDB:
                 );
             CREATE INDEX IF NOT EXISTS idx_source_platform ON source_profiles(platform);
             CREATE INDEX IF NOT EXISTS idx_source_candidate ON source_profiles(candidate_id);
+            CREATE INDEX IF NOT EXISTS idx_wechat_timelines_candidate
+                ON candidate_wechat_timelines(candidate_id);
+            CREATE INDEX IF NOT EXISTS idx_wechat_timelines_chat_name
+                ON candidate_wechat_timelines(chat_name);
             CREATE INDEX IF NOT EXISTS idx_match_scores_jd ON match_scores(jd_id);
             CREATE INDEX IF NOT EXISTS idx_match_scores_candidate_jd ON match_scores(candidate_id, jd_id);
             CREATE INDEX IF NOT EXISTS idx_score_events_candidate ON score_events(candidate_id);
@@ -861,6 +879,65 @@ class TalentDB:
             for row in rows
         ]
 
+    def add_wechat_timeline(
+        self, candidate_id: int, data: dict[str, Any]
+    ) -> WechatTimeline:
+        if not self._candidate_exists(candidate_id):
+            raise ValueError(f"Candidate does not exist: {candidate_id}")
+        chat_name = data.get("chat_name")
+        markdown_path = data.get("markdown_path")
+        if not chat_name:
+            raise ValueError("chat_name is required")
+        if not markdown_path:
+            raise ValueError("markdown_path is required")
+
+        with self._conn:
+            cursor = self._conn.execute(
+                """
+                INSERT INTO candidate_wechat_timelines (
+                    candidate_id, chat_name, chat_identifier, start_time,
+                    end_time, message_count, markdown_path, source_tool
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    candidate_id,
+                    chat_name,
+                    data.get("chat_identifier"),
+                    data.get("start_time"),
+                    data.get("end_time"),
+                    data.get("message_count"),
+                    markdown_path,
+                    data.get("source_tool") or "wechat-cli",
+                ),
+            )
+            self._conn.execute(
+                "UPDATE candidates SET updated_at = datetime('now') WHERE id = ?",
+                (candidate_id,),
+            )
+        return self._get_wechat_timeline(int(cursor.lastrowid))
+
+    def get_wechat_timelines(self, candidate_id: int) -> list[WechatTimeline]:
+        rows = self._conn.execute(
+            """
+            SELECT *
+            FROM candidate_wechat_timelines
+            WHERE candidate_id = ?
+            ORDER BY synced_at DESC, id DESC
+            """,
+            (candidate_id,),
+        ).fetchall()
+        return [_row_to_wechat_timeline(row) for row in rows]
+
+    def _get_wechat_timeline(self, timeline_id: int) -> WechatTimeline:
+        row = self._conn.execute(
+            "SELECT * FROM candidate_wechat_timelines WHERE id = ?",
+            (timeline_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"WeChat timeline does not exist: {timeline_id}")
+        return _row_to_wechat_timeline(row)
+
     def update_candidate(self, candidate_id: int, patch: dict[str, Any]) -> Candidate:
         if not patch:
             existing = self.get(candidate_id)
@@ -914,6 +991,9 @@ class TalentDB:
         sources_deleted = _count_rows(
             self._conn, "source_profiles", "candidate_id", candidate_id
         )
+        timelines_deleted = _count_rows(
+            self._conn, "candidate_wechat_timelines", "candidate_id", candidate_id
+        )
         score_events_deleted = _count_rows(
             self._conn, "score_events", "candidate_id", candidate_id
         )
@@ -945,6 +1025,7 @@ class TalentDB:
             score_events_deleted=score_events_deleted,
             match_scores_deleted=match_scores_deleted,
             vectors_deleted=vectors_deleted,
+            timelines_deleted=timelines_deleted,
         )
 
     def update_overall_score(
@@ -1307,6 +1388,21 @@ def _candidate_from_row(row: sqlite3.Row) -> Candidate:
     data = dict(row)
     data["skill_tags"] = _json_loads(data.get("skill_tags"), [], "candidates.skill_tags")
     return Candidate.from_dict(data)
+
+
+def _row_to_wechat_timeline(row: sqlite3.Row) -> WechatTimeline:
+    return WechatTimeline(
+        id=int(row["id"]),
+        candidate_id=int(row["candidate_id"]),
+        chat_name=row["chat_name"],
+        chat_identifier=row["chat_identifier"],
+        start_time=row["start_time"],
+        end_time=row["end_time"],
+        message_count=row["message_count"],
+        markdown_path=row["markdown_path"],
+        source_tool=row["source_tool"] or "wechat-cli",
+        synced_at=row["synced_at"] or "",
+    )
 
 
 def _match_score_from_row(row: sqlite3.Row) -> MatchScore:

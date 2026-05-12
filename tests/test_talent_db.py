@@ -13,6 +13,7 @@ from scripts.talent_models import (
     MatchScore,
     SortSpec,
     SourceProfile,
+    WechatTimeline,
 )
 
 
@@ -1144,6 +1145,59 @@ def test_delete_candidate_removes_candidate_and_related_rows(db_with_candidate):
     assert db.get_detail(candidate_id) is None
     assert db.get_sources(candidate_id) == []
     assert db.get_match_scores("jd-delete-test") == []
+
+
+def test_add_and_get_wechat_timeline(db_with_candidate):
+    db, candidate_id = db_with_candidate
+
+    timeline = db.add_wechat_timeline(
+        candidate_id,
+        {
+            "chat_name": "张三",
+            "chat_identifier": "wxid_zhangsan",
+            "start_time": "2026-05-01",
+            "end_time": "2026-05-12",
+            "message_count": 42,
+            "markdown_path": "data/wechat-timelines/1-zhangsan-20260512120000.md",
+        },
+    )
+
+    timelines = db.get_wechat_timelines(candidate_id)
+
+    assert isinstance(timeline, WechatTimeline)
+    assert timeline.id > 0
+    assert timeline.candidate_id == candidate_id
+    assert timeline.chat_name == "张三"
+    assert timeline.source_tool == "wechat-cli"
+    assert len(timelines) == 1
+    assert timelines[0].markdown_path == "data/wechat-timelines/1-zhangsan-20260512120000.md"
+
+
+def test_add_wechat_timeline_rejects_missing_candidate(db: TalentDB):
+    with pytest.raises(ValueError, match="Candidate does not exist"):
+        db.add_wechat_timeline(
+            999,
+            {
+                "chat_name": "张三",
+                "markdown_path": "data/wechat-timelines/missing.md",
+            },
+        )
+
+
+def test_delete_candidate_removes_wechat_timeline_rows(db_with_candidate):
+    db, candidate_id = db_with_candidate
+    db.add_wechat_timeline(
+        candidate_id,
+        {
+            "chat_name": "张三",
+            "markdown_path": "data/wechat-timelines/1-zhangsan.md",
+        },
+    )
+
+    result = db.delete_candidate(candidate_id)
+
+    assert result.timelines_deleted == 1
+    assert db.get_wechat_timelines(candidate_id) == []
 
 
 def test_delete_candidate_rejects_missing_candidate(db: TalentDB):

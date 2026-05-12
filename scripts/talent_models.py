@@ -193,6 +193,20 @@ class SourceProfile:
 
 
 @dataclass(frozen=True)
+class WechatTimeline:
+    id: int
+    candidate_id: int
+    chat_name: str
+    markdown_path: str
+    chat_identifier: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    message_count: int | None = None
+    source_tool: str = "wechat-cli"
+    synced_at: str = ""
+
+
+@dataclass(frozen=True)
 class SearchHit:
     id: int
     rank: float
@@ -252,6 +266,7 @@ class DeleteResult:
     score_events_deleted: int = 0
     match_scores_deleted: int = 0
     vectors_deleted: int = 0
+    timelines_deleted: int = 0
 
     @property
     def related_rows_deleted(self) -> int:
@@ -261,6 +276,7 @@ class DeleteResult:
             + self.score_events_deleted
             + self.match_scores_deleted
             + self.vectors_deleted
+            + self.timelines_deleted
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -272,6 +288,7 @@ class DeleteResult:
             "score_events_deleted": self.score_events_deleted,
             "match_scores_deleted": self.match_scores_deleted,
             "vectors_deleted": self.vectors_deleted,
+            "timelines_deleted": self.timelines_deleted,
             "related_rows_deleted": self.related_rows_deleted,
         }
 
