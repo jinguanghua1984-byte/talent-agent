@@ -1,6 +1,6 @@
 ---
 name: talent-library
-description: "猎头顾问人才库管理。用于人才导入、人才查询、人才匹配、人才综合评分、JD 匹配评分、人才详情抓取、人才信息更新、人才删除，以及围绕本地 SQLite 人才库 data/talent.db 的候选人管理任务。触发词: 人才库、候选人库、导入人才、查询人才、匹配人才、人才评分、抓取详情、更新人才、删除人才、talent library、/talent-library"
+description: "猎头顾问人才库管理。用于人才导入、人才查询、人才匹配、人才综合评分、JD 匹配评分、人才详情抓取、联系方式更新、微信聊天记录同步、人才信息更新、人才删除，以及围绕本地 SQLite 人才库 data/talent.db 的候选人管理任务。触发词: 人才库、候选人库、导入人才、查询人才、匹配人才、人才评分、抓取详情、更新联系方式、同步微信聊天、删除人才、talent library、/talent-library"
 ---
 
 # talent-library 工作流
@@ -12,10 +12,10 @@ description: "猎头顾问人才库管理。用于人才导入、人才查询、
 以下意图进入本工作流：
 
 - `/talent-library` 或包含 talent library 的明确调用。
-- 围绕候选人库的自然语言任务，例如导入人才、查询人才、匹配人才、人才评分、抓取详情、更新人才、删除人才。
+- 围绕候选人库的自然语言任务，例如导入人才、查询人才、匹配人才、人才评分、抓取详情、更新联系方式、同步微信聊天、更新人才、删除人才。
 - 围绕 `data/talent.db` 的候选人管理任务。
 
-入口解析后先判断场景：`import`、`search`、`match`、`score`、`detail`、`update`、`delete`。如果用户意图模糊，只问一个最小澄清问题。
+入口解析后先判断场景：`import`、`search`、`match`、`score`、`detail`、`wechat-sync`、`update`、`delete`。如果用户意图模糊，只问一个最小澄清问题。
 
 ## 前置检查
 
@@ -38,6 +38,7 @@ description: "猎头顾问人才库管理。用于人才导入、人才查询、
 | `agents/workflows/talent-library/assets/import-report-template.md` | 导入报告模板 |
 | `agents/workflows/talent-library/assets/delete-confirmation-template.md` | 删除确认模板 |
 | `agents/workflows/platform-match/AGENT.md` | 平台搜索、详情抓取、限流、session 和熔断规则 |
+| `agents/workflows/wechat-chat-sync/AGENT.md` | 微信聊天记录手动同步、markdown 归档和时间线索引 |
 | `agents/workflows/screen/AGENT.md` | JD 筛选和匹配评分 workflow |
 | `scripts/score_pipeline.py` | 批量评分和排序流水线 |
 | `docs/superpowers/specs/2026-05-10-talent-library-skill-design.md` | talent-library 设计规格 |
@@ -51,6 +52,7 @@ description: "猎头顾问人才库管理。用于人才导入、人才查询、
 | `match` | 用这个 JD 匹配人才库、找最适合的候选人 | `agents/workflows/screen/AGENT.md`、`scripts/score_pipeline.py` |
 | `score` | 给候选人综合评分、计算 JD 匹配分 | `TalentDB.update_overall_score()`、`TalentDB.save_match_score()` |
 | `detail` | 抓取候选人详情、补全履历 | `agents/workflows/platform-match/AGENT.md`、`TalentDB.enrich()` |
+| `wechat-sync` | 同步微信聊天记录、归档聊天时间线 | `agents/workflows/wechat-chat-sync/AGENT.md`、`TalentDB.add_wechat_timeline()` |
 | `update` | 更新字段、合并来源、修正分数 | `TalentDB.update_candidate()`、`TalentDB.enrich()` |
 | `delete` | 删除候选人、删除重复人才 | `TalentDB.delete_candidate()` |
 
@@ -79,6 +81,8 @@ description: "猎头顾问人才库管理。用于人才导入、人才查询、
 - `--out <path>`：指定给 `maimai-scraper` 导入的目标 JSON 路径；未指定时写入 `data/output/maimai-detail-targets-{YYYY-MM-DD}.json`。
 
 运行时接收到上述参数时，应调用本仓库统一业务入口 `scripts/talent_library.py detail`，而不是要求用户直接调用底层转换脚本。
+
+`wechat-sync` 场景由 `agents/workflows/wechat-chat-sync/AGENT.md` 承接。运行时应调用 `scripts/talent_library.py wechat-sync`，并要求用户提供候选人、微信联系人或群名、起始时间和结束时间；不得默认导出全量聊天。
 
 所有数据库读写都通过 TalentDB API 完成，不在 workflow 中拼接 SQL。
 

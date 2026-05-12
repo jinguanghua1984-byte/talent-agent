@@ -144,19 +144,34 @@ python scripts/maimai_detail_import.py apply --capture-file <export.json> --db d
 
 ## update：人才更新
 
-适用于更新结构化字段、补充履历、合并来源、修正综合分、修正 JD 匹配分或处理待确认合并。
+适用于更新结构化字段、联系方式、补充履历、合并来源、修正综合分、修正 JD 匹配分或处理待确认合并。
 
 流程：
 
 1. 通过 `TalentDB.search()` 或候选人 ID 定位记录；命中多条时先让用户选择。
 2. 展示当前候选人摘要和即将修改的字段。
 3. 对用户输入做字段校验；来源类数据只能追加。
-4. 批量更新或高风险字段更新必须先 dry-run。
-5. 结构化字段更新调用 `TalentDB.update_candidate(candidate_id, patch)`；处理待确认合并时调用 `TalentDB.resolve_merge(candidate_id, merge_decision)`。
-6. 详情或来源补全调用 `TalentDB.enrich(candidate_id, details, source)`。
-7. 综合分修正调用 `TalentDB.update_overall_score(candidate_id, score, event_detail)`。
-8. JD 匹配分修正调用 `TalentDB.save_match_score(candidate_id, jd_id, score, detail)`。
-9. 写入后展示变更摘要，生成 `data/output/talent-update-{YYYY-MM-DD}-{slug}.md`。
+4. 联系方式字段仅支持单值更新：`email`、`phone`、`wechat`、`wechat_id`；更新前展示旧值和新值。
+5. 批量更新或高风险字段更新必须先 dry-run。
+6. 结构化字段更新调用 `TalentDB.update_candidate(candidate_id, patch)`；处理待确认合并时调用 `TalentDB.resolve_merge(candidate_id, merge_decision)`。
+7. 详情或来源补全调用 `TalentDB.enrich(candidate_id, details, source)`。
+8. 综合分修正调用 `TalentDB.update_overall_score(candidate_id, score, event_detail)`。
+9. JD 匹配分修正调用 `TalentDB.save_match_score(candidate_id, jd_id, score, detail)`。
+10. 写入后展示变更摘要，生成 `data/output/talent-update-{YYYY-MM-DD}-{slug}.md`。
+
+## wechat-sync：微信聊天时间线同步
+
+适用于顾问已经知道候选人对应微信联系人或群名，并希望把指定时间范围内的聊天记录归档到人才库。
+
+流程：
+
+1. 读取 `agents/workflows/wechat-chat-sync/AGENT.md`。
+2. 根据候选人 ID 或查询条件定位候选人；命中多条时先让用户选择。
+3. 用户必须提供微信联系人或群名、起始时间和结束时间；缺少时间范围时不执行导出。
+4. 如需同时更新 `email`、`phone`、`wechat`、`wechat_id`，先展示旧值和新值。
+5. 调用 `scripts/talent_library.py wechat-sync`。
+6. 写入后展示候选人、聊天名、时间范围、消息数、markdown 路径和索引 id。
+7. 默认不展示聊天全文；如用户要求查看，先提示内容可能包含敏感信息。
 
 ## delete：人才删除
 

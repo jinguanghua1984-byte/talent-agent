@@ -48,3 +48,20 @@ def test_talent_library_safety_mentions_hard_delete_confirmation():
 
     assert "删除必须二次确认" in safety
     assert "确认删除候选人 <candidate_id>" in delete_template
+
+
+def test_talent_library_mentions_contacts_and_wechat_sync():
+    agent = (WORKFLOW / "AGENT.md").read_text(encoding="utf-8")
+    data_contract = (WORKFLOW / "references" / "data-contract.md").read_text(
+        encoding="utf-8"
+    )
+    scenarios = (WORKFLOW / "references" / "scenarios.md").read_text(encoding="utf-8")
+    safety = (WORKFLOW / "references" / "safety-rules.md").read_text(encoding="utf-8")
+
+    for field in ["email", "phone", "wechat", "wechat_id"]:
+        assert field in data_contract
+        assert field in scenarios
+    assert "wechat-chat-sync" in agent
+    assert "candidate_wechat_timelines" in data_contract
+    assert "TalentDB.add_wechat_timeline" in data_contract
+    assert "未提供起止时间时不得执行微信聊天导出" in safety
