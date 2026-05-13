@@ -875,3 +875,28 @@
 - 字段证据：`query/search_query` 为 `"算法" "agent"`；分页为 `paginationParam.page=1,size=30` 与 `page=0,size=30`；`allcompanies="一线互联网公司"`、`degrees="2,3"`、`query_relation=0` 仍只保留模板值，不主动改写。
 - 约束：未自动发搜索，未写库，未 apply，未跑详情抓取；搜索执行门禁仍需用户二次确认。
 - 验证：`ConvertFrom-Json` 读取校准 JSON 成功，`newSearchRecordCount=1`；过程记录可检索到 `UI/request diff 字段校准`、`newSearchRecordCount=1`、`query/search_query` 与 `不主动改写`；`git diff --check` -> PASS。
+
+---
+
+# 脉脉 AI Infra Phase 0 搜索执行门禁（2026-05-13）
+
+> 目标：在用户授权后，用已登录专用 Edge CDP profile 和真实 UI 捕获模板，执行 3 个小批次、每批 1 页的搜索执行门禁。只 dry-run 取证，不写库、不 apply、不跑详情抓取；遇到登录失效、验证码、403、429、非 JSON、请求结构变化立即熔断。
+
+## 任务清单
+
+- [x] Task 1：修正扩展主动搜索 nested `search.query/search_query` patch，并补契约测试。
+- [x] Task 2：只读确认专用 Edge CDP 登录态和页面模板可用。
+- [x] Task 3：执行 3 个小批次、每批 1 页搜索，记录每批响应与会话健康。
+- [x] Task 4：写入 raw run JSON 与 Phase 0 过程记录。
+- [x] Task 5：运行聚焦测试、JS 语法检查、`git diff --check` 并提交记录。
+
+## Review
+
+- 修复点：扩展主动搜索原先只改写顶层 `body.query/keyword/keywords/q`，真实脉脉搜索关键词位于 nested `body.search.query/search_query`；已新增 `applySearchQuery()` 同步改写 nested 与兼容顶层字段。
+- RED/GREEN：新增 `test_active_search_patches_nested_search_query_fields`，先验证旧实现缺口，再修复为通过；聚焦复跑 `test_active_search_patches_nested_search_query_fields` 与 `test_search_template_tracks_headers_and_nested_pagination` -> **2 passed**。
+- 搜索门禁输出：`data/output/raw/maimai-ai-infra-search-gate-run-2026-05-13.json`。
+- 搜索门禁范围：3 个小批次、每批 1 页、dry-run only；未写库、未 apply、未执行详情抓取。
+- 批次结果：`"AI Infra" "LLM"` -> HTTP 200 JSON，`total=1,count=1,listLength=1`；`"vLLM" "SGLang"` -> HTTP 200 JSON，`total=2,count=2,listLength=2`；`"GPU" "CUDA"` -> HTTP 200 JSON，`total=19,count=19,listLength=19`。
+- 会话健康：前后页面均为 `人才银行`，`readyState=complete`，`hasLoginPrompt=false`，`hasCaptcha=false`，`hasTalentBank=true`，cookie 可见长度 783。
+- 结论：搜索执行方式门禁可标记为 `phase0-pass-for-search-gate`；但真实详情抓取仍未执行，详情链路只有空队列 preflight 通过，因此 Phase 0 端到端仍不能宣称完全通过。
+- 最终验证：`python -m pytest tests/test_maimai_scraper_extension.py -q` -> **29 passed**；`python -m pytest tests/test_maimai_ai_infra_strategy.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py -q` -> **11 passed**；`node --check extensions/maimai-scraper/inject.js` -> **PASS**；`git diff --check` -> **PASS**。

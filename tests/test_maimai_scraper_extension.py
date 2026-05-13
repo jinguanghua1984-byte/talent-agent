@@ -304,6 +304,15 @@ def test_search_template_tracks_headers_and_nested_pagination():
     assert "headerList.join" in popup
 
 
+def test_active_search_patches_nested_search_query_fields():
+    inject = read_extension_file("inject.js")
+
+    assert "applySearchQuery(body, params.body.query)" in inject
+    assert 'body.search.query = query' in inject
+    assert 'body.search.search_query = query' in inject
+    assert 'body.query = query' in inject
+
+
 def test_autopager_updates_total_from_api_response():
     autopager = read_extension_file("autopager.js")
     background = read_extension_file("background.js")

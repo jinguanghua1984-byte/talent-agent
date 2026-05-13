@@ -144,6 +144,21 @@ if (!window.__maimaiScraperV2) {
     return body;
   }
 
+  function applySearchQuery(body, query) {
+    body = body || {};
+    if (body.search && typeof body.search === "object") {
+      body.search.query = query;
+      if (Object.prototype.hasOwnProperty.call(body.search, "search_query")) {
+        body.search.search_query = query;
+      }
+    }
+    body.query = query;
+    body.keyword = query;
+    body.keywords = query;
+    body.q = query;
+    return body;
+  }
+
   // ---- 拦截 fetch（捕获请求 + 响应）----
   var origFetch = window.fetch;
   window.fetch = function () {
@@ -304,11 +319,7 @@ if (!window.__maimaiScraperV2) {
     var body = JSON.parse(JSON.stringify(tpl.body || {}));
     if (params.body) {
       if (params.body.query !== undefined) {
-        // 尝试多种可能的字段名
-        body.query = params.body.query;
-        body.keyword = params.body.query;
-        body.keywords = params.body.query;
-        body.q = params.body.query;
+        applySearchQuery(body, params.body.query);
       }
       if (params.body.page !== undefined) {
         applyPagerPage(body, params.body.page, params.body.pagesize || tpl.pageMeta.pagesize);
