@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> 2026-05-13 复审结论：本计划的“完全无人执行详情补全”目标不再成立。搜索 dry-run、本地入库 dry-run、本地评分和 shortlist 仍保留；真实详情补全改为 `CLI 本地任务包服务 + 用户在人才银行页 popup 加载/启动 + 导出 + dry-run`。落地执行以 `docs/superpowers/plans/2026-05-13-maimai-ai-infra-feasible-execution.md` 为准。
+
 **Goal:** 将 `docs/design-discussions/2026-05-12-maimai-ai-infra-talent-search-plan.md` 中的手动脉脉搜索策略自动化执行，人工只参与策略确认和最终结果审查。
 
 **Architecture:** 采用“策略配置 -> 搜索批次编译 -> 登录态浏览器内低速执行 -> 导入 dry-run/apply -> 本地规则评分 -> Top 候选详情补全 -> 最终审查报告”的流水线。网页访问只使用真实 Chrome 登录态和现有 `maimai-scraper`/CDP 能力，不绕过验证码、权限和风控；遇到 403、429、验证码、非 JSON 响应时熔断并进入最终异常报告。

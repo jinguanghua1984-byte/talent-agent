@@ -1,0 +1,465 @@
+import json
+from types import SimpleNamespace
+
+import scripts.maimai_ai_infra_search_live_gate as live_gate
+from scripts.maimai_ai_infra_search_live_gate import (
+    CdpSession,
+    extract_contacts,
+    find_talent_target,
+    is_blocking_health,
+    run_gate,
+    summarize_response,
+    validate_search_template_status,
+)
+
+
+def test_find_talent_target_prefers_talent_bank_page():
+    targets = [
+        {"type": "page", "title": "下载", "url": "edge://downloads"},
+        {
+            "type": "page",
+            "title": "人才银行",
+            "url": "https://maimai.cn/ent/v41/recruit/talents?tab=1",
+            "webSocketDebuggerUrl": "ws://127.0.0.1/page/1",
+        },
+    ]
+
+    target = find_talent_target(targets)
+
+    assert target["title"] == "人才银行"
+    assert target["webSocketDebuggerUrl"].endswith("/1")
+
+
+def test_is_blocking_health_flags_login_or_captcha():
+    assert is_blocking_health({"hasLoginPrompt": True}) == "login"
+    assert is_blocking_health({"hasCaptcha": True}) == "captcha"
+    assert is_blocking_health({"hasTalentBank": False}) == "not_talent_bank"
+    assert is_blocking_health({"hasTalentBank": True, "hasCaptcha": False}) is None
+
+
+def test_extract_contacts_supports_root_or_nested_data_lists():
+    root = {"list": [{"id": 1, "name": "Alice"}]}
+    nested = {"data": {"list": [{"id": 2, "name": "Bob"}]}}
+
+    assert extract_contacts(root) == [{"id": 1, "name": "Alice"}]
+    assert extract_contacts(nested) == [{"id": 2, "name": "Bob"}]
+
+
+def test_summarize_response_marks_non_json_and_counts_list_items():
+    parsed = {"total": 2, "total_match": 2, "count": 2, "list": [{"id": 1}, {"id": 2}]}
+
+    summary = summarize_response(200, "application/json", json.dumps(parsed), parsed, None)
+
+    assert summary["httpStatus"] == 200
+    assert summary["parseError"] is None
+    assert summary["data"]["total"] == 2
+    assert summary["data"]["listLength"] == 2
+
+    non_json = summarize_response(200, "text/html", "<html>login</html>", None, "invalid json")
+
+    assert non_json["parseError"] == "invalid json"
+    assert non_json["data"]["isObject"] is False
+
+
+def test_cdp_session_suppresses_origin_header(monkeypatch):
+    calls = []
+
+    def fake_create_connection(url, **kwargs):
+        calls.append((url, kwargs))
+        return SimpleNamespace(
+            close=lambda: None,
+            settimeout=lambda timeout: None,
+            send=lambda payload: None,
+            recv=lambda: json.dumps({"id": 1, "result": {"result": {"value": {"ok": True}}}}),
+        )
+
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "websocket",
+        SimpleNamespace(create_connection=fake_create_connection),
+    )
+
+    session = CdpSession("ws://127.0.0.1:9888/devtools/page/1")
+    try:
+        assert session.evaluate("1") == {"ok": True}
+    finally:
+        session.close()
+
+    assert calls[0][1]["suppress_origin"] is True
+
+
+def test_validate_search_template_status_blocks_non_search_templates():
+    valid = {
+        "hasSearchTemplate": True,
+        "url": "https://maimai.cn/api/ent/v3/search/basic?foo=1",
+        "method": "POST",
+        "hasBody": True,
+        "hasSearchObject": True,
+        "hasNestedQueryField": True,
+        "hasNestedPagination": True,
+    }
+
+    assert validate_search_template_status(valid) is None
+
+    invalid_url = dict(valid, url="https://maimai.cn/api/ent/v3/talent/detail")
+    invalid_method = dict(valid, method="GET")
+    invalid_body = dict(valid, hasNestedQueryField=False)
+
+    assert validate_search_template_status(invalid_url) == "incompatible_request_shape"
+    assert validate_search_template_status(invalid_method) == "incompatible_request_shape"
+    assert validate_search_template_status(invalid_body) == "incompatible_request_shape"
+
+
+def test_run_gate_stops_before_fetch_when_template_shape_is_incompatible(tmp_path, monkeypatch):
+    plan_path = tmp_path / "plan.json"
+    out_path = tmp_path / "run.json"
+    plan_path.write_text(
+        json.dumps({"batches": [{"batch_id": "b1", "query": "AI infra", "page_size": 30}]}),
+        encoding="utf-8",
+    )
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            self.calls = 0
+
+        def evaluate(self, expression, timeout=30):
+            self.calls += 1
+            if self.calls == 1:
+                return {"hasTalentBank": True, "hasLoginPrompt": False, "hasCaptcha": False}
+            if self.calls == 2:
+                return {
+                    "hasSearchTemplate": True,
+                    "url": "https://maimai.cn/api/ent/v3/talent/detail",
+                    "method": "POST",
+                    "hasBody": True,
+                    "hasSearchObject": True,
+                    "hasNestedQueryField": True,
+                    "hasNestedPagination": True,
+                }
+            raise AssertionError("search fetch should not be evaluated")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        live_gate,
+        "list_targets",
+        lambda cdp_url: [
+            {
+                "type": "page",
+                "title": "人才银行",
+                "url": "https://maimai.cn/ent/v41/recruit/talents?tab=1",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/1",
+            }
+        ],
+    )
+    monkeypatch.setattr(live_gate, "CdpSession", FakeSession)
+
+    result = run_gate(
+        plan_path=plan_path,
+        out_path=out_path,
+        cdp_url="http://127.0.0.1:9888",
+        delay_seconds=0,
+        timeout_seconds=1,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["stopReason"] == "incompatible_request_shape"
+    assert result["batches"] == []
+    saved = json.loads(out_path.read_text(encoding="utf-8-sig"))
+    assert saved["stopReason"] == "incompatible_request_shape"
+
+
+def test_run_gate_preserves_response_evidence(tmp_path, monkeypatch):
+    plan_path = tmp_path / "plan.json"
+    out_path = tmp_path / "run.json"
+    plan_path.write_text(
+        json.dumps({"batches": [{"batch_id": "b1", "query": "AI infra", "page_size": 30}]}),
+        encoding="utf-8",
+    )
+    response_data = {"data": {"total": 1, "list": [{"id": "1", "name": "Alice"}]}}
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            self.calls = 0
+
+        def evaluate(self, expression, timeout=30):
+            self.calls += 1
+            if self.calls == 1:
+                return {"hasTalentBank": True, "hasLoginPrompt": False, "hasCaptcha": False}
+            if self.calls == 2:
+                return {
+                    "hasSearchTemplate": True,
+                    "url": "https://maimai.cn/api/ent/v3/search/basic",
+                    "method": "POST",
+                    "hasBody": True,
+                    "hasSearchObject": True,
+                    "hasNestedQueryField": True,
+                    "hasNestedPagination": True,
+                }
+            if self.calls == 3:
+                return {
+                    "status": "ok",
+                    "httpStatus": 200,
+                    "contentType": "application/json",
+                    "rawLength": 62,
+                    "rawPreview": '{"data":{"total":1',
+                    "parseError": None,
+                    "data": response_data,
+                    "sent": {"url": "https://maimai.cn/api/ent/v3/search/basic"},
+                }
+            return {"hasTalentBank": True, "hasLoginPrompt": False, "hasCaptcha": False}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        live_gate,
+        "list_targets",
+        lambda cdp_url: [
+            {
+                "type": "page",
+                "title": "人才银行",
+                "url": "https://maimai.cn/ent/v41/recruit/talents?tab=1",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/1",
+            }
+        ],
+    )
+    monkeypatch.setattr(live_gate, "CdpSession", FakeSession)
+
+    result = run_gate(
+        plan_path=plan_path,
+        out_path=out_path,
+        cdp_url="http://127.0.0.1:9888",
+        delay_seconds=0,
+        timeout_seconds=1,
+    )
+
+    batch = result["batches"][0]
+    assert batch["responseData"] == response_data
+    assert batch["responseRawPreview"] == '{"data":{"total":1'
+    saved = json.loads(out_path.read_text(encoding="utf-8-sig"))
+    assert saved["batches"][0]["responseData"]["data"]["list"][0]["name"] == "Alice"
+
+
+def test_run_gate_fetches_all_pages_declared_by_batch(tmp_path, monkeypatch):
+    plan_path = tmp_path / "plan.json"
+    out_path = tmp_path / "run.json"
+    plan_path.write_text(
+        json.dumps({
+            "gate": "S3",
+            "batches": [{
+                "batch_id": "b1",
+                "query": "AI infra",
+                "page_size": 30,
+                "max_pages": 3,
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            self.calls = 0
+            self.search_calls = 0
+
+        def evaluate(self, expression, timeout=30):
+            self.calls += 1
+            if self.calls == 1:
+                return {"hasTalentBank": True, "hasLoginPrompt": False, "hasCaptcha": False}
+            if self.calls == 2:
+                return {
+                    "hasSearchTemplate": True,
+                    "url": "https://maimai.cn/api/ent/v3/search/basic",
+                    "method": "POST",
+                    "hasBody": True,
+                    "hasSearchObject": True,
+                    "hasNestedQueryField": True,
+                    "hasNestedPagination": True,
+                }
+            if "fetch(tpl.url" in expression:
+                self.search_calls += 1
+                page = self.search_calls
+                return {
+                    "status": "ok",
+                    "httpStatus": 200,
+                    "contentType": "application/json",
+                    "rawLength": 20,
+                    "rawPreview": "{}",
+                    "parseError": None,
+                    "data": {"data": {"total": 3, "list": [{"id": str(page), "page": page}]}},
+                    "sent": {"url": "https://maimai.cn/api/ent/v3/search/basic"},
+                }
+            return {"hasTalentBank": True, "hasLoginPrompt": False, "hasCaptcha": False}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        live_gate,
+        "list_targets",
+        lambda cdp_url: [
+            {
+                "type": "page",
+                "title": "人才银行",
+                "url": "https://maimai.cn/ent/v41/recruit/talents?tab=1",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/1",
+            }
+        ],
+    )
+    monkeypatch.setattr(live_gate, "CdpSession", FakeSession)
+
+    result = run_gate(
+        plan_path=plan_path,
+        out_path=out_path,
+        cdp_url="http://127.0.0.1:9888",
+        delay_seconds=0,
+        timeout_seconds=1,
+    )
+
+    batch = result["batches"][0]
+    assert result["status"] == "completed"
+    assert len(result["contacts"]) == 3
+    assert len(batch["contacts"]) == 3
+    assert [page["page"] for page in batch["pages"]] == [1, 2, 3]
+    assert [item["page"] for item in batch["contacts"]] == [1, 2, 3]
+
+
+def test_run_gate_can_continue_from_later_start_page(tmp_path, monkeypatch):
+    plan_path = tmp_path / "plan.json"
+    out_path = tmp_path / "run.json"
+    plan_path.write_text(
+        json.dumps({
+            "gate": "S3",
+            "batches": [{
+                "batch_id": "b1",
+                "query": "AI infra",
+                "page_size": 30,
+                "start_page": 2,
+                "max_pages": 3,
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            self.calls = 0
+            self.next_page = 2
+
+        def evaluate(self, expression, timeout=30):
+            self.calls += 1
+            if self.calls == 1:
+                return {"hasTalentBank": True, "hasLoginPrompt": False, "hasCaptcha": False}
+            if self.calls == 2:
+                return {
+                    "hasSearchTemplate": True,
+                    "url": "https://maimai.cn/api/ent/v3/search/basic",
+                    "method": "POST",
+                    "hasBody": True,
+                    "hasSearchObject": True,
+                    "hasNestedQueryField": True,
+                    "hasNestedPagination": True,
+                }
+            if "fetch(tpl.url" in expression:
+                page = self.next_page
+                self.next_page += 1
+                return {
+                    "status": "ok",
+                    "httpStatus": 200,
+                    "contentType": "application/json",
+                    "rawLength": 20,
+                    "rawPreview": "{}",
+                    "parseError": None,
+                    "data": {"data": {"total": 3, "list": [{"id": str(page), "page": page}]}},
+                    "sent": {"url": "https://maimai.cn/api/ent/v3/search/basic"},
+                }
+            return {"hasTalentBank": True, "hasLoginPrompt": False, "hasCaptcha": False}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        live_gate,
+        "list_targets",
+        lambda cdp_url: [
+            {
+                "type": "page",
+                "title": "人才银行",
+                "url": "https://maimai.cn/ent/v41/recruit/talents?tab=1",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/1",
+            }
+        ],
+    )
+    monkeypatch.setattr(live_gate, "CdpSession", FakeSession)
+
+    result = run_gate(
+        plan_path=plan_path,
+        out_path=out_path,
+        cdp_url="http://127.0.0.1:9888",
+        delay_seconds=0,
+        timeout_seconds=1,
+    )
+
+    assert [page["page"] for page in result["batches"][0]["pages"]] == [2, 3]
+    assert [item["page"] for item in result["contacts"]] == [2, 3]
+
+
+def test_run_gate_records_batch_exception_error(tmp_path, monkeypatch):
+    plan_path = tmp_path / "plan.json"
+    out_path = tmp_path / "run.json"
+    plan_path.write_text(
+        json.dumps({"batches": [{"batch_id": "b1", "query": "AI infra", "page_size": 30}]}),
+        encoding="utf-8",
+    )
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            self.calls = 0
+
+        def evaluate(self, expression, timeout=30):
+            self.calls += 1
+            if self.calls == 1:
+                return {"hasTalentBank": True, "hasLoginPrompt": False, "hasCaptcha": False}
+            if self.calls == 2:
+                return {
+                    "hasSearchTemplate": True,
+                    "url": "https://maimai.cn/api/ent/v3/search/basic",
+                    "method": "POST",
+                    "hasBody": True,
+                    "hasSearchObject": True,
+                    "hasNestedQueryField": True,
+                    "hasNestedPagination": True,
+                }
+            raise RuntimeError("network boom")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        live_gate,
+        "list_targets",
+        lambda cdp_url: [
+            {
+                "type": "page",
+                "title": "人才银行",
+                "url": "https://maimai.cn/ent/v41/recruit/talents?tab=1",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/1",
+            }
+        ],
+    )
+    monkeypatch.setattr(live_gate, "CdpSession", FakeSession)
+
+    result = run_gate(
+        plan_path=plan_path,
+        out_path=out_path,
+        cdp_url="http://127.0.0.1:9888",
+        delay_seconds=0,
+        timeout_seconds=1,
+    )
+
+    assert result["status"] == "stopped"
+    assert result["stopReason"] == "exception"
+    assert result["batches"][0]["error"] == "network boom"
+    saved = json.loads(out_path.read_text(encoding="utf-8-sig"))
+    assert saved["batches"][0]["error"] == "network boom"

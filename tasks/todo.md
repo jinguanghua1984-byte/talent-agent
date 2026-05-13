@@ -927,3 +927,469 @@
 - 用户回复“已登录”后复核：`data/output/raw/maimai-ai-infra-detail-gate-login-recheck-2026-05-13.json` 显示当前 `127.0.0.1:9888` 只有 automation 页和 `https://maimai.cn/platform/login?...` 登录页；`hasLoginPrompt=true`、`hasCaptcha=true`，仍未通过登录态门禁。继续停止，未导入目标、未启动详情、未写库、未 apply。
 - 用户重新登录并手动导航后复核：现有页面列表中可见 `https://maimai.cn/ent/v41/recruit/talents?tab=1`，标题 `人才银行`，无登录/验证码提示；但扩展 `chrome.tabs.query({active:true,currentWindow:true})` 返回活动 tab 为 `https://maimai.cn/` 首页。因 `startDetailBatch` 依赖活动 tab，继续停止，未导入目标、未启动详情、未写库、未 apply。
 - 用户手动激活人才银行页后：活动 tab 确认为 `https://maimai.cn/ent/v41/recruit/talents?pid=&tab=1`，导入 3 个目标成功，`startDetailBatch({mode:"safe",dailyLimit:3})` 返回 `ok=true,totalJobs=3`。状态轮询显示 `completed`、`done=3`、`failed=0`，但导出 `data/output/raw/maimai-ai-infra-detail-gate-run-2026-05-13.json` 中 `detailJobs=[]`、`details=[]`，只有 `metadata.captured_details=3`；`maimai_detail_import.py dry-run` 结果 `matched=0,unmatched=0,failed_jobs=0`。根因为扩展未把 start 后的新 `detailBatchRunToken` 持久化，导出时用旧 token 过滤掉本轮 jobs/details；已补本地测试和修复，但当前浏览器扩展尚未重载，本轮详情门禁不通过，未写库、未 apply。
+
+---
+
+# 脉脉 AI Infra Phase 0 详情小样本门禁重跑（2026-05-13）
+
+> 目标：在修复 `detailBatchRunToken` 持久化问题并重载扩展后，重新验证 1-3 个明确目标的真实详情链路：`importDetailContacts -> startDetailBatch(safe) -> getFullExportData -> maimai_detail_import dry-run`。本轮仍只做门禁取证，不写库、不 apply、不扩大搜索。
+
+## 执行约束
+
+- 不主动 `goto` 或刷新脉脉企业端 URL；只有用户已经手动打开并激活稳定的人才银行页时，才读取现有状态。
+- 重跑前必须确认浏览器中已加载的是当前修复后的扩展；若无法确认，停止并要求用户手动重载扩展与刷新人才银行页。
+- 样本范围固定为既有 1-3 个目标，`safe` 模式，`dailyLimit=3`。
+- 熔断条件：登录失效、验证码、403、429、非 JSON、活动 tab 非人才银行页、详情队列异常、导出结构变化、`detailJobs/details` 为空。
+- `maimai_detail_import.py dry-run` clean 前不写库、不 apply。
+
+## 任务清单
+
+- [x] Task 1：本地确认 `detailBatchRunToken` 修复和契约测试存在。
+- [x] Task 2：只读确认 `127.0.0.1:9888` CDP、现有人才银行页、活动 tab 与扩展 automation bridge 状态；不自动导航。
+- [x] Task 3：确认扩展已重载到当前代码；若未重载，停止并让用户手动重载扩展、刷新人才银行页。
+- [x] Task 4：复用 `data/output/raw/maimai-ai-infra-detail-gate-targets-2026-05-13.json`，导入 1-3 个目标并启动 safe 详情批次。
+- [x] Task 5：轮询状态并导出 raw JSON；若 `detailJobs/details` 可用则运行详情 dry-run，否则记录失败统计。
+- [x] Task 6：更新 `data/output/maimai-ai-infra-feasibility-2026-05-12.md`、详情 dry-run 报告与本 Review。
+- [x] Task 7：运行扩展聚焦测试、JS 语法检查和 `git diff --check`。
+
+## 当前记录
+
+- 已确认上次失败根因是浏览器扩展未重载，导致旧导出逻辑仍按旧 `detailBatchRunToken` 过滤本轮 jobs/details。
+- 本轮从只读预检开始，不触发真实详情请求，直到确认扩展版本和活动 tab 均满足前置条件。
+- 本地修复确认：`python -m pytest tests/test_maimai_scraper_extension.py::test_background_persists_current_detail_batch_token_with_state tests/test_maimai_scraper_extension.py::test_background_guards_stale_detail_batch_callbacks tests/test_maimai_scraper_extension.py::test_background_captures_detail_batch_token_before_start_prework -q` -> **3 passed**；`node --check extensions/maimai-scraper/background.js` -> **PASS**。
+- 只读预检：`127.0.0.1:9888` 可用，现有页面包含 `https://maimai.cn/ent/v41/recruit/talents?tab=1`（标题 `人才银行`）与 `edge://extensions/`；扩展 service worker 为 `chrome-extension://mdhjdjdmkghiecabeolipnhlcdecgnpj/background.js`，manifest version `2.4`，运行时 `saveDetailBatchState()` 已包含 `detailBatchRunToken: runToken || __detailBatchRunToken`。
+- 受控失败：第一次重跑打开 `automation.html` 后，活动 tab 切到扩展页，`startDetailBatch` 返回 `ok=false,error="请在脉脉列表页使用批量详情"`；未触发真实详情请求，导出 `data/output/raw/maimai-ai-infra-detail-gate-run-2026-05-13-retry.json` 中 `detailJobs=0,details=0,captured_details=0`，结束后已 `clearAll`。
+- 修正执行方式（已被用户纠正）：不能简单改成“打开 automation bridge 后重新激活人才银行 tab”。用户指出人才银行页是被我的某个操作触发平台安全机制后自动关闭；因此打开 automation 页、切换 tab、调用扩展后台都要视为高风险操作，不能再自动继续。
+- 二次重跑前置检查：当前 CDP 页面列表只剩 `chrome-extension://mdhjdjdmkghiecabeolipnhlcdecgnpj/automation.html` 与 `edge://extensions/`，已不存在现有 `maimai.cn/ent/v41/recruit/talents` 人才银行页；按规则停止，未启动 `startDetailBatch`，未触发真实详情请求。
+- 当前结论：详情门禁复跑暂停。下一步不是要求用户马上重开页面，而是先由用户决定是否继续承担平台安全风险；未获明确授权前，我不再触碰脉脉页面、automation 页或扩展后台。
+- 用户明确授权后继续详情小样本复跑。前置检查显示现有人才银行页与 automation 页均存在，`chrome.tabs.query({active:true,currentWindow:true})` 返回人才银行页。
+- 授权复跑结果：`clearAll -> importDetailContacts(3) -> startDetailBatch({mode:"safe",dailyLimit:3})` 执行；`start_resp.ok=true,totalJobs=3`，输出控制文件 `data/output/raw/maimai-ai-infra-detail-gate-authorized-control-2026-05-13.json`。
+- 失败证据：最终状态 `completed` 但 `done=0,failed=3`，三个 job 均报 `Could not establish connection. Receiving end does not exist.`；导出 `data/output/raw/maimai-ai-infra-detail-gate-authorized-run-2026-05-13.json` 中 `detailJobs=3,details=0,captured_details=0,total_jobs=3`。
+- dry-run：`python scripts/maimai_detail_import.py dry-run --capture-file data/output/raw/maimai-ai-infra-detail-gate-authorized-run-2026-05-13.json --db data/talent.db --out data/output/maimai-ai-infra-detail-gate-authorized-dry-run-2026-05-13.md` -> `matched=0,unmatched=0,failed_jobs=3`。
+- 授权复跑后页面复核：人才银行页跳转为 `https://maimai.cn/platform/login?to=...`，说明本轮再次触发平台安全机制；已停止所有脉脉页面和扩展操作。
+- 当前结论：`detailBatchRunToken` 导出修复生效（导出不再空过滤 job），但真实详情小样本门禁仍 **不通过**；失败原因从旧 token 过滤问题转为扩展 content script 接收端缺失，并伴随平台安全机制触发。不能进入写库、apply 或更大规模自动化。
+
+## Review
+
+- 授权复跑控制证据：`data/output/raw/maimai-ai-infra-detail-gate-authorized-control-2026-05-13.json`。
+- 授权复跑导出：`data/output/raw/maimai-ai-infra-detail-gate-authorized-run-2026-05-13.json`，`detailJobs=3,details=0,failed_jobs=3`。
+- dry-run：`python scripts/maimai_detail_import.py dry-run --capture-file data/output/raw/maimai-ai-infra-detail-gate-authorized-run-2026-05-13.json --db data/talent.db --out data/output/maimai-ai-infra-detail-gate-authorized-dry-run-2026-05-13.md` -> `matched=0,unmatched=0,failed_jobs=3`。
+- 报告更新：`data/output/maimai-ai-infra-feasibility-2026-05-12.md` 已追加授权复跑结论：token 修复生效，但真实详情小样本门禁不通过。
+- 验证：`python -m pytest tests/test_maimai_scraper_extension.py -q` -> **30 passed**。
+- 验证：`node --check extensions/maimai-scraper/background.js` -> **PASS**。
+- 验证：`git diff --check` -> **PASS**。
+- 最终安全结论：停止所有脉脉页面、automation 页与扩展后台操作；后续详情补全应改为人工触发/被动捕获路径，或重新设计低风控门禁方案。
+
+---
+
+# 脉脉详情手动路径 vs 自动化路径差异比对方案（2026-05-13）
+
+> 目标：解释为什么“浏览器扩展 popup 手动导入 JSON 并点击批量详情”可成功，而“通过 automation/CLI 调用扩展同一链路”会失败并触发平台安全机制。当前只做方案设计，不触碰脉脉页面，不调用扩展后台。
+
+## 当前证据与纠正
+
+- 手动路径用户反馈可成功，不触发平台安全机制。
+- 自动化授权复跑中，`startDetailBatch` 可创建 3 个 jobs，说明 background、导入与 token 导出链路可用。
+- 自动化复跑后人才银行页跳转到登录页，说明自动化流程触发了平台安全机制。
+- 用户纠正：`Could not establish connection. Receiving end does not exist.` 不应作为首要根因；它发生在安全机制触发、人才银行页已关闭/登出后，自然会找不到 content script 接收端。
+- 当前重点：比较自动执行和手动执行详情批量抓取的差异，找出触发安全机制的具体行为，并评估是否可规避。
+
+## 核心假设
+
+- H1：自动化路径的 CDP 附着、Runtime.evaluate、读取页面列表或检查 active tab 本身可能触发平台安全策略。
+- H2：automation 页或 CLI 调用改变了窗口/标签焦点、当前 active tab 或页面可见性；手动 popup 路径则保持用户真实前台操作上下文。
+- H3：automation sender 来源是 `automation.html` 或外部 CDP 驱动，手动 sender 来源是 `popup.html`；扩展后台消息的 sender、时间间隔和触发栈不同。
+- H4：自动化路径的调用节奏过于机械，例如导入后立即 start、1 秒轮询、快速导出/清理；手动路径有自然停顿。
+- H5：自动化路径调用了额外的非手动动作，例如打开 automation 页、读取 CDP `/json/list`、反复 `getDetailBatchStatus`、`getFullExportData`、`clearAll`，这些组合可能构成异常行为。
+- H6：`Receiving end does not exist` 只是安全机制触发后的下游观测，不作为首要根因；content script ping 只用于确认“页面是否已被关闭/登出”。
+
+## 对比方案
+
+- [ ] Task 1：只做代码级静态差异表，列出手动 popup 和 automation 页调用的共同点与差异点，不连接浏览器。
+- [ ] Task 2：为扩展增加诊断 trace，不改变真实抓取逻辑；记录 `sender.url`、sender 类型、active tab、window focus、target tab、页面 visibility、导入来源、start 前后时间间隔、轮询频率和清理/导出动作。
+- [ ] Task 3：新增 `preflightTrace` / `probeOnly` 模式，只记录自动化动作对窗口/标签/页面状态的影响，不发真实详情请求；content script ping 仅作为后置状态项，不作为根因先验。
+- [ ] Task 4：由用户执行一次手动成功路径，导出诊断 trace 与 capture JSON；我只读取本地导出文件。
+- [ ] Task 5：在用户明确授权后执行 automation 的 `probeOnly` 对照，不发真实详情请求；若与手动 trace 差异明显，停止，不进入真实详情。
+- [ ] Task 6：写一个本地 diff 脚本比较两份 trace，输出差异矩阵和根因判定。
+- [ ] Task 7：只有当 `probeOnly` 与手动路径在 active tab、content script、visibility、sender 节奏等关键项完全一致时，才讨论是否做 1 个目标的真实详情 A/B；默认不继续真实自动化。
+
+## 预期判定矩阵
+
+- 若 automation `preflightTrace` 尚未发真实详情请求就导致 URL/标题/登录态变化：根因优先判定为 CDP 附着、automation 页或状态读取动作触发安全机制。
+- 若手动与自动化的 active tab/focus/visibility/sender 不同：优先判定为调用上下文差异。
+- 若上下文一致但 automation 的时间间隔、轮询频率、导出/清理动作不同：优先判定为调用节奏差异。
+- 若自动化只要打开 automation 页就改变 active tab 或页面可见性：需要改为不打开新页、不依赖 active tab 的显式 `targetTabId` 或由 popup 内部发起的设计。
+- 若所有前置信号一致但真实详情仍触发登录页：优先判定为平台对程序化扩展后台调用或 CDP 附着敏感；不再继续自动化。
+- 若 automation 只要打开 automation 页就改变 active tab：需要改为不依赖 active tab 的显式 `targetTabId` 设计，且仍需通过 `probeOnly` 验证。
+
+## 安全边界
+
+- 不再用 CDP 自动导航、刷新或激活人才银行页。
+- 不在未授权情况下打开 automation 页或调用扩展后台。
+- 首轮对比只允许被动读取人工导出的 trace；automation 首轮只允许 `probeOnly`，不发真实详情请求。
+- 任一环节出现登录页、验证码、429/403、content script 缺失或页面异常，立即停止并写报告。
+
+## 执行计划
+
+- [x] Task 1：补扩展契约测试，要求 background 支持 `preflightTrace`、`probeOnly`、`getDiagnosticTraces`、`clearDiagnosticTraces`，并记录 `sender.url`、active tab、window focus、页面可见性和 action label。
+- [x] Task 2：补 automation 契约测试，要求 `window.maimaiScraperAutomation` 暴露 `preflightTrace()`、`probeOnly()`、`getDiagnosticTraces()`、`clearDiagnosticTraces()`。
+- [x] Task 3：补 content 契约测试，要求 content script 支持非侵入式 `tracePageState`，只返回 `location.href`、`document.title`、`document.visibilityState`、`document.hasFocus()`，不发真实详情请求。
+- [x] Task 4：新增本地 `scripts/maimai_trace_diff.py` 与测试，用两份 trace JSON 输出 sender、active tab、visibility、timing、extra actions 的差异矩阵。
+- [x] Task 5：实现扩展诊断 trace 和 automation API，保持真实 `startDetailBatch` 链路不变。
+- [x] Task 6：运行聚焦测试、JS/Python 语法检查、`git diff --check`。
+
+## Review
+
+- 已实现扩展诊断 trace：`preflightTrace`、`probeOnly`、`getDiagnosticTraces`、`clearDiagnosticTraces`；`probeOnly` 不调用 `sendDetailFetch` 或 `DetailBatch.run`。
+- 已实现 content 被动页态探针：`tracePageState` 只返回 `location.href`、`document.title`、`document.visibilityState`、`document.hasFocus()`，不向页面 `postMessage`，不触发真实详情请求。
+- 已让关键批量动作写入诊断 trace：`clearAll`、`importDetailContacts`、`startDetailBatch`、`getDetailBatchStatus`、`getFullExportData`、`exportFullJson`；完整导出包含 `diagnosticTraces`，便于手动路径导出后离线比对。
+- 已新增 `scripts/maimai_trace_diff.py`，支持读取 `traces` / `diagnosticTraces` / 嵌套 `data` 形态，输出 sender、active tab、visibility/focus、动作序列和调用间隔差异矩阵。
+- RED 验证：新增扩展诊断契约测试与 trace diff 测试均先失败，缺口分别为诊断接口/动作 trace/diff 脚本不存在。
+- 聚焦验证：`python -m pytest tests/test_maimai_scraper_extension.py tests/test_maimai_trace_diff.py -q` -> **37 passed**。
+- 语法检查：`node --check extensions/maimai-scraper/background.js`、`content.js`、`automation.js` -> **PASS**；`python -m py_compile scripts/maimai_trace_diff.py` -> **PASS**。
+- 全量验证：`python -m pytest tests scripts -q` -> **441 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` event loop deprecation。
+- 差异检查：`git diff --check` -> **PASS**。
+
+## 手动成功路径 trace 读取（2026-05-13）
+
+- 用户完成手动详情抓取并导出：`C:\Users\Administrator\Downloads\maimai-capture-2026-05-13 (1).json`。
+- 本地只读检查结果：`contacts=30`、`detailJobs=30`、`details=30`、`captured_details=30`、`failed=0`、`diagnosticTraces=166`。
+- 详情结果：30 个 jobs 全部 `done`，4 个详情接口均返回 200；`maimai_detail_import.py dry-run` 输出 `data/output/maimai-ai-infra-manual-detail-dry-run-2026-05-13.md`，结果 `matched=17,unmatched=13,failed_jobs=0`，未写库、未 apply。
+- 手动 trace 基线：所有 trace 的 `senderType=popup`，`sender.url=chrome-extension://mdhjdjdmkghiecabeolipnhlcdecgnpj/popup.html`。
+- 手动 trace 页面状态：所有 trace 的 active tab / target tab / page href 均为 `https://maimai.cn/ent/v41/recruit/talents?tab=1`，标题 `人才银行`，`visibilityState=visible`。
+- 手动 trace 焦点状态：`windowFocused=false` 且 `document.hasFocus=false`，但详情仍成功；因此窗口焦点/页面焦点不是充分触发条件，后续更应优先比较 sender、active tab、visibility、动作序列和真实详情请求来源。
+- 手动动作序列：`clearAll -> exportFullJson -> importDetailContacts -> startDetailBatch`；`importDetailContacts -> startDetailBatch` 间隔约 3507ms。
+- 手动详情节奏：30 个 job 的单次详情耗时约 `695-1040ms`，job start 间隔约 `5954-13144ms`，平均约 `9464ms`，符合 safe 模式的自然节奏。
+- 上次自动化失败导出尚未包含 `diagnosticTraces`，不能与本次手动 trace 做同粒度 diff；下一步需要一个不发真实详情请求的 automation `probeOnly` trace 对照，且必须由用户再次明确授权。
+
+## Automation probeOnly 对照执行（2026-05-13）
+
+- [x] Task 1：只读检查 `127.0.0.1:9888/json/list`，确认是否已有 `automation.html` 和人才银行页；不导航、不刷新、不激活 tab。
+- [x] Task 2：通过 automation 页执行 `clearDiagnosticTraces -> preflightTrace -> probeOnly -> getDiagnosticTraces`；不调用 `importDetailContacts`、`startDetailBatch`、`detailFetch`、`getFullExportData`。
+- [x] Task 3：保存 automation trace 到 `data/output/raw/maimai-ai-infra-automation-probe-trace-2026-05-13.json`。
+- [x] Task 4：用 `scripts/maimai_trace_diff.py` 比较手动导出与 automation probe trace，输出到 `data/output/maimai-ai-infra-manual-vs-automation-probe-diff-2026-05-13.md`。
+- [x] Task 5：记录对照结果；若出现登录页、验证码、content script 缺失或 pageState 异常，立即停止且不进入真实详情。
+
+## Automation probeOnly 对照 Review（2026-05-13）
+
+- 执行前 CDP 页面：存在 `https://maimai.cn/ent/v41/recruit/talents?tab=1` 人才银行页和扩展 service worker；不存在 `automation.html`。
+- 为获得真实 automation sender，本轮临时打开扩展 `automation.html`；未导航、刷新或激活人才银行页，未调用导入/启动详情/真实详情请求。
+- probe 输出：`data/output/raw/maimai-ai-infra-automation-probe-trace-2026-05-13.json`，`diagnosticTraces=2`，动作仅 `preflightTrace` 和 `probeOnly`。
+- 执行后人才银行页仍存在，标题 `人才银行`，未观察到登录页/验证码；临时 automation 页已关闭，页面列表中 `remainingAutomationPages=0`。
+- diff 输出：`data/output/maimai-ai-infra-manual-vs-automation-probe-diff-2026-05-13.md`。
+- 核心差异 1：手动成功路径 `senderType=popup` / `sender.url=.../popup.html`；automation probe `senderType=automation` / `sender.url=.../automation.html`。
+- 核心差异 2：手动成功路径中人才银行页是 active/visible；automation probe 中 active tab 变为 automation 页，人才银行页 `active=false`、`visibilityState=hidden`。
+- 核心差异 3：手动成功路径 `windowFocused=false`、`document.hasFocus=false` 仍成功；automation probe `windowFocused=true` 但人才银行页 hidden，说明关键不是“窗口聚焦”，而是“目标页是否仍作为前台可见业务页”。
+- 当前根因判断：自动化路径在进入真实详情前已经改变调用上下文，最可疑触发因素是 `automation.html`/CDP 作为 sender 且把人才银行页置为 hidden；这与用户手动 popup 成功路径存在强差异。
+- 规避方向：不要用会抢占 active tab 的 `automation.html` 作为生产详情入口；优先改成 popup/用户手动触发路径，或设计不打开新页且显式 `targetTabId`、同时保持人才银行页 active/visible 的低风险控制面。真实详情自动化在该差异消除前不应继续。
+
+## Popup 本地任务包自动化重设计（2026-05-13）
+
+> 目标：不再用 `automation.html`/CDP 作为真实详情入口；改为本地 CLI 提供任务包，用户在人才银行页打开扩展 popup 点击加载/启动，让真实详情触发仍来自已验证成功的 `popup.html` sender。
+
+- [x] Task 1：写入实施计划 `docs/superpowers/plans/2026-05-13-maimai-popup-local-plan-automation.md`。
+- [x] Task 2：补 popup 本地任务包契约测试，要求 manifest 允许 localhost、popup 暴露本地任务包 URL、加载、加载并启动按钮，JS 使用 `fetch(localPlanUrl)` 并复用 `importDetailContacts/startDetailBatch`。
+- [x] Task 3：实现 popup 本地任务包入口：`detail-local-plan-url`、`btn-load-local-detail-plan`、`btn-load-start-local-detail-plan`、`detail-local-plan-status`。
+- [x] Task 4：新增 `scripts/maimai_detail_plan_server.py`，只读服务 `/detail-plan.json` 与 `/health`，默认 `127.0.0.1:8765`。
+- [x] Task 5：补 `tests/test_maimai_detail_plan_server.py`，覆盖 contacts 形态、顶层 list 形态和缺失 contacts 报错。
+- [x] Task 6：运行验证并准备进入用户协作执行。
+
+## Popup 本地任务包自动化 Review（2026-05-13）
+
+- 新增 popup 任务包入口，但真实详情仍由用户在 popup 点击触发；没有新增 CDP/automation.html 真实详情路径。
+- `manifest.json` 新增 `http://127.0.0.1/*`、`http://localhost/*` host permissions，仅用于 popup 读取本地任务包。
+- `scripts/maimai_detail_plan_server.py` 只读取指定 JSON 文件并服务给 popup，不触碰浏览器。
+- 聚焦验证：`python -m pytest tests/test_maimai_scraper_extension.py tests/test_maimai_detail_plan_server.py -q` -> **38 passed**。
+- 语法检查：`node --check extensions/maimai-scraper/popup.js`、`python -m py_compile scripts/maimai_detail_plan_server.py`、`git diff --check` -> **PASS**。
+- 全量验证：`python -m pytest tests scripts -q` -> **445 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` event loop deprecation。
+
+## Popup 本地任务包执行结果（2026-05-13）
+
+- 用户按新方案执行 popup 本地任务包路径后导出：`C:\Users\Administrator\Downloads\maimai-capture-2026-05-13 (2).json`。
+- 导出检查：`contacts=3`、`detailJobs=3`、`details=3`、`captured_details=3`、`done=3`、`failed=0`、`skipped=0`、`circuit_breaker.tripped=false`。
+- 三个详情 job 均成功，四个详情接口均返回 200：`basic=200`、`projects=200`、`job_preference=200`、`contact_btn=200`。
+- job 节奏：单 job 耗时 `669-843ms`；job start 间隔约 `5928ms`、`8815ms`，符合 safe 模式低速执行。
+- dry-run：`python scripts/maimai_detail_import.py dry-run --capture-file "C:\Users\Administrator\Downloads\maimai-capture-2026-05-13 (2).json" --db data/talent.db --out data/output/maimai-ai-infra-popup-local-plan-dry-run-2026-05-13.md` -> `matched=2,unmatched=1,failed_jobs=0`；未写库、未 apply。
+- trace 清洗：导出中残留了上一次 automation probe 的 2 条旧 trace；已生成仅包含本轮 popup sender 的 trace：`data/output/raw/maimai-ai-infra-popup-local-plan-trace-2026-05-13.json`。
+- trace diff：`data/output/maimai-ai-infra-manual-vs-popup-local-plan-diff-2026-05-13.md`；与手动成功基线相比，sender/active tab/page visibility/page focus/window focus 均一致，仅动作序列因本轮目标数和前置状态轮询不同而不同。
+- 结论：`CLI 本地任务包服务 + 用户在人才银行页 popup 加载/启动 + 扩展 safe 详情 + 导出 + 本地 dry-run` 小样本闭环已打通。该结论覆盖 3 个目标的 human-in-the-loop 自动化，不代表可以恢复 `automation.html`/CDP 真实详情入口。
+
+## AI Infra Phase 0 收口与可行落地计划（2026-05-13）
+
+> 目标：结束前期可行性调研，把调研结论和经验记录完整；复审 `docs/superpowers/plans/2026-05-12-maimai-ai-infra-automated-search.md`，制定当前技术可行条件下的执行计划。
+
+- [x] Task 1：读取旧自动搜索计划、Phase 0 可行性报告、详情差异对照、popup 本地任务包方案和现有 AI Infra 脚本。
+- [x] Task 2：更新 `data/output/maimai-ai-infra-feasibility-2026-05-12.md` 顶部最终判定：搜索小样本通过，`automation.html`/CDP 真实详情入口不通过，popup 本地任务包详情闭环通过。
+- [x] Task 3：新增调研复盘 `docs/design-discussions/2026-05-13-maimai-ai-infra-phase0-retrospective.md`，记录关键证据、技术边界、禁用路径、放大策略和对旧计划的影响。
+- [x] Task 4：在旧计划 `docs/superpowers/plans/2026-05-12-maimai-ai-infra-automated-search.md` 顶部加入 2026-05-13 复审结论，标注“完全无人详情补全”目标不再成立。
+- [x] Task 5：新增当前可行落地计划 `docs/superpowers/plans/2026-05-13-maimai-ai-infra-feasible-execution.md`。
+- [x] Task 6：运行文档一致性检查和 `git diff --check`，补充本 Review。
+
+## AI Infra Phase 0 收口 Review
+
+- 旧计划保留搜索 dry-run、本地导入 dry-run、本地评分和 shortlist 主干；废弃 `automation.html`/CDP 真实详情入口作为默认路径。
+- 新计划将人机协作点固定为：策略确认、搜索 apply 确认、详情 popup 启动、详情 apply 确认。
+- 新计划将扩大路径拆为搜索 Gate S2/S3 和详情 Gate D2/D3，避免从 3 条详情直接扩大到大批量。
+- 新计划的可执行主线：策略配置 -> 搜索 S2 -> 搜索 dry-run/apply gate -> rank -> 详情目标 -> detail plan server -> 用户 popup 启动 -> 详情 dry-run/apply gate -> 最终执行报告。
+- 文档一致性检查通过：旧计划已标注 superseded，新落地计划引用 `2026-05-13-maimai-ai-infra-feasible-execution.md`，未发现需要处理的占位项。
+- `git diff --check` 已通过；本收口阶段未执行浏览器、CDP 或真实平台动作。
+- 全量本地回归通过：`python -m pytest tests scripts -q` -> 445 passed, 1 个既有 `scripts/test_boss.py` 事件循环弃用 warning。
+- 语法检查通过：`node --check` 覆盖扩展主要 JS；`python -m py_compile` 覆盖新增详情计划服务和 trace diff 脚本。
+
+# AI Infra Gate S2/D2 执行（2026-05-13）
+
+> 目标：在当前可行技术边界下执行搜索 Gate S2（5 批 x 1 页，无写库）和详情 Gate D2（10 人 popup 本地任务包），全程保留 raw 证据，写库必须等待显式 apply 授权。
+
+- [x] Task 1：生成 S2 搜索计划 `data/output/maimai-ai-infra-search-plan-s2-2026-05-13.json`。
+- [x] Task 2：生成 S2 选中 5 批文件 `data/output/raw/maimai-ai-infra-search-plan-s2-selected-2026-05-13.json`。
+- [x] Task 3：运行 S2 模板 dry-run，确认只 patch `query/search_query` 和分页字段。
+- [x] Task 4：定位或补齐受控 live search 执行方式；禁止详情、禁止写库、遇登录/验证码/429/非 JSON 立即停止。
+- [x] Task 5：用户确认专用 Edge profile 人才银行页健康后，执行 S2 live search，输出 raw run JSON。
+- [x] Task 6：把 S2 搜索结果转换为 contacts payload，并运行搜索导入 dry-run。
+- [x] Task 7：dry-run clean 后请求搜索 apply 授权；未授权不写 `data/talent.db`。（本轮 contacts=0，apply 为无写入 no-op，未请求授权）
+- [x] Task 8：生成 AI Infra shortlist，并选出 D2 10 人详情目标任务包。
+- [x] Task 9：启动本地 detail plan server，引导用户用 popup 执行 D2，取得下载 JSON 后运行详情 dry-run。
+- [x] Task 10：生成执行报告、更新 Review，并运行必要验证。
+
+## AI Infra Gate S2/D2 Review
+
+- S2 计划生成通过：全量计划 80 批，每批默认 3 页；S2 selected plan 已收紧为前 5 批、每批 1 页，且 `writeDb=false`、`apply=false`、`detailFetch=false`。
+- S2 模板 dry-run 通过：`data/output/raw/maimai-ai-infra-search-run-s2-template-2026-05-13.json` 为 `dry-run-template-only`，共 5 批 5 页。
+- 模板 patch 校验通过：`query/search_query` 已替换为批次关键词；`allcompanies/degrees/positions/worktimes/age` 保持模板值不变；分页为 page=1、size=30。
+- 新增受控 live runner：`scripts/maimai_ai_infra_search_live_gate.py`。它只连接已有人才银行页 CDP target，读取页面内 `window.__maimaiSearchTemplate`，只替换 query 和分页；不打开 `automation.html`、不触发详情、不写库，遇登录/验证码/403/429/非 JSON 立即停止并写 raw run。
+- live runner TDD 验证：先新增 `tests/test_maimai_ai_infra_search_live_gate.py` 并观察到 `ModuleNotFoundError` 红灯；实现后 `python -m pytest tests/test_maimai_ai_infra_search_live_gate.py -q` -> 4 passed。
+- 会话恢复后修复 Edge CDP WebSocket Origin：`CdpSession` 使用 `websocket.create_connection(..., suppress_origin=True)`，避免 Edge 拒绝默认 `Origin: http://127.0.0.1:9888`；补 `test_cdp_session_suppresses_origin_header` 锁定行为。
+- 根据只读复核补强 live runner 信任边界：新增 `validate_search_template_status()`，要求模板为 `POST /api/ent/v3/search/basic`，且 body 含 query/search_query 与分页字段；不兼容时在发页面内 `fetch` 前写 `stopReason=incompatible_request_shape` 并停止。
+- 补强 raw run 证据：每批保留 `responseData`（完整解析 JSON）和 `responseRawPreview`（前 2000 字符），异常分支会写入 batch `error`；最终健康检查异常时写 `afterHealthError`，不丢已采集证据。
+- 恢复后验证：`python -m pytest tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py -q` -> **16 passed**；`python -m py_compile scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_pipeline.py` -> **PASS**；`git diff --check` -> **PASS**。
+- 用户明确确认后执行 S2 live search：`data/output/raw/maimai-ai-infra-search-run-s2-2026-05-13.json`，结果 `status=completed`、`batches=5`、`contacts=0`；5 个 batch 均为 HTTP 200 JSON，`code=0/result=ok`，无登录、验证码、403、429 或非 JSON 熔断。
+- S2 响应业务结果：5 个精确查询均返回 `total=0,total_match=0,count=0,listLength=0`；页面执行前后仍为 `https://maimai.cn/ent/v41/recruit/talents?tab=1`，`hasLoginPrompt=false`、`hasCaptcha=false`。
+- contacts payload：`data/output/raw/maimai-ai-infra-search-run-s2-2026-05-13.contacts.json`，`total_contacts=0`。
+- 搜索导入 dry-run：`data/output/talent-import-ai-infra-s2-dry-run-2026-05-13.md` -> 原始 0、去重后 0、新建 0、合并 0、待确认 0、失败 0；未写 `data/talent.db`，未 apply。
+- 当前暂停点：S2 平台门禁通过但业务结果为空；继续 rank/D2 会基于旧库而不是 S2 新结果，不符合“从新/更新搜索池选 D2 目标”的计划。下一步应重规划 S2b/S3 查询宽度，降低引号精确匹配强度或选取更宽的公司/关键词批次后再请求新的 live search 授权。
+
+## S2b 宽查询探针
+
+> 目标：针对 S2 五个精确查询全部返回 0 的情况，先用 5 个更宽关键词验证平台搜索是否能返回可用候选。仍只做搜索，不写库、不 apply、不触发详情。
+
+- [x] Task 1：生成 S2b selected plan：`data/output/raw/maimai-ai-infra-search-plan-s2b-selected-2026-05-13.json`。
+- [x] Task 2：运行 S2b 模板 dry-run：`data/output/raw/maimai-ai-infra-search-run-s2b-template-2026-05-13.json`。
+- [x] Task 3：用户确认专用 Edge profile 人才银行页健康后，执行 S2b live search。
+- [x] Task 4：若 S2b 返回联系人，转换 contacts payload 并运行导入 dry-run；clean 前不写库、不 apply。
+
+## S2b Review
+
+- S2b 查询：`AI Infra`、`ML Infra`、`大模型`、`分布式训练`、`推理`。
+- S2b selected plan 约束：`max_batches=5`、`max_pages_per_batch=1`、`writeDb=false`、`apply=false`、`detailFetch=false`。
+- S2b 模板 dry-run 通过：5 个 batch 均为 `dry-run-template-only`，每批 1 页；`query/search_query` 被替换为宽关键词，分页为 `page=1,size=30`。
+- 模板保留项：`allcompanies=一线互联网公司`，`degrees/positions/worktimes/age` 等模板字段未由 S2b 改写。
+- 验证：`git diff --check` -> **PASS**。
+- 用户明确确认后执行 S2b live search：`data/output/raw/maimai-ai-infra-search-run-s2b-2026-05-13.json`，结果 `status=completed`、`batches=5`、`contacts=150`；5 个 batch 均为 HTTP 200 JSON，无登录、验证码、403、429 或非 JSON 熔断。
+- S2b 每批返回：`AI Infra` 30/440，`ML Infra` 30/228，`大模型` 30/1000（total_match=3087），`分布式训练` 30/1000，`推理` 30/751；页面执行前后仍为人才银行页，`hasLoginPrompt=false`、`hasCaptcha=false`。
+- contacts payload：`data/output/raw/maimai-ai-infra-search-run-s2b-2026-05-13.contacts.json`，`total_contacts=150`。
+- 搜索导入 dry-run：`data/output/talent-import-ai-infra-s2b-dry-run-2026-05-13.md` -> 原始 150、去重后 139、新建 130、合并 9、待确认 0、失败 0；未写 `data/talent.db`，未 apply。
+- 备注：S2b raw run 的 `run_id` 字段沿用 live runner 默认 `maimai-ai-infra-search-s2-2026-05-13`，但文件名和 selected plan gate 均为 S2b；本轮不改写 raw 证据。
+- 当前门禁：S2b 搜索 dry-run clean，可进入搜索 apply 授权门禁；只有用户明确回复 `确认导入 AI Infra 搜索结果` 后才允许写入 `data/talent.db`。
+- 用户明确回复 `确认导入 AI Infra 搜索结果` 后执行 apply：`data/output/talent-import-ai-infra-s2b-apply-2026-05-13.md` -> 原始 150、去重后 139、新建 130、合并 9、待确认 0、失败 0。
+- 生成 S2b shortlist：`data/output/maimai-ai-infra-shortlist-s2b-2026-05-13.json` 与 `data/output/maimai-ai-infra-shortlist-s2b-2026-05-13.md`；分层统计 A=315、B=572、C=840、淘汰=1136。
+- 生成 D2 详情目标包：`data/output/raw/maimai-ai-infra-detail-targets-d2-s2b-2026-05-13.json`，取 A 档前 10 人，`total_contacts=10,missing=0`。
+- 已启动本地 detail plan server：`http://127.0.0.1:8765/detail-plan.json`，`/health` 返回 `ok=true,totalContacts=10`；日志在 `data/output/raw/maimai-detail-plan-server-d2-s2b-8765.out.log` 与 `.err.log`。
+- 用户完成 D2 popup 路径并提供下载文件：`C:\Users\Administrator\Downloads\maimai-capture-2026-05-13 (3).json`；已归档为 `data/output/raw/maimai-ai-infra-detail-capture-d2-s2b-2026-05-13.json`。
+- D2 capture 检查：`contacts=10,detailJobs=10,details=10,captured_details=10,total_jobs=10,done=10,failed=0,skipped=0,diagnosticTraces=96`；导出中残留早先 automation probe trace 2 条，本轮 D2 实际 trace 主要为 popup sender，popup visible trace 90 条。
+- D2 详情 dry-run：`data/output/maimai-ai-infra-detail-d2-s2b-dry-run-2026-05-13.md` -> 匹配 10、未匹配 0、失败 jobs 0、写入人数 0。
+- 本地 detail plan server 已停止，`127.0.0.1:8765` 不再监听。
+- 当前门禁：D2 dry-run clean，可进入详情 apply 授权门禁；只有用户明确回复 `确认写入 AI Infra 脉脉详情` 后才允许写入详情。
+- 用户明确回复 `确认写入 AI Infra 脉脉详情` 后执行详情 apply：`data/output/maimai-ai-infra-detail-d2-s2b-apply-2026-05-13.md` 与 `data/output/maimai-ai-infra-detail-d2-s2b-apply-2026-05-13.json` -> 匹配 10、未匹配 0、失败 jobs 0、写入人数 10。
+- 写后抽样/全量目标验证：10 个 candidate_id 均存在 `candidate_details` 记录，详情 JSON 计数与 apply 报告一致：刘松伟 work=4/edu=2/project=0，jr 4/3/0，廖常越 4/2/0，王大锤 4/0/0，林睿江 3/2/0，陈垣桥 8/5/0，Mr Red 2/2/0，廖嘉伟 5/2/0，大梦想家 6/3/0，阳晨 2/1/0。
+- 最终执行报告：`data/output/maimai-ai-infra-execution-2026-05-13.md` 已更新 S2/S2b、search apply、shortlist、D2 target、D2 capture、detail dry-run/apply 和残余风险。
+- 最终聚焦验证：`python -m pytest tests/test_maimai_ai_infra_strategy.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_scraper_extension.py tests/test_maimai_detail_plan_server.py tests/test_maimai_trace_diff.py tests/test_maimai_detail_import.py tests/test_maimai_detail_targets.py -q` -> **67 passed**。
+- 最终语法检查：`node --check extensions/maimai-scraper/background.js/content.js/inject.js/popup.js` -> **PASS**；`python -m py_compile scripts/maimai_ai_infra_search_plan.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_rank.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_detail_plan_server.py scripts/maimai_detail_targets.py scripts/maimai_detail_import.py scripts/maimai_trace_diff.py` -> **PASS**；`git diff --check` -> **PASS**。
+- 最终全量回归：`python -m pytest tests scripts -q` -> **454 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` event loop deprecation。
+- 本轮执行结论：S2 精确查询平台门禁通过但结果为空；S2b 宽查询成功，搜索 apply 写入 130 新建/9 合并；D2 popup 详情 10/10 成功，详情 apply 写入 10 人；未发生登录/验证码/403/429 熔断。
+
+## D3 详情放大门禁准备（2026-05-13）
+
+> 目标：在 D2 10 人 popup 详情成功后，继续用相同 human-in-the-loop 路径准备 D3 30 人详情任务包。仍不使用 `automation.html` 或 CDP 触发详情；真实详情必须由用户在人才银行页手动打开 popup 加载/启动。
+
+- [x] Task 1：从 `data/output/maimai-ai-infra-shortlist-s2b-2026-05-13.json` 选择 A 档后续 30 人，排除已完成 D2 的 10 人。
+- [x] Task 2：生成 `data/output/raw/maimai-ai-infra-detail-targets-d3-s2b-2026-05-13.json`，要求 `total_contacts=30,missing=0`。
+- [x] Task 3：启动只读 detail plan server，服务 D3 目标包，验证 `/health` 和 `/detail-plan.json`。
+- [x] Task 4：等待用户手动 popup 执行 D3 并提供导出 JSON；取得后再做详情 dry-run。
+
+## D3 Review
+
+- D3 目标包：`data/output/raw/maimai-ai-infra-detail-targets-d3-s2b-2026-05-13.json`，`total_contacts=30,missing=0`。
+- 本地只读 detail plan server 已验证：`/health` 返回 `ok=true,totalContacts=30`，`/detail-plan.json` 首个联系人为姜卓；完成 capture 后已停止，`127.0.0.1:8765` 不再监听。
+- 用户完成 D3 popup 路径并提供下载文件：`C:\Users\Administrator\Downloads\maimai-capture-2026-05-13 (4).json`；已归档为 `data/output/raw/maimai-ai-infra-detail-capture-d3-s2b-2026-05-13.json`。
+- D3 capture 检查：`contacts=30,detailJobs=30,details=30,total_jobs=30,done=30,failed=0,skipped=0,diagnosticTraces=200,circuit_breaker.tripped=false`；30 个 job 状态均为 `done`。
+- D3 详情 dry-run：`data/output/maimai-ai-infra-detail-d3-s2b-dry-run-2026-05-13.md` -> 匹配 30、未匹配 0、失败 jobs 0、写入人数 0。
+- 当前门禁：D3 dry-run clean，可进入详情 apply 授权门禁；只有用户明确回复 `确认写入 AI Infra 脉脉详情` 后才允许写入详情。
+- 用户明确回复 `确认写入 AI Infra 脉脉详情` 并要求使用现有 db 写入工具后，执行 `scripts/maimai_detail_import.py apply`，未手写 SQL 或自定义写库逻辑。
+- D3 详情 apply：`data/output/maimai-ai-infra-detail-d3-s2b-apply-2026-05-13.md` 与 `data/output/maimai-ai-infra-detail-d3-s2b-apply-2026-05-13.json` -> 匹配 30、未匹配 0、失败 jobs 0、写入人数 30，工具返回 30 个 `verified_candidate_ids`。
+- D3 聚焦验证：`python -m pytest tests/test_maimai_detail_import.py tests/test_maimai_detail_targets.py tests/test_maimai_detail_plan_server.py -q` -> **9 passed**；`python -m py_compile scripts/maimai_detail_import.py scripts/maimai_detail_targets.py scripts/maimai_detail_plan_server.py` -> **PASS**。
+- D3 收口验证：`git diff --check` -> **PASS**；`python -m pytest tests scripts -q` -> **454 passed, 1 warning**，warning 为既有 `scripts/test_boss.py` event loop deprecation。
+
+# AI Infra Gate S3 准备（2026-05-13）
+
+> 目标：承接 S2b 宽查询成功结果，准备 S3 搜索放大门禁（5 批 x 3 页）。准备阶段只生成本地计划和模板 dry-run，不访问脉脉、不写库、不触发详情；live search 必须等待用户单独明确授权。
+
+- [x] Task 1：基于 `data/output/raw/maimai-ai-infra-search-plan-s2b-selected-2026-05-13.json` 生成 `data/output/raw/maimai-ai-infra-search-plan-s3-selected-2026-05-13.json`，要求 5 批、每批 `max_pages=3`。
+- [x] Task 2：运行 S3 模板 dry-run，输出 `data/output/raw/maimai-ai-infra-search-run-s3-template-2026-05-13.json`，确认只 patch `query/search_query` 与分页字段。
+- [x] Task 3：等待用户明确回复 `确认执行 S3 live search` 后，才允许执行真实 S3 搜索；执行前再次确认浏览器人才银行页健康，不写库、不触发详情。
+- [x] Task 4：修复 live runner 未执行多页的问题，补 TDD 覆盖 `max_pages` 和 continuation `start_page`。
+- [x] Task 5：归档首轮 page1 partial raw，生成 pages 2-3 continuation plan，执行 continuation 并合并为完整 S3 raw。
+- [x] Task 6：转换完整 S3 contacts payload，运行搜索导入 dry-run；clean 前不写库、不 apply。
+
+## S3 准备 Review
+
+- S3 selected plan：`data/output/raw/maimai-ai-infra-search-plan-s3-selected-2026-05-13.json`，`gate=S3`、`max_batches=5`、`max_pages_per_batch=3`，查询为 `AI Infra|ML Infra|大模型|分布式训练|推理`。
+- S3 template dry-run：`data/output/raw/maimai-ai-infra-search-run-s3-template-2026-05-13.json`，状态为 `dry-run-template-only`，5 个 batch 均生成 3 个 patched pages。
+- 样本校验：第 1 批第 1/2/3 页分别写入 `paginationParam.page=1/2/3`、`search.page=0/1/2`，`query/search_query=AI Infra`，并保留 `allcompanies=一线互联网公司`。
+- 用户明确回复 `确认执行 S3 live search` 后执行 S3 live search。首轮暴露 live runner 只执行每批第 1 页的问题，已归档为 `data/output/raw/maimai-ai-infra-search-run-s3-page1-partial-2026-05-13.json`。
+- 修复 `scripts/maimai_ai_infra_search_live_gate.py`：支持按 `max_pages` 多页循环，并支持 `start_page` continuation；新增测试覆盖该行为。
+- continuation plan：`data/output/raw/maimai-ai-infra-search-plan-s3-continuation-pages2-3-2026-05-13.json`，只抓第 2-3 页，避免重复请求第 1 页。
+- continuation raw：`data/output/raw/maimai-ai-infra-search-run-s3-continuation-pages2-3-2026-05-13.json` -> 5 批、300 contacts、无熔断。
+- 完整 S3 raw：`data/output/raw/maimai-ai-infra-search-run-s3-2026-05-13.json` -> 5 批 x 3 页、450 原始 contacts、每批 90 contacts、`status=completed,stopReason=null`。
+- 完整 S3 contacts payload：`data/output/raw/maimai-ai-infra-search-run-s3-2026-05-13.contacts.json` -> `total_contacts=450`。
+- S3 导入 dry-run：`data/output/talent-import-ai-infra-s3-dry-run-2026-05-13.md` -> 原始 450、去重后 414、新建 256、合并 158、待确认 0、失败 0；未写 `data/talent.db`，未 apply。
+- S3 验证：`python -m pytest tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py -q` -> **18 passed**；`python -m py_compile scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_pipeline.py` -> **PASS**；`git diff --check` -> **PASS**；`python -m pytest tests scripts -q` -> **456 passed, 1 warning**。
+- 用户明确回复 `确认导入 AI Infra S3 搜索结果` 并要求调用已有 db 工具后，使用 `scripts/talent_library.py import --apply --confirm "确认导入人才"` 执行 S3 apply；未手写 SQL 或自定义写库逻辑。
+- S3 apply 报告：`data/output/talent-import-ai-infra-s3-apply-2026-05-13.md` -> 原始 450、去重后 414、新建 256、合并 158、待确认 0、失败 0。
+- S3 写后只读复跑：`data/output/talent-import-ai-infra-s3-post-apply-dry-run-2026-05-13.md` -> 原始 450、去重后 414、新建 0、合并 414、待确认 0、失败 0。
+- S3 shortlist：`data/output/maimai-ai-infra-shortlist-s3-2026-05-13.json` 与 `data/output/maimai-ai-infra-shortlist-s3-2026-05-13.md`；分层统计 A=346、B=619、C=916、淘汰=1238。
+- S3 apply 收口验证：`python -m pytest tests/test_talent_library_cli.py tests/test_maimai_ai_infra_strategy.py tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_pipeline.py -q` -> **27 passed**；`python -m py_compile scripts/talent_library.py scripts/maimai_ai_infra_rank.py scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_pipeline.py` -> **PASS**；`git diff --check` -> **PASS**；`python -m pytest tests scripts -q` -> **456 passed, 1 warning**。
+- 当前门禁：S3 搜索结果已写入；下一步可基于 S3 shortlist 选择新一轮详情目标，仍需 popup 启动和详情 apply 单独授权。
+
+# AI Infra Gate D4 详情准备（2026-05-13）
+
+> 目标：基于 S3 shortlist 选择全部尚未完成 `maimai_detail_capture` 的 A 档候选人。仍不使用 `automation.html` 或 CDP 触发详情；真实详情必须由用户在人才银行页 popup 加载本地任务包并手动启动。
+
+- [x] Task 1：从 `data/output/maimai-ai-infra-shortlist-s3-2026-05-13.json` 选择全部 A 档且尚无 `raw_data.maimai_detail_capture` 的候选人，并保留选择审计文件。
+- [x] Task 2：调用现有 `scripts/maimai_detail_targets.py from-ids` 生成 `data/output/raw/maimai-ai-infra-detail-targets-d4-s3-all-a-2026-05-13.json`，要求 `total_contacts=305,missing=0`。
+- [x] Task 3：启动只读 detail plan server，服务 D4 all-A 目标包，验证 `/health` 和 `/detail-plan.json`。
+- [x] Task 4：等待用户手动 popup 执行 D4 并提供导出 JSON；取得后再做详情 dry-run。
+- [x] Task 5：D4 首段因 daily limit 只完成 100/305，归档 partial capture 并运行详情 dry-run。
+- [x] Task 6：生成剩余 205 人 continuation 任务包；暂不启动服务，避免 daily limit 后误继续。
+
+## D4 准备 Review
+
+- 用户纠正：30 人数量级已由 D3 验证，不应再次生成 30 人任务包；旧的 `data/output/raw/maimai-ai-infra-detail-targets-d4-s3-2026-05-13.json` 不继续使用。
+- 选择审计：`data/output/raw/maimai-ai-infra-detail-target-candidates-d4-s3-all-a-2026-05-13.json`，S3 A 档共 346 人，其中已有 `maimai_detail_capture` 的候选人已排除，最终选择 305 人。
+- D4 all-A 任务包：`data/output/raw/maimai-ai-infra-detail-targets-d4-s3-all-a-2026-05-13.json`，`total_contacts=305,missing=0`，首个联系人为周依源。
+- 本地只读 detail plan server 已启动：`http://127.0.0.1:8765/detail-plan.json`，`/health` 返回 `ok=true,totalContacts=305`。
+- 服务日志：`data/output/raw/maimai-detail-plan-server-d4-s3-all-a-8765.out.log` 与 `data/output/raw/maimai-detail-plan-server-d4-s3-all-a-8765.err.log`。
+- 用户提供 D4 导出：`C:\Users\Administrator\Downloads\maimai-capture-2026-05-13.json`；已归档为 `data/output/raw/maimai-ai-infra-detail-capture-d4-s3-all-a-2026-05-13.json`。
+- D4 capture 检查：`contacts=305,detailJobs=305,details=100,total_jobs=305,done=100,queued=205,failed=0,skipped=0,diagnosticTraces=200`；`circuit_breaker.reason=daily_limit_reached`，未出现失败 job。
+- D4 详情 dry-run：`data/output/maimai-ai-infra-detail-d4-s3-all-a-dry-run-2026-05-13.md` -> 匹配 100、未匹配 0、失败 jobs 0、写入人数 0。
+- 本地 detail plan server 已停止，`127.0.0.1:8765` 不再监听。
+- 剩余 continuation 任务包：`data/output/raw/maimai-ai-infra-detail-targets-d4-s3-all-a-remaining-205-2026-05-13.json`，`total_contacts=205,missing=0`，首个剩余联系人为徐睿。
+- 剩余选择审计：`data/output/raw/maimai-ai-infra-detail-target-candidates-d4-s3-all-a-remaining-205-2026-05-13.json`。
+- 用户明确回复 `确认写入 AI Infra 脉脉详情` 并要求使用 db 已有工具后，执行 `scripts/maimai_detail_import.py apply`，未手写 SQL 或自定义写库逻辑。
+- D4 首段 apply：`data/output/maimai-ai-infra-detail-d4-s3-all-a-apply-2026-05-13.md` 与 `data/output/maimai-ai-infra-detail-d4-s3-all-a-apply-2026-05-13.json` -> 匹配 100、未匹配 0、失败 jobs 0、写入人数 100，工具返回 100 个 `verified_candidate_ids`。
+- D4 写后只读复跑：`data/output/maimai-ai-infra-detail-d4-s3-all-a-post-apply-dry-run-2026-05-13.md` -> 匹配 100、未匹配 0、失败 jobs 0。
+- 当前门禁：D4 首段 100 人已写入；剩余 205 人应等 daily limit 恢复后再用 continuation 包继续 popup，详情 apply 仍需单独授权。
+
+# AI Infra Gate D4 剩余 205 人详情任务包（2026-05-13）
+
+> 目标：将 popup 详情每日上限默认值临时放宽到 10000，由用户人工把握节奏；复用已生成的剩余 205 人 continuation 包并启动只读 detail plan server。本轮不写 DB。
+
+- [x] Task 1：复核剩余任务包 `data/output/raw/maimai-ai-infra-detail-targets-d4-s3-all-a-remaining-205-2026-05-13.json`，要求 `totalContacts=205`、`contacts=205`、`missing=0`、首位联系人为徐睿。
+- [x] Task 2：将扩展详情每日限额默认值统一调整为 10000，并补充静态契约测试。
+- [x] Task 3：运行聚焦测试、JS 语法检查和 `git diff --check`。
+- [x] Task 4：启动 `detail plan server` 服务剩余 205 人任务包，并验证 `/health` 与 `/detail-plan.json`。
+- [x] Task 5：记录执行结果并通知用户手动 reload 扩展、通过 popup 执行详情。
+
+## D4 剩余 205 人 Review
+
+- 限额调整：`SAFE_POLICY.dailyLimit`、popup 默认值、popup fallback、automation fallback 均改为 `10000`；popup 输入框 `max=10000`，避免 UI 阻止用户输入。
+- 聚焦验证：`python -m pytest tests/test_maimai_scraper_extension.py tests/test_maimai_detail_plan_server.py -q` -> **39 passed**。
+- 全量回归：`python -m pytest tests scripts -q` -> **457 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` event loop deprecation。
+- JS 语法检查：`node --check extensions/maimai-scraper/detail_batch.js extensions/maimai-scraper/popup.js extensions/maimai-scraper/automation.js` -> **PASS**。
+- 差异空白检查：`git diff --check` -> **PASS**。
+- 本地 detail plan server 已启动：`http://127.0.0.1:8765/detail-plan.json`，进程 ID `34764`。
+- `/health` 验证：`ok=true,totalContacts=205`。
+- `/detail-plan.json` 验证：`totalContacts=205`、`contacts=205`、首位联系人为徐睿（`229042988`）。
+- 服务日志：`data/output/raw/maimai-detail-plan-server-d4-s3-all-a-remaining-205-8765.out.log` 与 `data/output/raw/maimai-detail-plan-server-d4-s3-all-a-remaining-205-8765.err.log`。
+- 本轮未写入 `data/talent.db`；后续详情 apply 仍需用户明确授权，并且只使用 `scripts/maimai_detail_import.py`。
+
+# maimai-scraper 批间休息到期不续跑修复（2026-05-13）
+
+> 现象：D4 剩余 205 人详情执行到 30/205 后进入批间休息；日志显示休息 8 分钟，之后 popup 倒计时显示约 0 秒但没有继续。
+
+- [x] Task 1：定位根因：MV3 background service worker 可能在 5-10 分钟长 `setTimeout` 期间被浏览器挂起，导致内存中的 `DetailBatch.run()` 等待链丢失。
+- [x] Task 2：补失败契约测试 `test_background_recovers_expired_batch_pause_from_persisted_jobs`，要求 background 能从持久化 jobs/state 恢复过期批间休息。
+- [x] Task 3：实现 `recoverExpiredBatchPauseIfNeeded()` 和 `runDetailBatchJobs()`，在 `getDetailBatchStatus/getScraperSummary` 中检测过期 `batch_pause_until` 并用同一 run token 续跑，不清空已完成 jobs/details。
+- [x] Task 4：持久化 `detailBatchTabId`，优先用原 tab 续跑；若缺失或失效，则只回退到当前已激活的人才银行 tab，不自动导航/刷新。
+- [x] Task 5：运行聚焦测试与语法检查。
+
+## 批间休息修复 Review
+
+- 红测：`python -m pytest tests/test_maimai_scraper_extension.py::test_background_recovers_expired_batch_pause_from_persisted_jobs -q` 先失败，确认旧代码缺少恢复路径。
+- 修复：新增从 `DetailDB.getAllJobs()` 与 `detailBatchState` 恢复过期批间休息的路径；`running` 状态 job 会转回 `queued` 后续跑。
+- 聚焦验证：`python -m pytest tests/test_maimai_scraper_extension.py tests/test_maimai_detail_plan_server.py -q` -> **40 passed**。
+- 全量回归：`python -m pytest tests scripts -q` -> **458 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` event loop deprecation。
+- JS 语法检查：`node --check extensions/maimai-scraper/background.js/detail_batch.js/popup.js/content.js` -> **PASS**。
+- 差异空白检查：`git diff --check` -> **PASS**。
+- 操作提示：修复需要用户重载扩展后，在人才银行页重新打开 popup；若原 30/205 状态仍在 IndexedDB/storage 中，状态刷新会触发“批间休息到点，自动继续”。
+
+# maimai-scraper 批间休息进度回退显示修复（2026-05-13）
+
+> 现象：执行日志刚显示 `详情抓取成功 ... 进度 120/205`，下一条批间暂停却显示 `已完成 60/205`。
+
+- [x] Task 1：定位根因：恢复续跑后，`batch_pause_completed` 使用的是当前 `DetailBatch.run()` 调用内的 `processed` 计数，而不是 `state.counts` 中的累计完成数。
+- [x] Task 2：补红测 `test_batch_pause_progress_uses_cumulative_completed_count_after_resume`。
+- [x] Task 3：修复 `detail_batch.js`，批间暂停写入累计完成数。
+- [x] Task 4：修复 `background.js`、`popup.js`、`content.js`，显示时取 `batch_pause_completed` 和真实 counts 的较大值，兼容已持久化的旧错误状态。
+- [x] Task 5：运行聚焦测试、JS 语法检查、全量回归和 `git diff --check`。
+
+## 批间休息进度回退 Review
+
+- 红测：`python -m pytest tests/test_maimai_scraper_extension.py::test_batch_pause_progress_uses_cumulative_completed_count_after_resume -q` 先失败，修复后通过。
+- 聚焦验证：`python -m pytest tests/test_maimai_scraper_extension.py tests/test_maimai_detail_plan_server.py -q` -> **41 passed**。
+- 全量回归：`python -m pytest tests scripts -q` -> **459 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` event loop deprecation。
+- JS 语法检查：`node --check extensions/maimai-scraper/background.js extensions/maimai-scraper/detail_batch.js extensions/maimai-scraper/popup.js extensions/maimai-scraper/content.js` -> **PASS**。
+- 差异空白检查：`git diff --check` -> **PASS**。
+- 当前判断：截图中的 `60/205` 是批间暂停显示字段回退，不代表已抓取的 120 条详情丢失；导出 JSON 后应以 `detailJobs/details` 实际数量为准。
+
+# AI Infra D4 剩余 205 人详情 Dry-Run（2026-05-13）
+
+> 目标：归档用户导出的剩余 205 人详情 capture，并用现有 `scripts/maimai_detail_import.py dry-run` 检查；本轮不写 DB。
+
+- [x] Task 1：检查用户提供路径 `C:\Users\Administrator\Downloads\maimai-capture-2026-05-13.json`。
+- [x] Task 2：发现该路径与早先 D4 首段 `100/305` capture 哈希相同，不是本轮新导出；改用 Downloads 最新文件 `C:\Users\Administrator\Downloads\maimai-capture-2026-05-13 (1).json`。
+- [x] Task 3：归档到 `data/output/raw/maimai-ai-infra-detail-capture-d4-s3-all-a-remaining-205-2026-05-13.json`。
+- [x] Task 4：检查 capture 结构：`contacts=205`、`detailJobs=205`、`details=205`、job 状态 `done=205`、最后日志 `批量详情已完成`。
+- [x] Task 5：调用现有详情导入工具 dry-run：`python scripts/maimai_detail_import.py dry-run --capture-file data/output/raw/maimai-ai-infra-detail-capture-d4-s3-all-a-remaining-205-2026-05-13.json --db data/talent.db --out data/output/maimai-ai-infra-detail-d4-s3-all-a-remaining-205-dry-run-2026-05-13.md`。
+- [x] Task 6：停止本地 detail plan server，避免误加载旧任务包。
+
+## D4 剩余 205 Dry-Run Review
+
+- 用户提供的无后缀下载文件是旧 capture：`contacts=305`、`detailJobs=305`、`details=100`，与 `data/output/raw/maimai-ai-infra-detail-capture-d4-s3-all-a-2026-05-13.json` SHA256 相同。
+- 实际采用最新下载文件：`C:\Users\Administrator\Downloads\maimai-capture-2026-05-13 (1).json`，`ExportTime=2026-05-13T11:43:45.068Z`。
+- 归档 capture：`data/output/raw/maimai-ai-infra-detail-capture-d4-s3-all-a-remaining-205-2026-05-13.json`。
+- capture 统计：`contacts=205`、`totalContacts=205`、`detailJobs=205`、`details=205`、`metadata.total_jobs=205`、`metadata.captured_details=205`、job 状态 `done=205`。
+- dry-run 报告：`data/output/maimai-ai-infra-detail-d4-s3-all-a-remaining-205-dry-run-2026-05-13.md`。
+- dry-run 结果：匹配 205、未匹配 0、失败 jobs 0、写入人数 0。
+- 本轮未写入 `data/talent.db`；只有用户明确回复 `确认写入 AI Infra 脉脉详情` 后，才允许调用 `scripts/maimai_detail_import.py apply`。
+- 本地 detail plan server 已停止，`127.0.0.1:8765` 不再监听。
+
+# AI Infra D4 剩余 205 人详情 Apply（2026-05-13）
+
+> 目标：在用户明确授权“确认写入 AI Infra 脉脉详情，使用已有db工具”后，用现有 `scripts/maimai_detail_import.py apply` 写入剩余 205 人详情。
+
+- [x] Task 1：复核 dry-run clean：匹配 205、未匹配 0、失败 jobs 0。
+- [x] Task 2：调用现有 DB 工具 apply，不手写 SQL：`python scripts/maimai_detail_import.py apply --capture-file data/output/raw/maimai-ai-infra-detail-capture-d4-s3-all-a-remaining-205-2026-05-13.json --db data/talent.db --out data/output/maimai-ai-infra-detail-d4-s3-all-a-remaining-205-apply-2026-05-13.md --json-out data/output/maimai-ai-infra-detail-d4-s3-all-a-remaining-205-apply-2026-05-13.json --confirm "确认写入脉脉详情"`。
+- [x] Task 3：运行写后只读 dry-run。
+- [x] Task 4：运行详情导入相关聚焦测试与 Python 语法检查。
+- [x] Task 5：更新执行记录。
+
+## D4 剩余 205 Apply Review
+
+- apply 报告：`data/output/maimai-ai-infra-detail-d4-s3-all-a-remaining-205-apply-2026-05-13.md`。
+- apply JSON：`data/output/maimai-ai-infra-detail-d4-s3-all-a-remaining-205-apply-2026-05-13.json`。
+- apply 结果：匹配 205、未匹配 0、失败 jobs 0、写入人数 205、`verified_candidate_ids=205`。
+- 写后只读 dry-run：`data/output/maimai-ai-infra-detail-d4-s3-all-a-remaining-205-post-apply-dry-run-2026-05-13.md` -> 匹配 205、未匹配 0、失败 jobs 0。
+- 聚焦测试：`python -m pytest tests/test_maimai_detail_import.py tests/test_maimai_detail_targets.py tests/test_maimai_detail_plan_server.py -q` -> **9 passed**。
+- Python 语法检查：`python -m py_compile scripts/maimai_detail_import.py scripts/maimai_detail_targets.py scripts/maimai_detail_plan_server.py` -> **PASS**。
+- 差异空白检查：`git diff --check` -> **PASS**。
+- 本轮写入严格使用现有 `scripts/maimai_detail_import.py apply` DB 工具，未手写 SQL 或自定义写库逻辑。

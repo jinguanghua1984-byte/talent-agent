@@ -8,6 +8,9 @@ var __pagerTabId = null;
 var __activeDetailBatch = null;
 var __detailBatchTabId = null;
 var __detailBatchRunToken = 0;
+var __detailBatchRunning = false;
+var __detailBatchRecovery = null;
+var __diagnosticTraceWrite = Promise.resolve();
 
 function tagDetailBatchRecord(record, runToken) {
   return Object.assign({}, record || {}, { run_token: runToken });
@@ -133,6 +136,7 @@ function buildFullExportData() {
         detailBatchState: null,
         detailBatchLogs: [],
         detailBatchRunToken: __detailBatchRunToken,
+        diagnosticTraces: [],
       }, function (r) {
         resolve(r);
       });
@@ -173,6 +177,7 @@ function buildFullExportData() {
       totalDetails: details.length,
       detailJobs: detailJobs,
       detailBatchLogs: detailLogs,
+      diagnosticTraces: stored.diagnosticTraces || [],
       requests: stored.captured || [],
     };
   });
@@ -222,6 +227,208 @@ function sendDetailFetch(tabId, job) {
   });
 }
 
+function summarizeDiagnosticTab(tab) {
+  if (!tab) return null;
+  return {
+    id: tab.id,
+    windowId: tab.windowId,
+    active: Boolean(tab.active),
+    highlighted: Boolean(tab.highlighted),
+    url: tab.url || "",
+    title: tab.title || "",
+    status: tab.status || "",
+    discarded: Boolean(tab.discarded),
+  };
+}
+
+function senderTypeForDiagnostic(sender) {
+  var url = sender && sender.url ? String(sender.url) : "";
+  if (url.indexOf("automation.html") !== -1) return "automation";
+  if (url.indexOf("popup.html") !== -1) return "popup";
+  if (url.indexOf("maimai.cn") !== -1) return "maimai_content";
+  if (url.indexOf("chrome-extension://") === 0) return "extension";
+  if (sender && sender.tab) return "content";
+  return "unknown";
+}
+
+function queryDiagnosticActiveTab() {
+  return new Promise(function (resolve) {
+    chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+      var err = chrome.runtime.lastError;
+      resolve({
+        error: err ? err.message : null,
+        tab: summarizeDiagnosticTab(tabs && tabs[0]),
+      });
+    });
+  });
+}
+
+function queryDiagnosticMaimaiTabs() {
+  return new Promise(function (resolve) {
+    chrome.tabs.query({ url: ["*://maimai.cn/*", "*://*.maimai.cn/*"] }, function (tabs) {
+      var err = chrome.runtime.lastError;
+      resolve({
+        error: err ? err.message : null,
+        tabs: (tabs || []).map(summarizeDiagnosticTab),
+      });
+    });
+  });
+}
+
+function getDiagnosticCurrentWindow() {
+  return new Promise(function (resolve) {
+    chrome.windows.getCurrent({}, function (windowInfo) {
+      var err = chrome.runtime.lastError;
+      resolve({
+        error: err ? err.message : null,
+        window: windowInfo ? {
+          id: windowInfo.id,
+          focused: Boolean(windowInfo.focused),
+          state: windowInfo.state || "",
+          type: windowInfo.type || "",
+        } : null,
+      });
+    });
+  });
+}
+
+function getDiagnosticTabById(tabId) {
+  if (typeof tabId !== "number" || Number.isNaN(tabId)) {
+    return Promise.resolve({ error: null, tab: null });
+  }
+  return new Promise(function (resolve) {
+    chrome.tabs.get(tabId, function (tab) {
+      var err = chrome.runtime.lastError;
+      resolve({
+        error: err ? err.message : null,
+        tab: summarizeDiagnosticTab(tab),
+      });
+    });
+  });
+}
+
+function chooseDiagnosticTargetTab(msg, activeTab, maimaiTabs, explicitTab) {
+  if (explicitTab) return explicitTab;
+  if (activeTab && activeTab.url && activeTab.url.indexOf("maimai.cn") !== -1) {
+    return activeTab;
+  }
+  if (maimaiTabs && maimaiTabs.length === 1) {
+    return maimaiTabs[0];
+  }
+  return null;
+}
+
+function traceDiagnosticPageState(tab) {
+  if (!tab || typeof tab.id !== "number") {
+    return Promise.resolve({ ok: false, skipped: "no_target_tab" });
+  }
+  if (!tab.url || tab.url.indexOf("maimai.cn") === -1) {
+    return Promise.resolve({ ok: false, skipped: "target_not_maimai", target: summarizeDiagnosticTab(tab) });
+  }
+  return new Promise(function (resolve) {
+    chrome.tabs.sendMessage(tab.id, { type: "tracePageState" }, function (resp) {
+      if (chrome.runtime.lastError) {
+        resolve({
+          ok: false,
+          error: chrome.runtime.lastError.message,
+          target: summarizeDiagnosticTab(tab),
+        });
+        return;
+      }
+      resolve(Object.assign({ target: summarizeDiagnosticTab(tab) }, resp || { ok: false, error: "无响应" }));
+    });
+  });
+}
+
+function buildDiagnosticTrace(action, msg, sender) {
+  var started = Date.now();
+  var startedAt = new Date(started).toISOString();
+  var explicitTargetTabId = msg && msg.targetTabId !== undefined ? Number(msg.targetTabId) : null;
+
+  return Promise.all([
+    queryDiagnosticActiveTab(),
+    queryDiagnosticMaimaiTabs(),
+    getDiagnosticCurrentWindow(),
+    getDiagnosticTabById(explicitTargetTabId),
+  ]).then(function (parts) {
+    var activeResult = parts[0] || {};
+    var maimaiResult = parts[1] || {};
+    var windowResult = parts[2] || {};
+    var explicitResult = parts[3] || {};
+    var activeTab = activeResult.tab || null;
+    var maimaiTabs = maimaiResult.tabs || [];
+    var targetTab = chooseDiagnosticTargetTab(msg, activeTab, maimaiTabs, explicitResult.tab || null);
+
+    return traceDiagnosticPageState(targetTab).then(function (pageState) {
+      var ended = Date.now();
+      var currentWindow = windowResult.window || null;
+      return {
+        id: "trace_" + ended + "_" + Math.random().toString(36).slice(2, 8),
+        action: action,
+        actionLabel: (msg && msg.label) || action,
+        source: senderTypeForDiagnostic(sender),
+        senderType: senderTypeForDiagnostic(sender),
+        sender: {
+          id: sender && sender.id ? sender.id : "",
+          url: sender && sender.url ? sender.url : "",
+          frameId: sender && typeof sender.frameId === "number" ? sender.frameId : null,
+          tab: summarizeDiagnosticTab(sender && sender.tab),
+        },
+        activeTab: activeTab,
+        activeTabError: activeResult.error || null,
+        maimaiTabs: maimaiTabs,
+        maimaiTabsError: maimaiResult.error || null,
+        targetTab: targetTab,
+        explicitTargetTabId: explicitTargetTabId,
+        explicitTargetTabError: explicitResult.error || null,
+        currentWindow: currentWindow,
+        windowFocused: Boolean(currentWindow && currentWindow.focused),
+        windowError: windowResult.error || null,
+        pageState: pageState,
+        timing: {
+          startedAt: startedAt,
+          endedAt: new Date(ended).toISOString(),
+          durationMs: ended - started,
+        },
+      };
+    });
+  });
+}
+
+function recordDiagnosticTrace(trace) {
+  __diagnosticTraceWrite = __diagnosticTraceWrite.catch(function () {}).then(function () {
+    return new Promise(function (resolve) {
+      chrome.storage.local.get({ diagnosticTraces: [] }, function (r) {
+        var diagnosticTraces = r.diagnosticTraces || [];
+        diagnosticTraces.push(trace);
+        chrome.storage.local.set({ diagnosticTraces: diagnosticTraces.slice(-200) }, function () {
+          resolve(trace);
+        });
+      });
+    });
+  });
+  return __diagnosticTraceWrite;
+}
+
+function recordActionDiagnosticTrace(action, msg, sender) {
+  try {
+    buildDiagnosticTrace(action, msg || {}, sender || {}).then(function (trace) {
+      return recordDiagnosticTrace(trace);
+    }).catch(function () {});
+  } catch (err) {}
+}
+
+function clearDiagnosticTraceStorage() {
+  __diagnosticTraceWrite = __diagnosticTraceWrite.catch(function () {}).then(function () {
+    return new Promise(function (resolve) {
+      chrome.storage.local.set({ diagnosticTraces: [] }, function () {
+        resolve([]);
+      });
+    });
+  });
+  return __diagnosticTraceWrite;
+}
+
 function saveDetailBatchState(state, runToken) {
   return new Promise(function (resolve) {
     var taggedState = runToken ? tagDetailBatchRecord(state, runToken) : state;
@@ -229,6 +436,15 @@ function saveDetailBatchState(state, runToken) {
       detailBatchState: taggedState,
       detailBatchRunToken: runToken || __detailBatchRunToken,
     }, function () {
+      resolve();
+    });
+  });
+}
+
+function saveDetailBatchTabId(tabId) {
+  __detailBatchTabId = tabId;
+  return new Promise(function (resolve) {
+    chrome.storage.local.set({ detailBatchTabId: tabId || null }, function () {
       resolve();
     });
   });
@@ -279,11 +495,10 @@ function formatDelayMs(ms) {
 }
 
 function completedCountForDetailEvent(event) {
-  if (typeof event.batch_pause_completed === "number" && event.batch_pause_completed > 0) {
-    return event.batch_pause_completed;
-  }
   var counts = event && event.counts ? event.counts : {};
-  return (counts.done || 0) + (counts.failed || 0) + (counts.skipped || 0);
+  var counted = (counts.done || 0) + (counts.failed || 0) + (counts.skipped || 0);
+  var batchCompleted = event && typeof event.batch_pause_completed === "number" ? event.batch_pause_completed : 0;
+  return Math.max(batchCompleted, counted);
 }
 
 function endpointStatusText(endpoints) {
@@ -369,10 +584,151 @@ function storageContactsAndState() {
       detailBatchState: null,
       detailBatchLogs: [],
       detailBatchRunToken: __detailBatchRunToken,
+      detailBatchTabId: __detailBatchTabId,
     }, function (r) {
       resolve(r);
     });
   });
+}
+
+function tabForDetailBatchRecovery(stored) {
+  return new Promise(function (resolve, reject) {
+    var tabId = (stored && stored.detailBatchTabId) || __detailBatchTabId;
+    if (!tabId) {
+      activeMaimaiTab().then(resolve, reject);
+      return;
+    }
+    chrome.tabs.get(tabId, function (tab) {
+      if (chrome.runtime.lastError || !tab || !tab.url || tab.url.indexOf("maimai.cn") === -1) {
+        activeMaimaiTab().then(resolve, reject);
+        return;
+      }
+      resolve(tab);
+    });
+  });
+}
+
+function detailBatchOptionsFromState(state) {
+  state = state || {};
+  var policy = state.policy || {};
+  return {
+    mode: state.mode || policy.mode || "safe",
+    dailyLimit: policy.dailyLimit || 10000,
+    duplicateContacts: state.duplicate_contacts || 0,
+  };
+}
+
+function normalizeJobsForDetailResume(jobs) {
+  return (jobs || []).map(function (job) {
+    if (job && job.status === "running") {
+      return Object.assign({}, job, { status: "queued" });
+    }
+    return job;
+  });
+}
+
+function hasRemainingDetailJobs(jobs) {
+  return (jobs || []).some(function (job) {
+    var status = job && job.status ? String(job.status) : "queued";
+    return status !== "done" && status !== "failed" && status !== "skipped";
+  });
+}
+
+function runDetailBatchJobs(tab, jobs, options, runToken) {
+  __detailBatchRunning = true;
+  saveDetailBatchTabId(tab.id);
+  __activeDetailBatch = DetailBatch.run(jobs, options || {}, {
+    sendDetailFetch: function (job) {
+      return sendDetailFetch(tab.id, job);
+    },
+    saveJob: function (job) {
+      if (runToken !== __detailBatchRunToken) return Promise.resolve();
+      return DetailDB.putJob(tagDetailBatchRecord(job, runToken));
+    },
+    saveDetail: function (detail) {
+      if (runToken !== __detailBatchRunToken) return Promise.resolve();
+      var taggedDetail = tagDetailBatchRecord(detail, runToken);
+      return DetailDB.putDetail(taggedDetail).then(function () {
+        if (runToken !== __detailBatchRunToken) return Promise.resolve();
+        return appendStorageDetail(taggedDetail, runToken);
+      });
+    },
+    saveState: function (state) {
+      if (runToken !== __detailBatchRunToken) return Promise.resolve();
+      return saveDetailBatchState(state, runToken);
+    },
+    onEvent: function (event) {
+      if (runToken !== __detailBatchRunToken) return;
+      return emitDetailBatchEvent(event, runToken);
+    },
+  }).catch(function (err) {
+    if (runToken !== __detailBatchRunToken) return;
+    var failedState = Object.assign({}, DetailBatch.getState(), {
+      status: "failed",
+      error: err.message,
+      updated_at: new Date().toISOString(),
+    });
+    return saveDetailBatchState(failedState, runToken).then(function () {
+      if (runToken !== __detailBatchRunToken) return;
+      return emitDetailBatchEvent(Object.assign({ type: "detail_batch_error", error: err.message }, failedState), runToken);
+    });
+  }).finally(function () {
+    if (runToken === __detailBatchRunToken) {
+      __detailBatchRunning = false;
+    }
+  });
+  return __activeDetailBatch;
+}
+
+function recoverExpiredBatchPauseIfNeeded() {
+  if (__detailBatchRunning) {
+    return Promise.resolve({ ok: true, resumed: false, reason: "detail_batch_running" });
+  }
+  if (__detailBatchRecovery) return __detailBatchRecovery;
+
+  __detailBatchRecovery = Promise.all([
+    DetailDB.getAllJobs().catch(function () { return []; }),
+    storageContactsAndState(),
+  ]).then(function (parts) {
+    var storedJobs = parts[0] || [];
+    var stored = parts[1] || {};
+    var currentRunToken = stored.detailBatchRunToken || __detailBatchRunToken;
+    var state = detailBatchStateForToken(stored.detailBatchState, currentRunToken);
+    if (!state || !state.batch_pause_until) {
+      return { ok: true, resumed: false, reason: "no_batch_pause" };
+    }
+    var pauseUntil = Date.parse(state.batch_pause_until);
+    if (Number.isNaN(pauseUntil) || pauseUntil > Date.now()) {
+      return { ok: true, resumed: false, reason: "batch_pause_waiting" };
+    }
+
+    var jobs = normalizeJobsForDetailResume(filterDetailBatchJobs(storedJobs, currentRunToken));
+    if (!hasRemainingDetailJobs(jobs)) {
+      return { ok: true, resumed: false, reason: "no_remaining_jobs" };
+    }
+
+    __detailBatchRunToken = currentRunToken || __detailBatchRunToken;
+    return tabForDetailBatchRecovery(stored).then(function (tab) {
+      return appendDetailBatchLog("info", "批间休息到点，自动继续", {
+        completed: state.batch_pause_completed || 0,
+        totalJobs: state.total_jobs || jobs.length,
+        tabId: tab.id,
+      }, currentRunToken).then(function () {
+        runDetailBatchJobs(tab, jobs, detailBatchOptionsFromState(state), currentRunToken);
+        return { ok: true, resumed: true };
+      });
+    }).catch(function (err) {
+      return appendDetailBatchLog("warn", "批间休息已结束，但无法自动继续: " + err.message, {
+        error: err.message,
+      }, currentRunToken).then(function () {
+        return { ok: false, resumed: false, error: err.message };
+      });
+    });
+  }).finally(function () {
+    __detailBatchRecovery = null;
+  });
+
+  return __detailBatchRecovery;
 }
 
 function buildScraperSummary() {
@@ -576,7 +932,9 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
 
   // 清除数据
   if (msg.type === "getScraperSummary") {
-    buildScraperSummary().then(function (summary) {
+    recoverExpiredBatchPauseIfNeeded().then(function () {
+      return buildScraperSummary();
+    }).then(function (summary) {
       sendResponse(Object.assign({ ok: true }, summary));
     }).catch(function (err) {
       sendResponse({ ok: false, error: err.message });
@@ -613,6 +971,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   }
 
   if (msg.type === "clearAll") {
+    recordActionDiagnosticTrace("clearAll", msg, _sender);
     __detailBatchRunToken++;
     DetailBatch.reset();
     Promise.resolve()
@@ -631,6 +990,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
           detailBatchState: null,
           detailBatchLogs: [],
           detailBatchRunToken: __detailBatchRunToken,
+          detailBatchTabId: null,
           domScrapeResult: null,
         }, function () {
           sendResponse({ ok: true });
@@ -641,6 +1001,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
 
   // 导出完整 JSON 文件：合并 IndexedDB 分页联系人和 chrome.storage 捕获详情。
   if (msg.type === "exportFullJson") {
+    recordActionDiagnosticTrace("exportFullJson", msg, _sender);
     buildFullExportData().then(function (data) {
       if (msg.saveAs === false) {
         sendResponse({ ok: true, data: data });
@@ -654,10 +1015,47 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   }
 
   if (msg.type === "getFullExportData") {
+    recordActionDiagnosticTrace("getFullExportData", msg, _sender);
     buildFullExportData().then(function (data) {
       sendResponse({ ok: true, data: data });
     }).catch(function (err) {
       sendResponse({ ok: false, error: err.message });
+    });
+    return true;
+  }
+
+  if (msg.type === "preflightTrace") {
+    buildDiagnosticTrace("preflightTrace", msg, _sender).then(function (trace) {
+      return recordDiagnosticTrace(trace);
+    }).then(function (trace) {
+      sendResponse({ ok: true, trace: trace });
+    }).catch(function (err) {
+      sendResponse({ ok: false, error: err.message });
+    });
+    return true;
+  }
+
+  if (msg.type === "probeOnly") {
+    buildDiagnosticTrace("probeOnly", msg, _sender).then(function (trace) {
+      return recordDiagnosticTrace(trace);
+    }).then(function (trace) {
+      sendResponse({ ok: true, trace: trace });
+    }).catch(function (err) {
+      sendResponse({ ok: false, error: err.message });
+    });
+    return true;
+  }
+
+  if (msg.type === "getDiagnosticTraces") {
+    chrome.storage.local.get({ diagnosticTraces: [] }, function (r) {
+      sendResponse({ ok: true, traces: r.diagnosticTraces || [] });
+    });
+    return true;
+  }
+
+  if (msg.type === "clearDiagnosticTraces") {
+    clearDiagnosticTraceStorage().then(function () {
+      sendResponse({ ok: true });
     });
     return true;
   }
@@ -689,6 +1087,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   // ---- Batch Detail 消息处理 ----
 
   if (msg.type === "importDetailContacts") {
+    recordActionDiagnosticTrace("importDetailContacts", msg, _sender);
     var payload = msg.contacts || msg.payload || [];
     var contactsToImport = normalizeImportContacts(payload);
     if (contactsToImport.length === 0) {
@@ -706,6 +1105,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
         detailBatchLogs: [],
         details: [],
         detailBatchRunToken: __detailBatchRunToken,
+        detailBatchTabId: null,
       }, function () {
         appendDetailBatchLog("info", "已导入 " + importedCount + " 条详情联系人", {
           imported: importedCount,
@@ -730,6 +1130,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
         detailBatchLogs: [],
         details: [],
         detailBatchRunToken: __detailBatchRunToken,
+        detailBatchTabId: null,
       }, function () {
         appendDetailBatchLog("info", "批量详情已重置", null, __detailBatchRunToken).then(function () {
           sendResponse({ ok: true, state: resetState });
@@ -742,6 +1143,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   }
 
   if (msg.type === "startDetailBatch") {
+    recordActionDiagnosticTrace("startDetailBatch", msg, _sender);
     __detailBatchRunToken++;
     var runToken = __detailBatchRunToken;
     Promise.all([
@@ -756,9 +1158,10 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
       var contacts = parts[1] || [];
       var built = DetailBatch.createJobs(contacts);
       var jobs = built.jobs;
-      __detailBatchTabId = tab.id;
 
-      return DetailDB.clear().then(function () {
+      return saveDetailBatchTabId(tab.id).then(function () {
+        return DetailDB.clear();
+      }).then(function () {
         if (runToken !== __detailBatchRunToken) return null;
         return DetailDB.putJobs(jobs.map(function (job) {
           return tagDetailBatchRecord(job, runToken);
@@ -774,46 +1177,11 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
           sendResponse({ ok: false, error: "批量详情启动已被新任务取代" });
           return;
         }
-        __activeDetailBatch = DetailBatch.run(jobs, {
+        runDetailBatchJobs(tab, jobs, {
           mode: msg.mode || "safe",
           dailyLimit: msg.dailyLimit,
           duplicateContacts: built.duplicates,
-        }, {
-          sendDetailFetch: function (job) {
-            return sendDetailFetch(tab.id, job);
-          },
-          saveJob: function (job) {
-            if (runToken !== __detailBatchRunToken) return Promise.resolve();
-            return DetailDB.putJob(tagDetailBatchRecord(job, runToken));
-          },
-          saveDetail: function (detail) {
-            if (runToken !== __detailBatchRunToken) return Promise.resolve();
-            var taggedDetail = tagDetailBatchRecord(detail, runToken);
-            return DetailDB.putDetail(taggedDetail).then(function () {
-              if (runToken !== __detailBatchRunToken) return Promise.resolve();
-              return appendStorageDetail(taggedDetail, runToken);
-            });
-          },
-          saveState: function (state) {
-            if (runToken !== __detailBatchRunToken) return Promise.resolve();
-            return saveDetailBatchState(state, runToken);
-          },
-          onEvent: function (event) {
-            if (runToken !== __detailBatchRunToken) return;
-            return emitDetailBatchEvent(event, runToken);
-          },
-        }).catch(function (err) {
-          if (runToken !== __detailBatchRunToken) return;
-          var failedState = Object.assign({}, DetailBatch.getState(), {
-            status: "failed",
-            error: err.message,
-            updated_at: new Date().toISOString(),
-          });
-          return saveDetailBatchState(failedState, runToken).then(function () {
-            if (runToken !== __detailBatchRunToken) return;
-            emitDetailBatchEvent(Object.assign({ type: "detail_batch_error", error: err.message }, failedState), runToken);
-          });
-        });
+        }, runToken);
         sendResponse({ ok: true, totalJobs: jobs.length, duplicateContacts: built.duplicates });
       });
     }).catch(function (err) {
@@ -850,11 +1218,14 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   }
 
   if (msg.type === "getDetailBatchStatus") {
-    Promise.all([
+    recordActionDiagnosticTrace("getDetailBatchStatus", msg, _sender);
+    recoverExpiredBatchPauseIfNeeded().then(function () {
+      return Promise.all([
       DetailDB.getAllJobs().catch(function () { return []; }),
       DetailDB.getAllDetails().catch(function () { return []; }),
       storageContactsAndState(),
-    ]).then(function (parts) {
+      ]);
+    }).then(function (parts) {
       var jobs = parts[0] || [];
       var details = parts[1] || [];
       var stored = parts[2];

@@ -153,7 +153,7 @@
       if (detailRunning) {
         if (state.batch_pause_until) {
           titleEl.textContent = "批间休息中";
-          metaEl.textContent = "已完成 " + (state.batch_pause_completed || completedJobs) + "/" + totalJobs;
+          metaEl.textContent = "已完成 " + Math.max(state.batch_pause_completed || 0, completedJobs) + "/" + totalJobs;
           statsEl.textContent = "约 " + formatDetailDelayMs(remainingBatchPauseMs(state)) + " 后继续";
         } else {
           titleEl.textContent = status === "paused" ? "详情抓取已暂停" : "详情抓取执行中";
@@ -372,6 +372,17 @@
         respondPager({ httpStatus: 0, error: "请求超时" });
       }, 15000);
       return true;
+    }
+
+    if (msg.type === "tracePageState") {
+      sendResponse({
+        ok: true,
+        href: location.href,
+        title: document.title,
+        visibilityState: document.visibilityState,
+        hasFocus: document.hasFocus(),
+      });
+      return false;
     }
 
     if (msg.type === "detailFetch") {

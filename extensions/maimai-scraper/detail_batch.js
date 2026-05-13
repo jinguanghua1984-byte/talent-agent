@@ -26,7 +26,7 @@ var DetailBatch = (function () {
     batchSize: 30,
     minBatchPauseMs: 5 * 60 * 1000,
     maxBatchPauseMs: 10 * 60 * 1000,
-    dailyLimit: 100,
+    dailyLimit: 10000,
     maxRetries: 2,
     circuitBreakerThreshold: 3,
   };
@@ -399,10 +399,11 @@ var DetailBatch = (function () {
       if ((i + 1) < jobs.length && processed % policy.batchSize === 0) {
         var batchDelay = randomDelay(policy.minBatchPauseMs, policy.maxBatchPauseMs);
         var batchPauseStarted = new Date();
+        var completedForBatchPause = (state.counts.done || 0) + (state.counts.failed || 0) + (state.counts.skipped || 0);
         state.batch_pause_started_at = batchPauseStarted.toISOString();
         state.batch_pause_until = new Date(batchPauseStarted.getTime() + batchDelay).toISOString();
         state.batch_pause_delay_ms = batchDelay;
-        state.batch_pause_completed = processed;
+        state.batch_pause_completed = completedForBatchPause;
         state.updated_at = now();
         await persistState(saveState);
         if (generation !== runGeneration) return copy(state);

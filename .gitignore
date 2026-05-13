@@ -36,6 +36,8 @@ data/output/raw/
 data/rules/preferences.json
 data/token-tracker/*.jsonl
 data/*.db
+data/*.db-shm
+data/*.db-wal
 *.pyc
 __pycache__/
 

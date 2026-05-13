@@ -111,6 +111,102 @@ def test_automation_page_exposes_detail_bridge_without_popup_dom():
     assert "automation.js" in resource_names
 
 
+def test_detail_daily_limit_defaults_to_10000_for_manual_control():
+    detail_batch = read_extension_file("detail_batch.js")
+    popup_html = read_extension_file("popup.html")
+    popup_js = read_extension_file("popup.js")
+    automation_js = read_extension_file("automation.js")
+
+    safe_policy_block = detail_batch.split("var SAFE_POLICY =", 1)[1].split("var TEST_POLICY =", 1)[0]
+    assert "dailyLimit: 10000" in safe_policy_block
+    assert 'id="detail-daily-limit" value="10000" min="1" max="10000"' in popup_html
+    assert "parseInt(detailDailyLimitEl.value) || 10000" in popup_js
+    assert "dailyLimit: options.dailyLimit || 10000" in automation_js
+
+
+def test_background_exposes_diagnostic_trace_contract_without_real_detail_fetch():
+    background = read_extension_file("background.js")
+
+    for message_type in [
+        "preflightTrace",
+        "probeOnly",
+        "getDiagnosticTraces",
+        "clearDiagnosticTraces",
+    ]:
+        assert message_type in background
+    assert "function buildDiagnosticTrace" in background
+    assert "function recordDiagnosticTrace" in background
+    assert "diagnosticTraces" in background
+    assert "sender.url" in background
+    assert "activeTab" in background
+    assert "windowFocused" in background
+    assert "tracePageState" in background
+    probe_block = background.split('if (msg.type === "probeOnly")', 1)[1].split('if (msg.type === "startDetailBatch")', 1)[0]
+    assert "sendDetailFetch" not in probe_block
+    assert "DetailBatch.run" not in probe_block
+
+
+def test_automation_page_exposes_trace_probe_api():
+    automation_js = read_extension_file("automation.js")
+
+    for api_name in [
+        "preflightTrace",
+        "probeOnly",
+        "getDiagnosticTraces",
+        "clearDiagnosticTraces",
+    ]:
+        assert api_name + ":" in automation_js
+    assert '{ type: "preflightTrace"' in automation_js
+    assert '{ type: "probeOnly"' in automation_js
+    assert '{ type: "getDiagnosticTraces"' in automation_js
+    assert '{ type: "clearDiagnosticTraces"' in automation_js
+
+
+def test_content_trace_page_state_is_non_intrusive():
+    content = read_extension_file("content.js")
+    trace_block = content.split('if (msg.type === "tracePageState")', 1)[1].split('if (msg.type === "detailFetch")', 1)[0]
+
+    assert 'location.href' in trace_block
+    assert 'document.title' in trace_block
+    assert 'document.visibilityState' in trace_block
+    assert 'document.hasFocus()' in trace_block
+    assert "__MAIMAI_DETAIL_FETCH__" not in trace_block
+    assert "window.postMessage" not in trace_block
+
+
+def test_background_records_diagnostic_trace_for_key_batch_actions():
+    background = read_extension_file("background.js")
+
+    assert "function recordActionDiagnosticTrace" in background
+    for action in [
+        'recordActionDiagnosticTrace("clearAll"',
+        'recordActionDiagnosticTrace("getFullExportData"',
+        'recordActionDiagnosticTrace("importDetailContacts"',
+        'recordActionDiagnosticTrace("startDetailBatch"',
+        'recordActionDiagnosticTrace("getDetailBatchStatus"',
+    ]:
+        assert action in background
+    assert "diagnosticTraces: []" in background
+    assert "diagnosticTraces: stored.diagnosticTraces || []" in background
+
+
+def test_popup_supports_local_detail_plan_loader():
+    manifest = json.loads(read_extension_file("manifest.json"))
+    popup_html = read_extension_file("popup.html")
+    popup_js = read_extension_file("popup.js")
+
+    assert "http://127.0.0.1/*" in manifest["host_permissions"]
+    assert "http://localhost/*" in manifest["host_permissions"]
+    assert "detail-local-plan-url" in popup_html
+    assert "btn-load-local-detail-plan" in popup_html
+    assert "btn-load-start-local-detail-plan" in popup_html
+    assert "detail-local-plan-status" in popup_html
+    assert "function loadLocalDetailPlan" in popup_js
+    assert "fetch(localPlanUrl" in popup_js
+    assert '{ type: "importDetailContacts", contacts: planPayload }' in popup_js
+    assert '{ type: "startDetailBatch"' in popup_js
+
+
 def test_detail_import_accepts_recommendation_shapes():
     background = read_extension_file("background.js")
     popup = read_extension_file("popup.js")
@@ -268,6 +364,34 @@ def test_detail_batch_persists_batch_pause_window():
         assert marker in detail_batch
     assert 'reason: "batch_pause"' in detail_batch
     assert "await persistState(saveState)" in detail_batch
+
+
+def test_background_recovers_expired_batch_pause_from_persisted_jobs():
+    background = read_extension_file("background.js")
+    status_block = background.split('if (msg.type === "getDetailBatchStatus")', 1)[1].split("// ---- AutoPager", 1)[0]
+
+    assert "function recoverExpiredBatchPauseIfNeeded" in background
+    assert "function runDetailBatchJobs" in background
+    assert "batch_pause_until" in background
+    assert "DetailDB.getAllJobs()" in background
+    assert "chrome.tabs.get" in background
+    assert "DetailBatch.run(jobs" in background
+    assert "__detailBatchRunning" in background
+    assert "批间休息到点，自动继续" in background
+    assert "recoverExpiredBatchPauseIfNeeded()" in status_block
+
+
+def test_batch_pause_progress_uses_cumulative_completed_count_after_resume():
+    detail_batch = read_extension_file("detail_batch.js")
+    background = read_extension_file("background.js")
+    popup = read_extension_file("popup.js")
+    content = read_extension_file("content.js")
+
+    assert "completedForBatchPause" in detail_batch
+    assert "state.batch_pause_completed = completedForBatchPause" in detail_batch
+    assert "Math.max(batchCompleted, counted)" in background
+    assert "Math.max(state.batch_pause_completed || 0, completed)" in popup
+    assert "Math.max(state.batch_pause_completed || 0, completedJobs)" in content
 
 
 def test_background_explains_batch_pause_and_rate_limit_logs():

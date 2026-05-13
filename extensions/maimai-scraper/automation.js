@@ -52,7 +52,7 @@
       return run({
         type: "startDetailBatch",
         mode: options.mode || "safe",
-        dailyLimit: options.dailyLimit || 100,
+        dailyLimit: options.dailyLimit || 10000,
       });
     },
     getDetailBatchStatus: function () {
@@ -60,6 +60,18 @@
     },
     getFullExportData: function () {
       return run({ type: "getFullExportData" });
+    },
+    preflightTrace: function (label) {
+      return run({ type: "preflightTrace", label: label || "automation_preflight" });
+    },
+    probeOnly: function (label) {
+      return run({ type: "probeOnly", label: label || "automation_probe" });
+    },
+    getDiagnosticTraces: function () {
+      return run({ type: "getDiagnosticTraces" });
+    },
+    clearDiagnosticTraces: function () {
+      return run({ type: "clearDiagnosticTraces" });
     },
     exportFullJson: function (filename) {
       return run({

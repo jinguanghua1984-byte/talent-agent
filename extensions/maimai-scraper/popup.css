@@ -47,6 +47,7 @@ details pre { white-space: pre-wrap; word-break: break-all; max-height: 200px; o
 .progress-text { font-size: 11px; color: #666; text-align: center; }
 
 .detail-stats { gap: 10px; flex-wrap: wrap; }
+.local-plan-section { margin: 8px 0; padding: 8px; background: #f6f8fb; border: 1px solid #dfe5ee; border-radius: 6px; }
 .detail-progress-fill { background: #2e7d32; }
 .detail-log {
   white-space: pre-wrap;

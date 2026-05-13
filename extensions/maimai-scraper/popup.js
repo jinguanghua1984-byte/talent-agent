@@ -342,6 +342,10 @@
   var detailSkippedCountEl = document.getElementById("detail-skipped-count");
   var detailModeEl = document.getElementById("detail-mode");
   var detailDailyLimitEl = document.getElementById("detail-daily-limit");
+  var detailLocalPlanUrlEl = document.getElementById("detail-local-plan-url");
+  var btnLoadLocalDetailPlan = document.getElementById("btn-load-local-detail-plan");
+  var btnLoadStartLocalDetailPlan = document.getElementById("btn-load-start-local-detail-plan");
+  var detailLocalPlanStatusEl = document.getElementById("detail-local-plan-status");
   var detailImportFileEl = document.getElementById("detail-import-file");
   var btnStartDetail = document.getElementById("btn-start-detail-batch");
   var btnPauseDetail = document.getElementById("btn-pause-detail-batch");
@@ -411,7 +415,7 @@
     detailProgressText.textContent = (state.status || "idle") + " — " + completed + "/" + total;
 
     if (hasBatchPauseNotice(state, rawInput)) {
-      var pauseCompleted = state.batch_pause_completed || completed;
+      var pauseCompleted = Math.max(state.batch_pause_completed || 0, completed);
       var pauseTotal = total > 0 ? "/" + total : "";
       detailProgressText.textContent = "批间休息中 — " + pauseCompleted + pauseTotal;
       detailBatchLog.textContent = "批间休息中: 已完成 " + pauseCompleted + pauseTotal + "，约 " + formatDetailDelayMs(remainingDetailPauseMs(state, rawInput)) + " 后继续";
@@ -499,6 +503,60 @@
     });
   }
 
+  function startDetailBatchFromPopup() {
+    detailProgressText.textContent = "启动批量详情...";
+    chrome.runtime.sendMessage({ type: "startDetailBatch",
+      mode: detailModeEl.value,
+      dailyLimit: parseInt(detailDailyLimitEl.value) || 10000,
+    }, function (resp) {
+      if (!resp || !resp.ok) {
+        detailProgressText.textContent = "错误: " + (resp ? resp.error : "无响应");
+        return;
+      }
+      detailBatchLog.textContent = "批量详情已启动，Jobs: " + resp.totalJobs;
+      refreshDetailBatchStatus();
+    });
+  }
+
+  function importLocalDetailPlan(planPayload, shouldStart) {
+    chrome.runtime.sendMessage({ type: "importDetailContacts", contacts: planPayload }, function (resp) {
+      if (!resp || !resp.ok) {
+        detailLocalPlanStatusEl.textContent = "任务包导入失败: " + (resp ? resp.error : "无响应");
+        return;
+      }
+      detailLocalPlanStatusEl.textContent = "已从本地任务包导入 " + resp.imported + " 条联系人";
+      detailBatchLog.textContent = "已导入 " + resp.imported + " 条联系人";
+      refreshDetailBatchStatus();
+      if (shouldStart) {
+        startDetailBatchFromPopup();
+      }
+    });
+  }
+
+  function loadLocalDetailPlan(shouldStart) {
+    var localPlanUrl = detailLocalPlanUrlEl.value.trim() || "http://127.0.0.1:8765/detail-plan.json";
+    detailLocalPlanStatusEl.textContent = "读取本地任务包...";
+    fetch(localPlanUrl, { cache: "no-store" })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return resp.json();
+      })
+      .then(function (planPayload) {
+        importLocalDetailPlan(planPayload, shouldStart);
+      })
+      .catch(function (err) {
+        detailLocalPlanStatusEl.textContent = "任务包读取失败: " + err.message;
+      });
+  }
+
+  btnLoadLocalDetailPlan.addEventListener("click", function () {
+    loadLocalDetailPlan(false);
+  });
+
+  btnLoadStartLocalDetailPlan.addEventListener("click", function () {
+    loadLocalDetailPlan(true);
+  });
+
   detailImportFileEl.addEventListener("change", function () {
     var file = detailImportFileEl.files && detailImportFileEl.files[0];
     if (!file) return;
@@ -522,19 +580,7 @@
   });
 
   btnStartDetail.addEventListener("click", function () {
-    detailProgressText.textContent = "启动批量详情...";
-    chrome.runtime.sendMessage({
-      type: "startDetailBatch",
-      mode: detailModeEl.value,
-      dailyLimit: parseInt(detailDailyLimitEl.value) || 100,
-    }, function (resp) {
-      if (!resp || !resp.ok) {
-        detailProgressText.textContent = "错误: " + (resp ? resp.error : "无响应");
-        return;
-      }
-      detailBatchLog.textContent = "批量详情已启动，Jobs: " + resp.totalJobs;
-      refreshDetailBatchStatus();
-    });
+    startDetailBatchFromPopup();
   });
 
   btnPauseDetail.addEventListener("click", function () {

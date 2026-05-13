@@ -4,7 +4,12 @@
   "version": "2.4",
   "description": "脉脉人才搜索抓取工具 — 被动拦截 + 主动搜索 + 自动分页 + 批量详情 + 数据导出",
   "permissions": ["storage", "scripting", "downloads"],
-  "host_permissions": ["*://maimai.cn/*", "*://*.maimai.cn/*"],
+  "host_permissions": [
+    "*://maimai.cn/*",
+    "*://*.maimai.cn/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
