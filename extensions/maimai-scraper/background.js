@@ -225,7 +225,10 @@ function sendDetailFetch(tabId, job) {
 function saveDetailBatchState(state, runToken) {
   return new Promise(function (resolve) {
     var taggedState = runToken ? tagDetailBatchRecord(state, runToken) : state;
-    chrome.storage.local.set({ detailBatchState: taggedState }, function () {
+    chrome.storage.local.set({
+      detailBatchState: taggedState,
+      detailBatchRunToken: runToken || __detailBatchRunToken,
+    }, function () {
       resolve();
     });
   });

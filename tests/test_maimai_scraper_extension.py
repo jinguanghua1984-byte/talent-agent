@@ -205,6 +205,13 @@ def test_background_captures_detail_batch_token_before_start_prework():
     assert start_block.index("var runToken = __detailBatchRunToken") < start_block.index("Promise.all([")
 
 
+def test_background_persists_current_detail_batch_token_with_state():
+    background = read_extension_file("background.js")
+    save_state_block = background.split("function saveDetailBatchState", 1)[1].split("function appendStorageDetail", 1)[0]
+
+    assert "detailBatchRunToken: runToken || __detailBatchRunToken" in save_state_block
+
+
 def test_background_reset_detail_batch_clears_persisted_state():
     background = read_extension_file("background.js")
     reset_block = background.split('if (msg.type === "resetDetailBatch")', 1)[1].split('if (msg.type === "startDetailBatch")', 1)[0]
