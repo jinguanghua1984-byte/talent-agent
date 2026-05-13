@@ -852,3 +852,26 @@
 - [ ] 字段校准通过后，再向用户确认是否执行搜索门禁；未确认前不跑自动搜索。
 - [ ] 搜索门禁范围固定为 3 个小批次、每批 1 页、dry-run only，不写库、不 apply、不跑详情抓取。
 - [ ] 熔断条件：登录失效、验证码、403、429、非 JSON、请求体结构不兼容或页面异常，出现任一项立即停止并写报告。
+
+---
+
+# 脉脉 AI Infra Phase 0 字段校准（2026-05-13）
+
+> 目标：只做 UI/request diff 被动校准。由人工在脉脉人才银行页触发一次小搜索，扩展被动捕获 `/api/ent/v3/search/basic` 请求；本轮不自动发搜索、不写库、不 apply、不跑详情抓取。
+
+## 任务清单
+
+- [x] Task 1：只读确认 `127.0.0.1:9888` CDP 与脉脉登录态。
+- [x] Task 2：记录扩展捕获基线时间与现有搜索请求数量，不清空用户数据。
+- [x] Task 3：等待人工在人才银行页触发一次小搜索并回复“已搜索”。
+- [x] Task 4：读取新增 `/api/ent/v3/search/basic` 请求，提取 `query_relation`、`allcompanies`、`degrees`、分页字段和查询词。
+- [x] Task 5：写入 raw calibration JSON 与过程记录。
+- [x] Task 6：运行 `git diff --check`，必要时提交任务记录。
+
+## Review
+
+- 基线：`data/output/raw/maimai-ai-infra-field-calibration-baseline-2026-05-13.json`，`capturedCount=29`，`searchRecordCount=0`。
+- 人工搜索后：`data/output/raw/maimai-ai-infra-field-calibration-ui-diff-2026-05-13.json`，新增 1 条 `/api/ent/v3/search/basic`，响应 JSON 正常，`count=30,total=173,total_match=173`。
+- 字段证据：`query/search_query` 为 `"算法" "agent"`；分页为 `paginationParam.page=1,size=30` 与 `page=0,size=30`；`allcompanies="一线互联网公司"`、`degrees="2,3"`、`query_relation=0` 仍只保留模板值，不主动改写。
+- 约束：未自动发搜索，未写库，未 apply，未跑详情抓取；搜索执行门禁仍需用户二次确认。
+- 验证：`ConvertFrom-Json` 读取校准 JSON 成功，`newSearchRecordCount=1`；过程记录可检索到 `UI/request diff 字段校准`、`newSearchRecordCount=1`、`query/search_query` 与 `不主动改写`；`git diff --check` -> PASS。
