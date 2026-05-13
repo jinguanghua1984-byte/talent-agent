@@ -900,3 +900,27 @@
 - 会话健康：前后页面均为 `人才银行`，`readyState=complete`，`hasLoginPrompt=false`，`hasCaptcha=false`，`hasTalentBank=true`，cookie 可见长度 783。
 - 结论：搜索执行方式门禁可标记为 `phase0-pass-for-search-gate`；但真实详情抓取仍未执行，详情链路只有空队列 preflight 通过，因此 Phase 0 端到端仍不能宣称完全通过。
 - 最终验证：`python -m pytest tests/test_maimai_scraper_extension.py -q` -> **29 passed**；`python -m pytest tests/test_maimai_ai_infra_strategy.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py -q` -> **11 passed**；`node --check extensions/maimai-scraper/inject.js` -> **PASS**；`git diff --check` -> **PASS**。
+
+---
+
+# 脉脉 AI Infra Phase 0 详情小样本门禁（2026-05-13）
+
+> 目标：只用 1-3 个明确目标，在已登录专用 Edge CDP profile 中验证真实详情链路：`importDetailContacts -> startDetailBatch(safe) -> getFullExportData -> maimai_detail_import dry-run`。本轮仍不写库、不 apply、不扩大搜索；遇到登录失效、验证码、403、429、非 JSON、详情队列异常或导出结构不兼容立即熔断。
+
+## 任务清单
+
+- [ ] Task 1：只读确认 `127.0.0.1:9888` CDP、人才银行页登录态、扩展 automation bridge 与队列为空。
+- [ ] Task 2：从本地已入库/搜索门禁结果中挑选 1-3 个明确目标，生成 `data/output/raw/maimai-ai-infra-detail-gate-targets-2026-05-13.json`，不写库。
+- [ ] Task 3：通过 `automation.html` 导入小样本目标，safe 模式启动详情批次，轮询状态并记录熔断信号。
+- [ ] Task 4：导出完整 raw JSON 到 `data/output/raw/maimai-ai-infra-detail-gate-run-2026-05-13.json`，随后清理扩展队列。
+- [ ] Task 5：对导出结果运行 `scripts/maimai_detail_import.py dry-run`，更新过程记录与任务 Review。
+- [ ] Task 6：运行聚焦测试、JS 语法检查、`git diff --check`，必要时提交 tracked 记录。
+
+## 当前预检记录
+
+- 已写入计划并开始只读预检，未启动真实详情批次。
+- 预检输出：`data/output/raw/maimai-ai-infra-detail-gate-preflight-2026-05-13.json`。
+- 扩展状态：automation bridge 可用，详情队列 `status=idle,total_jobs=0`；扩展中残留 `totalContacts=52,capturedRequests=37`。
+- 证据保护：已完整备份扩展当前导出到 `data/output/raw/maimai-ai-infra-detail-gate-existing-export-before-run-2026-05-13.json`。
+- 目标选择：已从备份导出中选择 3 个具备 `id + trackable_token` 的目标，写入 `data/output/raw/maimai-ai-infra-detail-gate-targets-2026-05-13.json`。
+- 熔断：打开人才银行页后等待 7 秒，页面跳转为 `https://maimai.cn/`，标题 `脉脉-成就职业梦想`，`hasLoginPrompt=true`，输出 `data/output/raw/maimai-ai-infra-detail-gate-talent-page-health-2026-05-13.json`；按规则停止，未导入目标、未启动详情、未写库、未 apply。

@@ -8,3 +8,4 @@
 | 2026-05-11 | 批量详情状态进度更新但实时请求日志仍只显示导入日志 | `DetailBatch.run()` 发出的事件没有等待 `appendDetailBatchLog()` 完成，多个事件并发读写 `chrome.storage.local.detailBatchLogs` 时读-改-写互相覆盖 | 将 `emit()` 改为 async，并对所有批量详情事件 `await emit(...)`，串行化日志写入 |
 | 2026-05-12 | 生成中文 Markdown 报告时部分固定中文标题变成 `??` | PowerShell here-string 中直接写中文字面量，脚本内容在进入 Python 前已被终端编码破坏 | 改用 ASCII-only Python 脚本，固定中文文案使用 Unicode 转义，数据库/JSON 内容按 UTF-8 读写，并用 Python 读取回验标题 |
 | 2026-05-12 | CDP smoke 结果全是 `undefined`，且中文 `includes("自动化桥")` 误判失败 | `Runtime.evaluate` 响应值在 `response.result.result.value`，不是 `response.result.value`；PowerShell here-string 中中文字面量也会影响 Node 探针断言 | CDP helper 按嵌套结构读取返回值；探针断言改用 ASCII 条件，中文只作为被测页面文本输出 |
+| 2026-05-13 | 详情门禁人才银行健康检查的页面内 JS 报 `Invalid regular expression` | PowerShell here-string 中的中文正则在进入 Python/JS 前被编码破坏成 `?`，形成非法正则 | 页面探针改用 ASCII-only 脚本与 Unicode 转义字符串，中文判断不直接写入 PowerShell here-string |
