@@ -924,3 +924,4 @@
 - 证据保护：已完整备份扩展当前导出到 `data/output/raw/maimai-ai-infra-detail-gate-existing-export-before-run-2026-05-13.json`。
 - 目标选择：已从备份导出中选择 3 个具备 `id + trackable_token` 的目标，写入 `data/output/raw/maimai-ai-infra-detail-gate-targets-2026-05-13.json`。
 - 熔断：打开人才银行页后等待 7 秒，页面跳转为 `https://maimai.cn/`，标题 `脉脉-成就职业梦想`，`hasLoginPrompt=true`，输出 `data/output/raw/maimai-ai-infra-detail-gate-talent-page-health-2026-05-13.json`；按规则停止，未导入目标、未启动详情、未写库、未 apply。
+- 用户回复“已登录”后复核：`data/output/raw/maimai-ai-infra-detail-gate-login-recheck-2026-05-13.json` 显示当前 `127.0.0.1:9888` 只有 automation 页和 `https://maimai.cn/platform/login?...` 登录页；`hasLoginPrompt=true`、`hasCaptcha=true`，仍未通过登录态门禁。继续停止，未导入目标、未启动详情、未写库、未 apply。
