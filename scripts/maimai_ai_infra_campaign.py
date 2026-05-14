@@ -118,8 +118,11 @@ def mark_page_completed(
     page: int,
     payload: dict[str, Any],
 ) -> None:
+    if not isinstance(payload.get("contacts"), list):
+        raise ValueError("page payload contacts must be a list")
+    normalized_payload = {**payload, "unit_id": unit_id, "page": page}
     raw_path = page_raw_path(paths, unit_id, page)
-    atomic_write_json(raw_path, payload)
+    atomic_write_json(raw_path, normalized_payload)
     progress = read_search_progress(paths)
     unit = progress.setdefault("units", {}).setdefault(
         unit_id,

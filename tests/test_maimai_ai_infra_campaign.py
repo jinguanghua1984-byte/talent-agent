@@ -126,12 +126,41 @@ def test_page_raw_atomic_write_marks_completed(tmp_path: Path):
 
 def test_resume_rebuilds_completed_pages_from_raw_when_progress_missing(tmp_path: Path):
     paths = ensure_campaign(tmp_path / "campaign")
-    mark_page_completed(paths, "unit-000001", 1, {"unit_id": "unit-000001", "page": 1, "contacts": []})
+    mark_page_completed(paths, "unit-000001", 1, {"contacts": []})
     paths.search_progress.unlink()
 
     completed = load_completed_pages(paths)
 
     assert completed == {("unit-000001", 1)}
+
+
+def test_mark_page_completed_overwrites_mismatched_payload_metadata(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+
+    mark_page_completed(
+        paths,
+        "unit-000001",
+        1,
+        {"unit_id": "unit-999999", "page": 99, "contacts": []},
+    )
+
+    raw = page_raw_path(paths, "unit-000001", 1)
+    payload = json.loads(raw.read_text(encoding="utf-8-sig"))
+    assert payload["unit_id"] == "unit-000001"
+    assert payload["page"] == 1
+    assert load_completed_pages(paths) == {("unit-000001", 1)}
+
+
+def test_mark_page_completed_rejects_non_list_contacts_without_side_effects(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+
+    with pytest.raises(ValueError, match="contacts"):
+        mark_page_completed(paths, "unit-000001", 1, {"contacts": {}})
+
+    assert not page_raw_path(paths, "unit-000001", 1).exists()
+    assert read_search_progress(paths) == {"campaign_id": paths.campaign_id, "units": {}}
+    assert not paths.search_events.exists()
+    assert load_completed_pages(paths) == set()
 
 
 def test_load_completed_pages_ignores_malformed_raw_content(tmp_path: Path):
