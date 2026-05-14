@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.maimai_ai_infra_campaign import (
     ensure_campaign,
     mark_page_completed,
@@ -320,6 +322,142 @@ def test_campaign_mode_filters_single_unit(tmp_path: Path):
     paths = ensure_campaign(campaign_root)
     assert not page_raw_path(paths, "unit-000001", 1).exists()
     assert page_raw_path(paths, "unit-000002", 1).exists()
+
+
+def test_campaign_mode_rejects_negative_max_pages_without_writing_raw(tmp_path: Path):
+    campaign_root = tmp_path / "campaign"
+    units_path = tmp_path / "units.jsonl"
+    _write_units(units_path, [_unit("unit-000001", max_pages=2)])
+
+    with pytest.raises(SystemExit):
+        main([
+            "--campaign-root",
+            str(campaign_root),
+            "--units",
+            str(units_path),
+            "--dry-run-template-only",
+            "--max-pages",
+            "-1",
+        ])
+
+    paths = ensure_campaign(campaign_root)
+    assert not page_raw_path(paths, "unit-000001", 1).exists()
+
+
+def test_campaign_mode_rejects_negative_max_units_without_writing_raw(tmp_path: Path):
+    campaign_root = tmp_path / "campaign"
+    units_path = tmp_path / "units.jsonl"
+    _write_units(units_path, [_unit("unit-000001"), _unit("unit-000002")])
+
+    with pytest.raises(SystemExit):
+        main([
+            "--campaign-root",
+            str(campaign_root),
+            "--units",
+            str(units_path),
+            "--dry-run-template-only",
+            "--max-units",
+            "-1",
+        ])
+
+    paths = ensure_campaign(campaign_root)
+    assert not page_raw_path(paths, "unit-000001", 1).exists()
+    assert not page_raw_path(paths, "unit-000002", 1).exists()
+
+
+def test_campaign_mode_allows_zero_max_pages_and_writes_summary(tmp_path: Path):
+    campaign_root = tmp_path / "campaign"
+    units_path = tmp_path / "units.jsonl"
+    out_path = tmp_path / "summary.json"
+    _write_units(units_path, [_unit("unit-000001", max_pages=2)])
+
+    assert main([
+        "--campaign-root",
+        str(campaign_root),
+        "--units",
+        str(units_path),
+        "--out",
+        str(out_path),
+        "--dry-run-template-only",
+        "--max-pages",
+        "0",
+    ]) == 0
+
+    paths = ensure_campaign(campaign_root)
+    summary = json.loads(out_path.read_text(encoding="utf-8-sig"))
+    assert summary["pages_written"] == 0
+    assert summary["tasks_written"] == 0
+    assert not page_raw_path(paths, "unit-000001", 1).exists()
+
+
+@pytest.mark.parametrize("bad_unit_id", ["abc", "../unit-000001"])
+def test_campaign_mode_rejects_non_canonical_unit_id_without_writing_raw(
+    tmp_path: Path,
+    bad_unit_id: str,
+):
+    campaign_root = tmp_path / "campaign"
+    units_path = tmp_path / "units.jsonl"
+    _write_units(units_path, [{**_unit("unit-000001"), "unit_id": bad_unit_id}])
+
+    with pytest.raises(ValueError, match="units JSONL line 1: unit_id must match"):
+        main([
+            "--campaign-root",
+            str(campaign_root),
+            "--units",
+            str(units_path),
+            "--dry-run-template-only",
+        ])
+
+    paths = ensure_campaign(campaign_root)
+    assert not any(paths.raw_search_dir.glob("**/*.json"))
+
+
+def test_campaign_mode_rejects_duplicate_unit_id(tmp_path: Path):
+    campaign_root = tmp_path / "campaign"
+    units_path = tmp_path / "units.jsonl"
+    _write_units(units_path, [_unit("unit-000001"), _unit("unit-000001")])
+
+    with pytest.raises(ValueError, match="units JSONL line 2: duplicate unit_id unit-000001"):
+        main([
+            "--campaign-root",
+            str(campaign_root),
+            "--units",
+            str(units_path),
+            "--dry-run-template-only",
+        ])
+
+
+def test_campaign_mode_invalid_json_includes_line_number(tmp_path: Path):
+    campaign_root = tmp_path / "campaign"
+    units_path = tmp_path / "units.jsonl"
+    units_path.write_text(
+        json.dumps(_unit("unit-000001"), ensure_ascii=False) + "\n{not-json\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="units JSONL line 2: invalid JSON"):
+        main([
+            "--campaign-root",
+            str(campaign_root),
+            "--units",
+            str(units_path),
+            "--dry-run-template-only",
+        ])
+
+
+def test_campaign_mode_missing_unit_id_includes_line_number(tmp_path: Path):
+    campaign_root = tmp_path / "campaign"
+    units_path = tmp_path / "units.jsonl"
+    _write_units(units_path, [{"wave_id": "wave-a"}])
+
+    with pytest.raises(ValueError, match="units JSONL line 1: unit_id is required"):
+        main([
+            "--campaign-root",
+            str(campaign_root),
+            "--units",
+            str(units_path),
+            "--dry-run-template-only",
+        ])
 
 
 def test_runner_dry_run_template_only_outputs_patched_body(tmp_path: Path):

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,6 +23,8 @@ from scripts.maimai_ai_infra_campaign import (
     mark_page_completed,
 )
 
+
+UNIT_ID_PATTERN = re.compile(r"^unit-\d{6}$")
 
 DEFAULT_TEMPLATE = {
     "search": {
@@ -94,12 +97,24 @@ def _load_json(path: Path) -> Any:
 
 def _load_units_jsonl(path: Path) -> list[dict[str, Any]]:
     units: list[dict[str, Any]] = []
+    seen_unit_ids: set[str] = set()
     for line_number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), start=1):
         if not line.strip():
             continue
-        unit = json.loads(line)
+        try:
+            unit = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"units JSONL line {line_number}: invalid JSON: {exc.msg}") from exc
         if not isinstance(unit, dict):
-            raise ValueError(f"unit JSONL line {line_number} must be an object")
+            raise ValueError(f"units JSONL line {line_number}: must be an object")
+        unit_id = unit.get("unit_id")
+        if not isinstance(unit_id, str) or not unit_id:
+            raise ValueError(f"units JSONL line {line_number}: unit_id is required")
+        if UNIT_ID_PATTERN.fullmatch(unit_id) is None:
+            raise ValueError(f"units JSONL line {line_number}: unit_id must match unit-\\d{{6}}")
+        if unit_id in seen_unit_ids:
+            raise ValueError(f"units JSONL line {line_number}: duplicate unit_id {unit_id}")
+        seen_unit_ids.add(unit_id)
         units.append(unit)
     return units
 
@@ -234,9 +249,16 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8-sig")
 
 
+def _validate_non_negative_limit(value: int | None, name: str, parser: argparse.ArgumentParser) -> None:
+    if value is not None and value < 0:
+        parser.error(f"{name} must be >= 0")
+
+
 def _run_campaign_dry_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if not args.campaign_root or not args.units:
         parser.error("campaign mode requires --campaign-root and --units")
+    _validate_non_negative_limit(args.max_units, "--max-units", parser)
+    _validate_non_negative_limit(args.max_pages, "--max-pages", parser)
 
     paths = ensure_campaign(args.campaign_root)
     units = _load_units_jsonl(Path(args.units))
@@ -280,12 +302,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run-template-only", action="store_true")
     parser.add_argument("--campaign-root")
     parser.add_argument("--units")
-    parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="accepted for clarity; campaign dry-run always resumes from canonical raw pages",
+    )
     parser.add_argument("--wave")
     parser.add_argument("--unit")
     parser.add_argument("--max-units", type=int)
     parser.add_argument("--max-pages", type=int)
-    parser.add_argument("--max-runtime-minutes", type=int)
+    parser.add_argument(
+        "--max-runtime-minutes",
+        type=int,
+        help="campaign dry-run records this as summary metadata only",
+    )
     args = parser.parse_args(argv)
 
     if not args.dry_run_template_only:
