@@ -310,7 +310,7 @@ def test_ai_infra_score_grades_common_candidate_shapes():
             name="Eve",
             current_company="DeepSeek",
             current_title="推理引擎工程师",
-            education="本科",
+            education="211 重点本科",
             work_years=4,
             skill_tags=("推理", "CUDA", "vLLM", "TensorRT"),
         ),
@@ -324,6 +324,7 @@ def test_ai_infra_score_grades_common_candidate_shapes():
                     "description": "负责推理框架、算子优化、CUDA 加速和 vLLM 服务化",
                 }
             ],
+            education_experience=[{"school": "北京邮电大学", "description": "211"}],
         ),
     )
     assert tier2_technical["grade"] in {"A", "B"}
@@ -336,7 +337,7 @@ def test_ai_infra_score_grades_common_candidate_shapes():
             name="Frank",
             current_company="字节跳动",
             current_title="后端开发工程师",
-            education="本科",
+            education="211 重点本科",
             work_years=6,
             skill_tags=("分布式", "GPU", "SGLang", "推理平台"),
         ),
@@ -350,8 +351,128 @@ def test_ai_infra_score_grades_common_candidate_shapes():
                     "description": "建设大模型推理平台、GPU 调度、SGLang 和 Token 调度链路",
                 }
             ],
+            education_experience=[{"school": "上海交通大学", "description": "211"}],
         ),
     )
-    assert generic_with_strong_tech["grade"] == "B"
+    assert generic_with_strong_tech["grade"] in {"A", "B"}
     assert generic_with_strong_tech["evidence"]["title_level"] == "generic"
     assert "company_not_targeted" not in generic_with_strong_tech["risk_flags"]
+
+
+def test_score_candidate_list_mode_without_detail_returns_list_mode():
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+
+    result = score_candidate(
+        Candidate(
+            id=100,
+            name="List Mode",
+            current_company="Seed",
+            current_title="AI Infra 宸ョ▼甯?",
+            education="清华大学 985",
+            work_years=6,
+            age=30,
+            skill_tags=("GPU",),
+        ),
+        strategy,
+        None,
+        mode="list",
+    )
+
+    assert result["score_mode"] == "list"
+    assert result["grade"] in {"A", "B", "C", "淘汰"}
+    assert "missing_detail_for_detailed_score" not in result["risk_flags"]
+
+
+def test_score_candidate_list_mode_rejects_non_priority_school():
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+
+    result = score_candidate(
+        Candidate(
+            id=101,
+            name="School Gate",
+            current_company="Seed",
+            current_title="AI Infra 宸ョ▼甯?",
+            education="普通本科",
+            work_years=6,
+            age=29,
+            skill_tags=("GPU", "vLLM"),
+        ),
+        strategy,
+        None,
+        mode="list",
+    )
+
+    assert result["grade"] == "淘汰"
+    assert "school_not_priority" in result["risk_flags"]
+
+
+def test_score_candidate_age_35_to_40_is_second_tier():
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+
+    result = score_candidate(
+        Candidate(
+            id=102,
+            name="Age Band",
+            current_company="Seed",
+            current_title="AI Infra 宸ョ▼甯?",
+            education="211 重点本科",
+            work_years=9,
+            age=37,
+            skill_tags=("GPU", "vLLM"),
+        ),
+        strategy,
+        None,
+        mode="list",
+    )
+
+    assert result["age_band"] == "secondary_35_40"
+    assert result["grade"] in {"B", "C", "淘汰"}
+    assert result["grade"] != "A"
+
+
+def test_score_candidate_age_over_40_is_rejected():
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+
+    result = score_candidate(
+        Candidate(
+            id=103,
+            name="Too Old",
+            current_company="Seed",
+            current_title="AI Infra 宸ョ▼甯?",
+            education="985 重点本科",
+            work_years=12,
+            age=41,
+            skill_tags=("GPU", "vLLM"),
+        ),
+        strategy,
+        None,
+        mode="list",
+    )
+
+    assert result["grade"] == "淘汰"
+    assert result["age_band"] == "over_40"
+    assert "age_over_40" in result["risk_flags"]
+
+
+def test_score_candidate_detailed_mode_without_detail_caps_grade():
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+
+    result = score_candidate(
+        Candidate(
+            id=104,
+            name="Detailed Mode",
+            current_company="Seed",
+            current_title="AI Infra 宸ョ▼甯?",
+            education="清华大学 985",
+            work_years=6,
+            age=30,
+            skill_tags=("GPU", "vLLM", "SGLang"),
+        ),
+        strategy,
+        None,
+        mode="detailed",
+    )
+
+    assert result["score_mode"] == "detailed"
+    assert result["grade"] in {"C", "淘汰"}
+    assert "missing_detail_for_detailed_score" in result["risk_flags"]

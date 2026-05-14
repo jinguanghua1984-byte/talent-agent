@@ -134,6 +134,69 @@ def _candidate_line(item: dict[str, Any]) -> str:
     )
 
 
+def write_initial_list_report(path: str | Path, shortlist: dict[str, Any], funnel: dict[str, Any]) -> None:
+    summary = shortlist.get("summary") or {}
+    grades = shortlist.get("grades") or {}
+    coverage = funnel.get("coverage") or {}
+    lines = [
+        "# AI Infra 初版名单报告",
+        "",
+        "## raw/page/wave counts",
+        f"- raw count: {funnel.get('raw_count', 0)}",
+        f"- page count: {funnel.get('page_count', 0)}",
+        f"- wave count: {funnel.get('wave_count', 0)}",
+        "",
+        "## A/B/C/淘汰 funnel",
+        f"- A/B/C/淘汰: {summary.get('A', 0)}/{summary.get('B', 0)}/{summary.get('C', 0)}/{summary.get('淘汰', 0)}",
+        "",
+        "## A Top 100",
+    ]
+    lines.extend(_candidate_line(item) for item in grades.get("A", [])[:100])
+    lines.extend(["", "## B Top 150", ""])
+    lines.extend(_candidate_line(item) for item in grades.get("B", [])[:150])
+    lines.extend([
+        "",
+        "## direction/company coverage",
+        f"- direction count: {coverage.get('direction_count', 0)}",
+        f"- company count: {coverage.get('company_count', 0)}",
+    ])
+
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("\n".join(lines), encoding="utf-8-sig")
+
+
+def write_final_search_report(path: str | Path, detailed_result: dict[str, Any], funnel: dict[str, Any]) -> None:
+    detail = detailed_result.get("detail") or {}
+    recommendations = detailed_result.get("recommendations") or {}
+    gap_suggestions = detailed_result.get("gap_suggestions") or funnel.get("gap_suggestions") or []
+    lines = [
+        "# AI Infra 最终搜索报告",
+        "",
+        "## detail targets/success",
+        f"- detail targets: {detail.get('targets', 0)}",
+        f"- detail success: {detail.get('success', 0)}",
+        "",
+        "## 强推荐/推荐/观察/不推荐",
+        f"- 强推荐: {recommendations.get('强推荐', 0)}",
+        f"- 推荐: {recommendations.get('推荐', 0)}",
+        f"- 观察: {recommendations.get('观察', 0)}",
+        f"- 不推荐: {recommendations.get('不推荐', 0)}",
+        "",
+        f"- final recommended count: {detailed_result.get('final_recommended_count', 0)}",
+        "",
+        "## gap suggestions",
+    ]
+    if gap_suggestions:
+        lines.extend(f"- {item}" for item in gap_suggestions)
+    else:
+        lines.append("- none")
+
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("\n".join(lines), encoding="utf-8-sig")
+
+
 def build_final_report(path: str | Path, context: dict[str, Any]) -> None:
     run = context.get("run") or {}
     batches = run.get("batches") or []

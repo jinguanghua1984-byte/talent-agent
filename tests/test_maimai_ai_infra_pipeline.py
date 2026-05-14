@@ -17,6 +17,8 @@ from scripts.maimai_ai_infra_pipeline import (
     run_campaign_wave,
     run_pipeline,
     select_detail_candidate_ids,
+    write_final_search_report,
+    write_initial_list_report,
 )
 from scripts.talent_models import IngestResult
 from scripts.talent_db import TalentDB
@@ -283,6 +285,60 @@ def test_build_final_report_contains_required_sections(tmp_path: Path):
     assert "详情补全结果" in text
     assert "异常批次" in text
     assert "下一轮建议" in text
+
+
+def test_write_initial_list_report_contains_funnel_and_coverage(tmp_path: Path):
+    out_path = tmp_path / "initial.md"
+
+    write_initial_list_report(
+        out_path,
+        shortlist={
+            "summary": {"A": 2, "B": 3, "C": 4, "娣樻卑": 5},
+            "grades": {
+                "A": [{"candidate_id": 1, "name": "Alice", "score": 90, "evidence": {"company": "瀛楄妭璺冲姩"}}],
+                "B": [{"candidate_id": 2, "name": "Bob", "score": 75, "evidence": {"company": "DeepSeek"}}],
+            },
+        },
+        funnel={
+            "raw_count": 120,
+            "page_count": 12,
+            "wave_count": 3,
+            "coverage": {"direction_count": 5, "company_count": 8},
+        },
+    )
+
+    text = out_path.read_text(encoding="utf-8-sig")
+    assert "raw/page/wave" in text
+    assert "A/B/C/淘汰" in text
+    assert "A Top 100" in text
+    assert "B Top 150" in text
+    assert "direction/company coverage" in text
+
+
+def test_write_final_search_report_contains_recommendation_sections(tmp_path: Path):
+    out_path = tmp_path / "final.md"
+
+    write_final_search_report(
+        out_path,
+        detailed_result={
+            "detail": {"targets": 10, "success": 8},
+            "recommendations": {
+                "强推荐": 2,
+                "推荐": 3,
+                "观察": 1,
+                "不推荐": 4,
+            },
+            "final_recommended_count": 5,
+            "gap_suggestions": ["补充 985/211", "补充 detailed profile"],
+        },
+        funnel={},
+    )
+
+    text = out_path.read_text(encoding="utf-8-sig")
+    assert "detail targets/success" in text
+    assert "强推荐/推荐/观察/不推荐" in text
+    assert "final recommended count" in text
+    assert "gap suggestions" in text
 
 
 def test_run_pipeline_uses_real_request_template_and_writes_outputs(tmp_path: Path):

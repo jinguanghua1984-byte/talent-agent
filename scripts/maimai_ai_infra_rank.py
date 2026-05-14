@@ -102,16 +102,55 @@ def _tech_keywords(strategy: dict[str, Any]) -> list[str]:
     return terms
 
 
-def _education_score(strategy: dict[str, Any], candidate: Candidate, text: str) -> tuple[int, str]:
-    education_text = _text_join([candidate.education, text])
+_PRIORITY_SCHOOL_TERMS = [
+    "985",
+    "211",
+    "QS",
+    "Top500",
+    "top 500",
+    "海外",
+    "overseas",
+    "世界前500",
+    "QS前500",
+]
+_SECONDARY_SCHOOL_TERMS = ["博士", "硕士", "本科"]
+_EXCLUDED_EDUCATION_TERMS = {"大专", "专科", "junior college", "juniorcollege"}
+
+
+def _education_text(candidate: Candidate, detail: CandidateDetail | None) -> str:
+    return _text_join([candidate.education, _detail_text(detail)])
+
+
+def _contains_term(text: str, term: str) -> bool:
+    if not term:
+        return False
+    if term.isascii():
+        return term.lower() in text.lower()
+    return term in text
+
+
+def _is_priority_school(strategy: dict[str, Any], candidate: Candidate, detail: CandidateDetail | None) -> bool:
+    education_text = _education_text(candidate, detail)
     groups = strategy.get("education_groups", {})
-    if any(school in education_text for school in groups.get("c9", [])):
+    school_terms = [
+        *groups.get("c9", []),
+        *groups.get("top985", []),
+        *groups.get("top211", []),
+        *_PRIORITY_SCHOOL_TERMS,
+    ]
+    return any(_contains_term(education_text, term) for term in school_terms)
+
+
+def _education_score(strategy: dict[str, Any], candidate: Candidate, detail: CandidateDetail | None) -> tuple[int, str]:
+    education_text = _education_text(candidate, detail)
+    groups = strategy.get("education_groups", {})
+    if any(_contains_term(education_text, school) for school in groups.get("c9", [])):
         return 10, "C9"
-    if any(school in education_text for school in groups.get("top985", [])) or "985" in education_text:
+    if any(_contains_term(education_text, school) for school in groups.get("top985", [])) or "985" in education_text:
         return 8, "985"
-    if any(school in education_text for school in groups.get("top211", [])) or "211" in education_text:
+    if any(_contains_term(education_text, school) for school in groups.get("top211", [])) or "211" in education_text:
         return 6, "211"
-    if any(term in education_text for term in ["博士", "硕士", "本科"]):
+    if any(_contains_term(education_text, term) for term in _SECONDARY_SCHOOL_TERMS):
         return 4, candidate.education or "本科及以上"
     return 0, candidate.education or ""
 
@@ -129,18 +168,46 @@ def _years_score(candidate: Candidate) -> int:
     return 3
 
 
+def _age_band(age: int | None) -> str:
+    if age is None:
+        return "unknown"
+    if age > 40:
+        return "over_40"
+    if 35 < age <= 40:
+        return "secondary_35_40"
+    if 24 <= age <= 35:
+        return "best_24_35"
+    return "other"
+
+
+def _grade_rank(grade: str) -> int:
+    return {"A": 3, "B": 2, "C": 1, "淘汰": 0}.get(grade, 0)
+
+
+def _cap_grade(grade: str, cap: str) -> str:
+    return grade if _grade_rank(grade) <= _grade_rank(cap) else cap
+
+
 def score_candidate(
     candidate: Candidate,
     strategy: dict[str, Any],
     detail: CandidateDetail | None = None,
+    mode: str = "list",
 ) -> dict[str, Any]:
+    if mode not in {"list", "detailed"}:
+        raise ValueError("mode must be either 'list' or 'detailed'")
+
     text = _candidate_text(candidate, detail)
     title = candidate.current_title or ""
     risk_flags: list[str] = []
+    age_band = _age_band(candidate.age)
 
     if any(term and term.lower() in title.lower() for term in strategy.get("exclude_titles", [])):
         risk_flags.append("excluded_title")
-    if any(term and term in _text_join([candidate.education, text]) for term in strategy.get("exclude_education", [])):
+
+    education_text = _education_text(candidate, detail)
+    excluded_education_terms = set(strategy.get("exclude_education", [])) | _EXCLUDED_EDUCATION_TERMS
+    if any(_contains_term(education_text, term) for term in excluded_education_terms):
         risk_flags.append("excluded_education")
 
     tier, company = _company_matches(strategy, _text_join([candidate.current_company, text]))
@@ -151,13 +218,30 @@ def score_candidate(
     title_points, title_level = _title_score(title)
     keywords = [term for term in _tech_keywords(strategy) if term and term.lower() in text.lower()]
     tech_points = min(25, len(keywords) * 5)
-    education_points, education_level = _education_score(strategy, candidate, text)
+    education_points, education_level = _education_score(strategy, candidate, detail)
     years_points = _years_score(candidate)
     score = company_points + title_points + tech_points + education_points + years_points
 
-    if risk_flags:
-        grade = "淘汰"
-    elif score >= 80 and company_points and title_points and tech_points:
+    if not _is_priority_school(strategy, candidate, detail):
+        risk_flags.append("school_not_priority")
+    if candidate.age is not None and candidate.age > 40:
+        risk_flags.append("age_over_40")
+    if score < 50:
+        risk_flags.append("score_below_threshold")
+
+    hard_reject = any(
+        flag in {
+            "excluded_title",
+            "excluded_education",
+            "company_not_targeted",
+            "school_not_priority",
+            "age_over_40",
+            "score_below_threshold",
+        }
+        for flag in risk_flags
+    )
+
+    if score >= 80 and company_points and title_points and tech_points:
         grade = "A"
     elif score >= 65:
         grade = "B"
@@ -165,7 +249,19 @@ def score_candidate(
         grade = "C"
     else:
         grade = "淘汰"
-        risk_flags.append("score_below_threshold")
+
+    if mode == "detailed" and detail is None:
+        risk_flags.append("missing_detail_for_detailed_score")
+        grade = _cap_grade(grade, "C")
+
+    if age_band == "secondary_35_40":
+        grade = _cap_grade(grade, "B")
+    elif age_band == "over_40":
+        grade = "淘汰"
+        hard_reject = True
+
+    if hard_reject:
+        grade = "淘汰"
 
     return {
         "candidate_id": candidate.id,
@@ -173,6 +269,8 @@ def score_candidate(
         "tier": tier,
         "grade": grade,
         "score": score,
+        "score_mode": mode,
+        "age_band": age_band,
         "evidence": {
             "company": company or candidate.current_company or "",
             "title": candidate.current_title or "",
