@@ -42,6 +42,25 @@ CONFIRMED_FILTER_FIELDS = [
     "search.major",
 ]
 
+V2_ALLOWED_FILTERS = {
+    "allcompanies",
+    "degrees",
+    "degrees_min",
+    "degrees_max",
+    "only_bachelor_degree",
+    "min_only_bachelor_degree",
+    "max_only_bachelor_degree",
+    "positions",
+    "worktimes",
+    "worktimes_min",
+    "worktimes_max",
+    "min_age",
+    "max_age",
+    "schools",
+    "major",
+    "query_relation",
+}
+
 
 def _load_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8-sig") as file:
@@ -134,6 +153,115 @@ def _make_batch(
     }
 
 
+def _v2_filters(
+    strategy: dict[str, Any],
+    company: str,
+    position: str,
+    query_relation: int,
+) -> dict[str, Any]:
+    filters = dict(strategy["v2"].get("default_filters", {}))
+    filters.update({
+        "allcompanies": company,
+        "positions": position,
+        "query_relation": query_relation,
+    })
+    unconfirmed = sorted(set(filters) - V2_ALLOWED_FILTERS)
+    if unconfirmed:
+        raise ValueError("unconfirmed V2 search filter fields: " + ", ".join(unconfirmed))
+    return filters
+
+
+def _unit(
+    strategy: dict[str, Any],
+    batch_type: str,
+    tier: str,
+    company: str,
+    position: str,
+    keyword_pack: str,
+    query_relation: int,
+    unit_index: int,
+) -> dict[str, Any]:
+    limits = strategy["limits"]
+    wave_size = strategy.get("v2", {}).get("wave_size_units", 40) or 40
+    keywords = strategy["keyword_packs"][keyword_pack]
+    query = _quote_terms([*_company_terms(strategy, company), position, *keywords[:4]])
+    return {
+        "unit_id": f"unit-{unit_index:06d}",
+        "wave_id": f"wave-{((unit_index - 1) // wave_size) + 1:03d}",
+        "batch_type": batch_type,
+        "tier": tier,
+        "company": company,
+        "position": position,
+        "keyword_pack": keyword_pack,
+        "search_filters": _v2_filters(strategy, company, position, query_relation),
+        "query": query,
+        "max_pages": min(limits["pages_per_batch"], 3),
+        "page_size": limits["page_size"],
+    }
+
+
+def build_search_units(strategy: dict[str, Any]) -> list[dict[str, Any]]:
+    units: list[dict[str, Any]] = []
+    unit_index = 1
+    quotas = strategy["v2"]["unit_quotas"]
+    titles = strategy["title_batches"]
+    companies = strategy["company_tiers"]
+
+    def add(
+        batch_type: str,
+        tier: str,
+        company_names: list[str],
+        positions: list[str],
+        packs: list[str],
+        query_relation: int,
+    ) -> None:
+        nonlocal unit_index
+        quota = quotas.get(batch_type, 0)
+        start_count = len(units)
+        for company in company_names:
+            for position in positions:
+                for pack in packs:
+                    if len(units) - start_count >= quota:
+                        return
+                    units.append(_unit(
+                        strategy,
+                        batch_type,
+                        tier,
+                        company,
+                        position,
+                        pack,
+                        query_relation,
+                        unit_index,
+                    ))
+                    unit_index += 1
+
+    add(
+        "P1_core_precision",
+        "tier1",
+        companies.get("tier1", []),
+        titles["precision"],
+        ["training", "inference"],
+        1,
+    )
+    add(
+        "P2_technical",
+        "tier2_priority",
+        companies.get("tier2_priority", []),
+        titles["technical"],
+        ["inference", "training"],
+        1,
+    )
+    add(
+        "P3_generic_with_strong_query",
+        "tier1",
+        companies.get("tier1", []),
+        titles["generic"],
+        ["inference"],
+        0,
+    )
+    return units
+
+
 def generate_batches(strategy: dict[str, Any]) -> list[dict[str, Any]]:
     batches: list[dict[str, Any]] = []
     max_batches = strategy["limits"]["max_batches_per_day"]
@@ -200,6 +328,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="生成脉脉 AI Infra 搜索批次计划")
     parser.add_argument("--config", default="configs/maimai-ai-infra-search-strategy.json")
     parser.add_argument("--out", required=True)
+    parser.add_argument("--out-units")
     args = parser.parse_args(argv)
 
     strategy = load_strategy(args.config)
@@ -207,6 +336,14 @@ def main(argv: list[str] | None = None) -> int:
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8-sig")
+    if args.out_units:
+        units = build_search_units(strategy)
+        units_path = Path(args.out_units)
+        units_path.parent.mkdir(parents=True, exist_ok=True)
+        units_path.write_text(
+            "\n".join(json.dumps(unit, ensure_ascii=False, sort_keys=True) for unit in units) + "\n",
+            encoding="utf-8-sig",
+        )
     return 0
 
 

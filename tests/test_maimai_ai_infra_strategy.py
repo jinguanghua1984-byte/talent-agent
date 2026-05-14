@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from scripts.maimai_ai_infra_rank import score_candidate
-from scripts.maimai_ai_infra_search_plan import generate_batches, load_strategy
+from scripts.maimai_ai_infra_search_plan import build_search_units, generate_batches, load_strategy
 from scripts.talent_models import Candidate, CandidateDetail
 
 
@@ -68,6 +68,101 @@ def test_generate_batches_marks_confirmed_search_filters_including_age_range():
         "search.major",
     ]
     assert "age" not in patch_policy["local_filter_only"]
+
+
+def _minimal_v2_strategy() -> dict:
+    return {
+        "strategy_version": "ai-infra-v2",
+        "human_gates": {
+            "strategy_confirmed": False,
+            "auto_apply_after_clean_dry_run": False,
+        },
+        "limits": {
+            "pages_per_batch": 3,
+            "page_size": 30,
+            "max_contacts_per_batch": 90,
+            "max_batches_per_day": 500,
+        },
+        "company_tiers": {
+            "tier1": ["字节跳动"],
+            "tier2_priority": ["华为"],
+        },
+        "company_aliases": {
+            "字节跳动": ["字节"],
+            "华为": ["昇腾"],
+        },
+        "title_batches": {
+            "precision": ["大模型训练"],
+            "technical": ["异构计算"],
+            "generic": ["算法工程师"],
+        },
+        "keyword_packs": {
+            "training": ["分布式训练", "训练框架", "GPU"],
+            "inference": ["推理", "算子", "加速"],
+        },
+        "exclude_titles": [],
+        "exclude_education": [],
+        "v2": {
+            "wave_size_units": 2,
+            "unit_quotas": {
+                "P1_core_precision": 1,
+                "P2_technical": 1,
+                "P3_generic_with_strong_query": 1,
+            },
+            "default_filters": {
+                "degrees": "1,2,3",
+                "worktimes_min": "2",
+                "worktimes_max": "10",
+                "min_age": "24",
+                "max_age": "40",
+            },
+            "school_gate": {
+                "allow_tags": ["985", "211"],
+                "reject_tags": ["unknown_school_quality"],
+            },
+            "age_bands": {
+                "best_min": 24,
+                "best_max": 35,
+                "secondary_max": 40,
+            },
+        },
+    }
+
+
+def test_build_search_units_compiles_v2_units_with_confirmed_filters():
+    strategy = _minimal_v2_strategy()
+
+    units = build_search_units(strategy)
+
+    assert [unit["unit_id"] for unit in units] == ["unit-000001", "unit-000002", "unit-000003"]
+    assert len(units) == 3
+    assert units[0]["wave_id"] == "wave-001"
+    assert units[2]["wave_id"] == "wave-002"
+    assert [unit["batch_type"] for unit in units] == [
+        "P1_core_precision",
+        "P2_technical",
+        "P3_generic_with_strong_query",
+    ]
+    for unit in units:
+        filters = unit["search_filters"]
+        assert "age" not in filters
+        assert unit["max_pages"] <= 3
+        assert unit["page_size"] == 30
+        assert filters["degrees"] == "1,2,3"
+        assert filters["min_age"] == "24"
+        assert filters["max_age"] == "40"
+
+
+def test_build_search_units_rejects_unconfirmed_age_filter():
+    strategy = _minimal_v2_strategy()
+    strategy["v2"]["default_filters"]["age"] = "24,40"
+
+    try:
+        build_search_units(strategy)
+    except ValueError as error:
+        assert str(error) == "unconfirmed V2 search filter fields: age"
+    else:
+        raise AssertionError("expected ValueError for unconfirmed age filter")
 
 
 def test_search_plan_cli_outputs_json(tmp_path: Path):
