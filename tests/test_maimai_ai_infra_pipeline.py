@@ -71,6 +71,33 @@ def test_extract_wave_contacts_from_page_raw_dedupes_platform_ids(tmp_path: Path
     assert [item["id"] for item in payload["contacts"]] == ["u1", "u2"]
 
 
+def test_extract_wave_contacts_dedupes_when_one_contact_has_id_and_platform_id(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    mark_page_completed(
+        paths,
+        "unit-000001",
+        1,
+        {
+            "wave_id": "wave-001",
+            "contacts": [{"id": "internal-1", "platform_id": "p1", "name": "A"}],
+        },
+    )
+    mark_page_completed(
+        paths,
+        "unit-000002",
+        1,
+        {
+            "wave_id": "wave-001",
+            "contacts": [{"platform_id": "p1", "name": "A duplicate"}],
+        },
+    )
+
+    payload = extract_wave_contacts_from_pages(paths, "wave-001")
+
+    assert payload["metadata"]["total_contacts"] == 1
+    assert payload["contacts"][0]["name"] == "A"
+
+
 def test_import_ledger_blocks_duplicate_wave_apply(tmp_path: Path):
     paths = ensure_campaign(tmp_path / "campaign")
 

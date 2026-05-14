@@ -79,10 +79,14 @@ def extract_wave_contacts_from_pages(paths: CampaignPaths, wave_id: str) -> dict
         if data.get("wave_id") != wave_id:
             continue
         for contact in data.get("contacts") or []:
-            key = str(contact.get("id") or contact.get("platform_id") or "")
-            if not key or key in seen:
+            keys = {
+                str(value).strip()
+                for value in (contact.get("id"), contact.get("platform_id"))
+                if str(value or "").strip()
+            }
+            if not keys or seen.intersection(keys):
                 continue
-            seen.add(key)
+            seen.update(keys)
             contacts.append(contact)
     payload = {
         "exportTime": datetime.now().isoformat(timespec="seconds"),
