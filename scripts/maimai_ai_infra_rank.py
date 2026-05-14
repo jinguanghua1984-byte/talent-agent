@@ -102,17 +102,8 @@ def _tech_keywords(strategy: dict[str, Any]) -> list[str]:
     return terms
 
 
-_PRIORITY_SCHOOL_TERMS = [
-    "985",
-    "211",
-    "QS",
-    "Top500",
-    "top 500",
-    "海外",
-    "overseas",
-    "世界前500",
-    "QS前500",
-]
+_TOP500_MARKERS = ["Top500", "top500", "top 500", "世界前500", "QS前500"]
+_TOP500_CONTEXT_TERMS = ["QS", "海外", "overseas"]
 _SECONDARY_SCHOOL_TERMS = ["博士", "硕士", "本科"]
 _EXCLUDED_EDUCATION_TERMS = {"大专", "专科", "junior college", "juniorcollege"}
 
@@ -129,16 +120,25 @@ def _contains_term(text: str, term: str) -> bool:
     return term in text
 
 
+def _matches_top500_school(education_text: str) -> bool:
+    normalized = education_text.lower()
+    if any(marker.lower() in normalized for marker in ["qs前500", "世界前500"]):
+        return True
+    if any(marker.lower() in normalized for marker in _TOP500_MARKERS):
+        return any(_contains_term(education_text, term) for term in _TOP500_CONTEXT_TERMS)
+    return False
+
+
 def _is_priority_school(strategy: dict[str, Any], candidate: Candidate, detail: CandidateDetail | None) -> bool:
     education_text = _education_text(candidate, detail)
     groups = strategy.get("education_groups", {})
-    school_terms = [
-        *groups.get("c9", []),
-        *groups.get("top985", []),
-        *groups.get("top211", []),
-        *_PRIORITY_SCHOOL_TERMS,
-    ]
-    return any(_contains_term(education_text, term) for term in school_terms)
+    if any(_contains_term(education_text, term) for term in groups.get("c9", [])):
+        return True
+    if any(_contains_term(education_text, term) for term in groups.get("top985", [])) or "985" in education_text:
+        return True
+    if any(_contains_term(education_text, term) for term in groups.get("top211", [])) or "211" in education_text:
+        return True
+    return _matches_top500_school(education_text)
 
 
 def _education_score(strategy: dict[str, Any], candidate: Candidate, detail: CandidateDetail | None) -> tuple[int, str]:
@@ -150,6 +150,8 @@ def _education_score(strategy: dict[str, Any], candidate: Candidate, detail: Can
         return 8, "985"
     if any(_contains_term(education_text, school) for school in groups.get("top211", [])) or "211" in education_text:
         return 6, "211"
+    if _matches_top500_school(education_text):
+        return 6, "Top500"
     if any(_contains_term(education_text, term) for term in _SECONDARY_SCHOOL_TERMS):
         return 4, candidate.education or "本科及以上"
     return 0, candidate.education or ""

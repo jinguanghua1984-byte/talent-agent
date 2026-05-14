@@ -476,3 +476,60 @@ def test_score_candidate_detailed_mode_without_detail_caps_grade():
     assert result["score_mode"] == "detailed"
     assert result["grade"] in {"C", "淘汰"}
     assert "missing_detail_for_detailed_score" in result["risk_flags"]
+
+
+def test_score_candidate_top500_requires_context_to_pass_school_gate():
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+
+    passing = score_candidate(
+        Candidate(
+            id=105,
+            name="Top500 Pass",
+            current_company="Seed",
+            current_title="AI Infra 宸ョ▼甯?",
+            education="QS Top500 university",
+            work_years=6,
+            age=30,
+            skill_tags=("GPU", "vLLM"),
+        ),
+        strategy,
+        None,
+        mode="list",
+    )
+    failing_qs = score_candidate(
+        Candidate(
+            id=106,
+            name="QS 900",
+            current_company="Seed",
+            current_title="AI Infra 宸ョ▼甯?",
+            education="QS ranking 900 university",
+            work_years=6,
+            age=30,
+            skill_tags=("GPU", "vLLM"),
+        ),
+        strategy,
+        None,
+        mode="list",
+    )
+    failing_overseas = score_candidate(
+        Candidate(
+            id=107,
+            name="Overseas Unknown",
+            current_company="Seed",
+            current_title="AI Infra 宸ョ▼甯?",
+            education="overseas unknown university",
+            work_years=6,
+            age=30,
+            skill_tags=("GPU", "vLLM"),
+        ),
+        strategy,
+        None,
+        mode="list",
+    )
+
+    assert passing["grade"] != "淘汰"
+    assert "school_not_priority" not in passing["risk_flags"]
+    assert failing_qs["grade"] == "淘汰"
+    assert "school_not_priority" in failing_qs["risk_flags"]
+    assert failing_overseas["grade"] == "淘汰"
+    assert "school_not_priority" in failing_overseas["risk_flags"]
