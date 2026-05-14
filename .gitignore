@@ -45,6 +45,9 @@ __pycache__/
 data/session/
 data/batches/
 
+# WeChat personal exports
+data/wechat/
+
 # Boss 搜索原始结果（含敏感个人信息）
 data/boss-search/
 
@@ -58,3 +61,6 @@ data/cache/
 # Chrome extension packaging artifacts
 *.crx
 *.pem
+
+# Runtime output
+runtime/

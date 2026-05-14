@@ -16,9 +16,18 @@ def _template_body():
             "positions": "",
             "allcompanies": "一线互联网公司",
             "degrees": "2,3",
+            "degrees_min": "",
+            "degrees_max": "",
+            "only_bachelor_degree": 0,
             "worktimes": "",
+            "worktimes_min": "",
+            "worktimes_max": "",
             "age": "",
+            "min_age": "",
+            "max_age": "",
             "query_relation": 0,
+            "schools": "",
+            "major": "",
             "paginationParam": {"page": 1, "size": 30},
             "page": 0,
             "size": 30,
@@ -61,6 +70,55 @@ def test_patch_search_body_preserves_session_fields_and_patches_verified_fields(
     assert patched["search"]["sessionid"] == "session-search"
     assert patched["search"]["data_version"] == "4.1"
     assert patched["search"]["highlight_exp"] == 1
+
+
+def test_patch_search_body_applies_explicit_confirmed_filters_only():
+    batch = {
+        **_batch(),
+        "age": "32",
+        "query_relation": 1,
+        "search_filters": {
+            "allcompanies": "字节跳动,阿里",
+            "positions": "模型训练,推理引擎",
+            "degrees": "1,2,3",
+            "only_bachelor_degree": 1,
+            "worktimes_min": "4",
+            "worktimes_max": "8",
+            "min_age": "16",
+            "max_age": "40",
+            "schools": "浙大,清华大学",
+            "major": "软件工程",
+        },
+    }
+
+    patched = patch_search_body(_template_body(), batch, page=1)
+
+    assert patched["search"]["query_relation"] == 1
+    assert patched["search"]["allcompanies"] == "字节跳动,阿里"
+    assert patched["search"]["positions"] == "模型训练,推理引擎"
+    assert patched["search"]["degrees"] == "1,2,3"
+    assert patched["search"]["only_bachelor_degree"] == 1
+    assert patched["search"]["worktimes_min"] == "4"
+    assert patched["search"]["worktimes_max"] == "8"
+    assert patched["search"]["min_age"] == "16"
+    assert patched["search"]["max_age"] == "40"
+    assert patched["search"]["schools"] == "浙大,清华大学"
+    assert patched["search"]["major"] == "软件工程"
+    assert patched["search"]["age"] == ""
+
+
+def test_patch_search_body_rejects_unconfirmed_filter_fields():
+    batch = {
+        **_batch(),
+        "search_filters": {"age": "32"},
+    }
+
+    try:
+        patch_search_body(_template_body(), batch, page=1)
+    except ValueError as exc:
+        assert "unconfirmed search filter field: search.age" in str(exc)
+    else:
+        raise AssertionError("unconfirmed filter should fail")
 
 
 def test_patch_search_body_rejects_incompatible_template():

@@ -24,6 +24,24 @@ REQUIRED_TOP_LEVEL_KEYS = {
     "exclude_education",
 }
 
+CONFIRMED_FILTER_FIELDS = [
+    "search.allcompanies",
+    "search.degrees",
+    "search.degrees_min",
+    "search.degrees_max",
+    "search.only_bachelor_degree",
+    "search.min_only_bachelor_degree",
+    "search.max_only_bachelor_degree",
+    "search.positions",
+    "search.worktimes",
+    "search.worktimes_min",
+    "search.worktimes_max",
+    "search.min_age",
+    "search.max_age",
+    "search.schools",
+    "search.major",
+]
+
 
 def _load_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8-sig") as file:
@@ -102,8 +120,16 @@ def _make_batch(
         "page_size": limits["page_size"],
         "priority": priority,
         "search_body_patch": {
-            "verified_fields": ["search.query", "search.search_query", "search.paginationParam", "search.page", "search.size"],
-            "local_filter_only": ["company", "position", "education", "worktime", "age"],
+            "verified_fields": [
+                "search.query",
+                "search.search_query",
+                "search.paginationParam",
+                "search.page",
+                "search.size",
+                "search.query_relation",
+            ],
+            "confirmed_filter_fields": CONFIRMED_FILTER_FIELDS,
+            "local_filter_only": ["company", "position", "education", "worktime"],
         },
     }
 

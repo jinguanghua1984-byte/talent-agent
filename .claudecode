@@ -1,0 +1,2 @@
+# .claudecode
+When using tool calls, especially the Read tool, never use empty strings for optional parameters. If a parameter like "pages" is not needed, omit it entirely from the JSON payload instead of sending "pages": "".

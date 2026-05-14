@@ -20,3 +20,7 @@
 - 2026-05-10：Chrome 扩展的 match pattern `*://maimai.cn/*` 不覆盖 `www.maimai.cn` 等子域。脉脉详情页捕获异常为 0 时，先检查 `host_permissions` 和 `content_scripts.matches` 是否包含 `*://*.maimai.cn/*`，再让用户重载扩展和刷新页面。
 - 2026-05-10：Chrome 扩展重载后，旧页面中的 content script 会残留并抛 `Extension context invalidated`。修改扩展时要提示用户重载扩展后刷新业务页面；content script 中所有 `chrome.runtime.sendMessage` 也要包一层 try/catch 和 `chrome.runtime.id` 检查。
 - 2026-05-10：`maimai-scraper` 的导出按钮如果优先走 IndexedDB 分页导出，会把被动拦截的详情请求漏掉；详情补全必须使用完整导出，同时包含 `contacts`、`details`、`requests`。清除数据也必须同步清 `PagerDB`，否则旧联系人列表会抢占导出结果。
+- 2026-05-14：生成搜索 API 说明书时，不要只在口头摘要里挑少数筛选项；必须在机器 JSON 和 Markdown 中全量保留所有观测字段，同时单独分出关键字段、优先确认筛选字段、次级筛选字段、模板保留字段和其他字段。`search.query_relation` 语义已确认：`0=AND`、`1=OR`。
+- 2026-05-14：用户说“另一个 Codex 账户继续”时，不要默认理解为换机器；先区分同机同工作区换账号、同机不同工作区、跨机器迁移。若是同机同工作区，优先依赖本地文件交接，不需要打包传输或迁移浏览器 profile。
+- 2026-05-14：脉脉搜索字段 `major` 是专业名，不是职位名；`degrees` 学历编码为 `0=专科`、`1=本科`、`2=硕士`、`3=博士`、`100=自定义范围`，预设“本科及以上”仍需结合 `only_bachelor_degree` 区分“不限/只看统招本科”。
+- 2026-05-14：脉脉搜索年龄字段已确认是范围筛选；参数统一为 `min_age/max_age`，不要实现或文档化 `age_min/age_max` 别名。

@@ -1,5 +1,6 @@
 | 日期 | 错误 | 根因 | 修复 |
 | --- | --- | --- | --- |
+| 2026-05-13 | Claude Code 使用 GPT 5.5 启动时报 `mcp__gemini__analyze_image` schema 400 | 用户级 `mcpServers.gemini` 加载的 `mcp-server-gemini@4.2.2` 在 `analyze_image.inputSchema` 顶层使用 `oneOf`，GPT 5.5/OpenAI tool schema 子集拒绝顶层组合关键字；用户随后明确不需要该 MCP | 从 `C:\Users\Administrator\.claude.json` 删除全局 `mcpServers.gemini` 注册，并清理临时本地补丁副本；验证活跃 MCP server 中无 Gemini |
 | 2026-05-13 | Edge CDP `/json/new?url` 返回 405 | Edge 148 的 DevTools HTTP endpoint 要求用 `PUT /json/new?...` 创建新 target，`GET` 会被拒绝 | 本地 CDP helper 对 `/json/new` 和 `/json/activate/<id>` 统一使用 `PUT`，页面内容仍通过 WebSocket `Runtime.evaluate` 读取 |
 | 2026-05-09 | `python scripts/score_pipeline.py --help` 报 `ModuleNotFoundError: No module named 'scripts.jd_analyzer'` | 以文件路径直跑脚本时，`sys.path[0]` 是 `scripts/`，项目根目录未进入导入路径，导致 `from scripts...` 绝对导入失败 | 在 `scripts/score_pipeline.py` 入口导入前，当 `__package__` 为空时把项目根目录加入 `sys.path` |
 | 2026-05-10 | Codex Chrome Extension 两次 `browser.user.openTabs()` 连接超时 | Chrome、扩展安装状态和 native host 均正常，但 extension backend 握手无响应；无法继续使用内置 Chrome 插件做页面级调试 | 按 Chrome 插件流程打开同 Profile 新窗口后重试仍超时，后续应从 Codex 插件 UI 重装 Chrome 插件或修复 backend 通信链路 |
@@ -23,3 +24,5 @@
 | 2026-05-13 | S3 live search 首次执行只抓到 5 批 x 1 页而不是计划中的 5 批 x 3 页 | `scripts/maimai_ai_infra_search_live_gate.py` 的 `run_gate()` 把 `page = 1` 写死，并把 `constraints.pagesPerBatch` 固定为 1，未读取 batch 的 `max_pages` | 补 TDD 覆盖 `max_pages` 和 `start_page`，让 live runner 按页循环；已将首轮第 1 页 raw 归档为 partial，再用 continuation plan 只补第 2-3 页 |
 | 2026-05-13 | 脉脉详情批间休息倒计时到 0 后停在 30/205 不继续 | MV3 background service worker 可能在 5-10 分钟长 `setTimeout` 批间等待中被浏览器挂起；状态已持久化为 `batch_pause_until`，但内存里的 `DetailBatch.run()` 等待链丢失 | `getDetailBatchStatus/getScraperSummary` 检测过期 `batch_pause_until` 后，从 IndexedDB 持久化 jobs 和存储 state 恢复同一 run token 的剩余任务，不清空已完成详情 |
 | 2026-05-13 | 详情日志刚显示成功到 120/205，批间休息状态却回退显示 60/205 | 批间暂停事件的 `batch_pause_completed` 使用本次 `DetailBatch.run()` 调用内的 `processed` 计数；在 service worker 恢复续跑后，`processed` 不是全量累计完成数 | 调度器写入 `state.counts` 的累计完成数；background/popup/悬浮球显示时取 `batch_pause_completed` 与真实 done/failed/skipped counts 的较大值，兼容已写入的旧状态 |
+| 2026-05-14 | 搜索 API 说明书草案样本数翻倍 | 字段校准 JSON 同时包含 `newSearchRecords` 和 `latestSearchRecords`，同一 `/api/ent/v3/search/basic` 请求会被离线规格生成器重复计数 | 规格生成器按 `id/ts/url/body` 稳定 key 去重，并补红测覆盖跨 section 重复请求 |
+| 2026-05-14 | Edge CDP 9222 `/json/version` 返回 404 | 9222 已被 Chrome/Edge 双栈占用，`127.0.0.1:9222` 命中非目标进程；Edge 也未自动写 `DevToolsActivePort` | 改用独立 9888 端口和独立 profile，按 `/json/version` 补写本地 `DevToolsActivePort` 后再运行 CDP CLI |

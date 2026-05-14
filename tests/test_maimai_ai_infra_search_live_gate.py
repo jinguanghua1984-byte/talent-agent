@@ -8,6 +8,7 @@ from scripts.maimai_ai_infra_search_live_gate import (
     find_talent_target,
     is_blocking_health,
     run_gate,
+    search_expression,
     summarize_response,
     validate_search_template_status,
 )
@@ -108,6 +109,37 @@ def test_validate_search_template_status_blocks_non_search_templates():
     assert validate_search_template_status(invalid_url) == "incompatible_request_shape"
     assert validate_search_template_status(invalid_method) == "incompatible_request_shape"
     assert validate_search_template_status(invalid_body) == "incompatible_request_shape"
+
+
+def test_live_gate_search_expression_applies_confirmed_filters_only():
+    expression = search_expression(
+        "AI infra",
+        1,
+        30,
+        {
+            "positions": "模型训练,推理引擎",
+            "schools": "浙大",
+            "major": "软件工程",
+            "min_age": "16",
+            "max_age": "40",
+            "query_relation": 1,
+        },
+    )
+
+    assert "applyConfirmedSearchFilters" in expression
+    assert '"positions": "模型训练,推理引擎"' in expression
+    assert '"schools": "浙大"' in expression
+    assert '"major": "软件工程"' in expression
+    assert '"min_age": "16"' in expression
+    assert '"max_age": "40"' in expression
+    assert '"query_relation": 1' in expression
+
+    try:
+        search_expression("AI infra", 1, 30, {"age": "32"})
+    except ValueError as exc:
+        assert "unconfirmed search filter field: search.age" in str(exc)
+    else:
+        raise AssertionError("unconfirmed filter should fail")
 
 
 def test_run_gate_stops_before_fetch_when_template_shape_is_incompatible(tmp_path, monkeypatch):

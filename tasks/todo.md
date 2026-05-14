@@ -1509,3 +1509,86 @@
 - Python 语法检查：`python -m py_compile scripts/maimai_detail_import.py scripts/maimai_detail_targets.py scripts/maimai_detail_plan_server.py` -> **PASS**。
 - 差异空白检查：`git diff --check` -> **PASS**。
 - 本轮写入严格使用现有 `scripts/maimai_detail_import.py apply` DB 工具，未手写 SQL 或自定义写库逻辑。
+
+# 脉脉搜索 API 说明书前置校准（2026-05-14）
+
+> 目标：承接 `docs/superpowers/plans/2026-05-12-maimai-ai-infra-automated-search.md` 的搜索字段语义缺口。先由用户在人才银行页手动切换条件并搜索，扩展只被动捕获请求；本地生成搜索 API 说明书和请求头生成规则，经用户确认后再改 runner。
+> 计划文档：`docs/superpowers/plans/2026-05-14-maimai-search-api-calibration.md`
+
+- [x] Task 1：复核昨天进度：S3 搜索已执行并 apply，D4 全部 A 档详情已通过 popup 路径 dry-run/apply；当前断点是搜索字段和请求头规格未沉淀。
+- [x] Task 2：复核安全边界：不自动导航、不刷新、不打开 automation 页面、不通过 CDP 触发真实详情；搜索校准必须走用户手动操作 + 扩展被动捕获。
+- [x] Task 3：写前置校准计划，明确输出 `maimai-search-api-spec-YYYY-MM-DD.json/md`。
+- [x] Task 4：TDD 新增离线搜索 API 规格生成器 `scripts/maimai_search_api_spec.py`。
+- [x] Task 5：运行聚焦测试、py_compile 和 `git diff --check`。
+- [x] Task 6：等待用户手动执行多组搜索并提供导出 JSON 后，生成正式说明书。
+
+## 当前进度定位
+
+- 已完成：`docs/superpowers/plans/2026-05-13-maimai-ai-infra-feasible-execution.md` 中 Task 1-9、S3 搜索、D4 剩余 205 人详情 apply。
+- 已验证：搜索 runner/live gate 只能安全主动 patch `query/search_query` 与分页；`allcompanies/degrees/query_relation/positions/worktimes/age` 尚未通过多条件 diff 确认。
+- 今天前置动作：先补离线说明书生成工具，不碰浏览器、不写 DB、不跑真实搜索。
+
+## Review
+
+- 红测：`python -m pytest tests/test_maimai_search_api_spec.py -q` 初次失败，原因是 `scripts.maimai_search_api_spec` 尚不存在。
+- 追加红测：发现 `newSearchRecords` 与 `latestSearchRecords` 中同一搜索请求会重复计数，补 `test_build_search_api_spec_dedupes_same_record_across_capture_sections`，初次失败为 `samples.count=2`。
+- 修复：新增 `scripts/maimai_search_api_spec.py`，从扩展导出 capture 中筛选 `POST /api/ent/v3/search/basic`，生成 endpoint、headers、body policy、字段观测、样本摘要和 Markdown 说明书；按 `id/ts/url/body` 稳定 key 去重。
+- 草案输出：使用昨天 UI/request diff 生成 `data/output/maimai-search-api-spec-2026-05-14.json` 与 `data/output/maimai-search-api-spec-2026-05-14.md`；当前只有 1 个去重样本，说明书明确标注仅自动生成 `query/search_query` 与分页，其他字段只保留模板值。
+- 人工校准输入：用户提供 `C:\Users\Administrator\Downloads\maimai-capture-2026-05-14 (1).json`，已归档为 `data/output/raw/maimai-search-api-calibration-2026-05-14.json`。
+- 正式说明书输出：重新生成 `data/output/maimai-search-api-spec-2026-05-14.json` 与 `data/output/maimai-search-api-spec-2026-05-14.md`；本次提取到 24 条去重搜索样本，共同请求头为 `x-csrf-token`。
+- 待确认字段：`allcompanies`、`degrees`、`query_relation`、`positions`、`worktimes`、`age`、`schools`、`major`；字段确认前不更新 runner。
+- 本轮验收：`python -m pytest tests/test_maimai_search_api_spec.py -q` -> **3 passed**；`python -m py_compile scripts/maimai_search_api_spec.py` -> **PASS**；`git diff --check` -> **PASS**。
+- 用户确认：`search.query_relation` 中 `0=AND`、`1=OR`，已写入规格 `field_catalog.semantics`，不再列入待确认字段。
+- 说明书增强：新增 `field_catalog` 和 Markdown「字段优先级」章节，保留全量 `field_observations`，并把字段分为关键字段、优先确认筛选字段、次级筛选字段、模板保留字段和其他已观测字段。
+- 增量验收：`python -m pytest tests/test_maimai_search_api_spec.py -q` -> **5 passed**；`python -m py_compile scripts/maimai_search_api_spec.py` -> **PASS**。
+- 优先筛选字段确认：`allcompanies` 为公司/公司集合筛选，正任职/曾任职默认全选不区分，逗号为 OR；`positions` 为候选人职位关键词，逗号为 OR；`worktimes` 忽略快捷档位，优先使用 `worktimes_min/worktimes_max` 表示具体工作年数；`schools` 为学校名 OR；`major` 为专业名 OR。
+- 待后续确认：`degrees` 暂待用户专门上传样本；`age` 暂未确认。
+- 字段语义写入验证：`python -m pytest tests/test_maimai_search_api_spec.py -q` -> **5 passed**；`python -m py_compile scripts/maimai_search_api_spec.py` -> **PASS**；`git diff --check` -> **PASS**。
+- 聚焦验证：`python -m pytest tests/test_maimai_search_api_spec.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_search_live_gate.py -q` -> **17 passed**。
+- 语法检查：`python -m py_compile scripts/maimai_search_api_spec.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_search_live_gate.py` -> **PASS**。
+- 全量回归：`python -m pytest tests scripts -q` -> **503 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` event loop deprecation。
+- 差异空白检查：`git diff --check` -> **PASS**。
+- Task 3 续做红测：`test_patch_search_body_applies_explicit_confirmed_filters_only` 与 `test_patch_search_body_rejects_unconfirmed_filter_fields` 初次失败，确认 runner 尚未支持显式确认字段写入，也未拒绝未确认 `age`。
+- Task 3 修复：`scripts/maimai_ai_infra_search_runner.py` 新增确认字段白名单与 `search_filters` 归一化；只允许 `allcompanies/degrees/degrees_min/degrees_max/only_bachelor_degree/min_only_bachelor_degree/max_only_bachelor_degree/positions/worktimes/worktimes_min/worktimes_max/schools/major/query_relation`，未知或未确认字段报错。
+- live gate 同步：`scripts/maimai_ai_infra_search_live_gate.py` 复用同一白名单，页面内 fetch 只把显式确认字段写入模板已有字段；不新增导航、刷新、DB 写入或真实搜索触发。
+- 计划元数据同步：`scripts/maimai_ai_infra_search_plan.py` 在 `search_body_patch` 中标出 `confirmed_filter_fields`，`age` 继续保留在 `local_filter_only`。
+- Task 3 聚焦验证：`python -m pytest tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_search_live_gate.py -q` -> **17 passed**。
+- 校准相关回归：`python -m pytest tests/test_maimai_search_api_spec.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_strategy.py -q` -> **27 passed**。
+- 语法检查：`python -m py_compile scripts/maimai_search_api_spec.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_search_plan.py` -> **PASS**。
+- 全量回归：`python -m pytest tests scripts -q` -> **509 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` event loop deprecation。
+- 差异空白检查：`git diff --check` -> **PASS**。
+- 用户校正：年龄范围参数确认为 `min_age/max_age`，例如 `min_age=16`、`max_age=40` 表示 16-40 岁；不实现 `age_min/age_max` 别名，`age` 本身仍不可写。
+- 年龄范围 TDD：新增规格语义、runner patch、live gate expression 和 search plan 元数据红测；初次均失败，确认缺少 `min_age/max_age` 链路。
+- 年龄范围修复：`scripts/maimai_search_api_spec.py` 写入 `search.min_age/search.max_age` 语义；runner/live gate 白名单允许 `min_age/max_age`；`search_body_patch.confirmed_filter_fields` 同步新增两字段。
+- 重新生成说明书：`data/output/maimai-search-api-spec-2026-05-14.json` 与 `data/output/maimai-search-api-spec-2026-05-14.md` 已包含 `min_age/max_age` 和 16-40 岁示例。
+- 年龄范围聚焦验证：`python -m pytest tests/test_maimai_search_api_spec.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_strategy.py -q` -> **27 passed**。
+- 年龄范围语法检查：`python -m py_compile scripts/maimai_search_api_spec.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_search_plan.py` -> **PASS**。
+- 年龄范围全量回归：`python -m pytest tests scripts -q` -> **509 passed, 1 warning**；warning 为既有 `scripts/test_boss.py` event loop deprecation。
+- 年龄范围差异空白检查：`git diff --check` -> **PASS**。
+
+# AI Infra 最终报告与 DB 盘点（2026-05-14）
+
+> 目标：在不触发真实脉脉搜索、不写 DB 的前提下，复查 2026-05-12 自动搜索方案的实际落点，生成当前 DB 覆盖盘点和最终状态报告，帮助决定是否进入 S4 calibrated search 或先做人工审查。
+
+## 执行清单
+
+- [x] 复查 5/12 方案、5/13 执行记录和 5/14 字段校准结果。
+- [x] 只读查询 `data/talent.db`，统计脉脉候选、详情覆盖、A/B/C 分层和 Top B 缺详情数量。
+- [x] 生成 `data/output/maimai-ai-infra-db-audit-2026-05-14.json/md`。
+- [x] 生成 `data/output/maimai-ai-infra-final-status-2026-05-14.md`。
+- [x] 运行聚焦验证和 `git diff --check`。
+- [x] 写入 Review，明确下一步建议。
+
+## Review
+
+- 5/12 方案状态：原“完全无人执行详情补全”目标已被 5/13 复审降级；搜索 dry-run/本地导入/评分/shortlist 保留，详情补全实际采用 `本地任务包服务 + 用户在人才银行页 popup 手动启动 + 导出 + dry-run/apply`。
+- 搜索与写入进度：S2 精确查询通过但结果为空；S2b 搜索 apply 新建 130、合并 9；S3 搜索 apply 新建 256、合并 158。
+- 详情进度：D2 10、D3 30、D4 首段 100、D4 剩余 205 均已 dry-run clean 后 apply，合计 345 人次详情写入；未手写 SQL。
+- 字段校准进度：5/14 已确认 `query_relation`、`allcompanies`、`degrees`、`positions`、`worktimes_min/max`、`schools`、`major`、`min_age/max_age`；runner/live gate 已支持显式 `search_filters` 白名单。
+- 当前 DB 盘点：脉脉候选人 3119，source_profiles 3119，有详情候选人 3119，`data_level` 为 `detailed=3118/core=1`。
+- 当前重新评分：A=341、B=624、C=916、淘汰=1238；A 档详情覆盖 341/341，B 档 Top 50 缺详情 0。
+- 生成产物：`data/output/maimai-ai-infra-db-audit-2026-05-14.json`、`data/output/maimai-ai-infra-db-audit-2026-05-14.md`、`data/output/maimai-ai-infra-shortlist-current-2026-05-14.json`、`data/output/maimai-ai-infra-shortlist-current-2026-05-14.md`、`data/output/maimai-ai-infra-final-status-2026-05-14.md`。
+- 聚焦验证：`python -m pytest tests/test_maimai_ai_infra_strategy.py tests/test_maimai_ai_infra_pipeline.py -q` -> **9 passed**。
+- 语法检查：`python -m py_compile scripts/maimai_ai_infra_rank.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_search_plan.py` -> **PASS**。
+- 差异空白检查：`git diff --check` -> **PASS**。
+- 下一步建议：先人工审查 `maimai-ai-infra-db-audit-2026-05-14.md` 的 A 档 Top 50 和 B 档 Top 50；若 A 档质量足够，进入人工外联/深审名单整理；若质量不足，再设计 S4 calibrated search，真实搜索仍需单独授权。

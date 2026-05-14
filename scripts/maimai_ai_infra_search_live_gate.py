@@ -19,6 +19,11 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.maimai_ai_infra_search_runner import (  # noqa: E402
+    confirmed_search_filters_from_batch,
+    normalize_confirmed_search_filters,
+)
+
 
 SEARCH_BLOCK_STATUSES = {403, 429}
 ALLOWED_SEARCH_PATHS = {"/api/ent/v3/search/basic"}
@@ -185,8 +190,14 @@ def template_status_expression() -> str:
 """.strip()
 
 
-def search_expression(query: str, page: int, page_size: int) -> str:
+def search_expression(
+    query: str,
+    page: int,
+    page_size: int,
+    search_filters: dict[str, Any] | None = None,
+) -> str:
     query_json = _json_for_js(query)
+    filters_json = _json_for_js(normalize_confirmed_search_filters(search_filters or {}))
     return f"""
 (async () => {{
   const tpl = window.__maimaiSearchTemplate || null;
@@ -274,11 +285,25 @@ def search_expression(query: str, page: int, page_size: int) -> str:
     return body;
   }}
 
+  function applyConfirmedSearchFilters(body, filters) {{
+    const target = body && body.search && typeof body.search === "object"
+      ? body.search
+      : body;
+    for (const [key, value] of Object.entries(filters || {{}})) {{
+      if (Object.prototype.hasOwnProperty.call(target, key)) {{
+        target[key] = value;
+      }}
+    }}
+    return body;
+  }}
+
+  const confirmedFilters = {filters_json};
   const body = applyPagerPage(
     applySearchQuery(JSON.parse(JSON.stringify(tpl.body || {{}})), {query_json}),
     {int(page)},
     {int(page_size)}
   );
+  applyConfirmedSearchFilters(body, confirmedFilters);
   const headers = JSON.parse(JSON.stringify(tpl.headers || tpl.requestHeaders || {{}}));
   if (!headers["Content-Type"] && !headers["content-type"]) {{
     headers["Content-Type"] = "application/json";
@@ -438,7 +463,15 @@ def run_gate(
             }
             try:
                 for page_index, page in enumerate(batch_pages[index - 1], start=1):
-                    response = session.evaluate(search_expression(query, page, page_size), timeout_seconds)
+                    response = session.evaluate(
+                        search_expression(
+                            query,
+                            page,
+                            page_size,
+                            confirmed_search_filters_from_batch(batch),
+                        ),
+                        timeout_seconds,
+                    )
                     if not isinstance(response, dict):
                         raise RuntimeError("search response was not an object")
                     if response.get("status") != "ok":

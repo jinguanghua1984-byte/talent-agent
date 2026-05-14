@@ -43,6 +43,33 @@ def test_generate_batches_prioritizes_tier1_and_keeps_one_position_per_batch():
     assert all(batch["keyword_pack"] in {"inference", "cluster", "opensource"} for batch in generic_batches)
 
 
+def test_generate_batches_marks_confirmed_search_filters_including_age_range():
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+
+    batch = generate_batches(strategy)[0]
+
+    patch_policy = batch["search_body_patch"]
+    assert "search.query_relation" in patch_policy["verified_fields"]
+    assert patch_policy["confirmed_filter_fields"] == [
+        "search.allcompanies",
+        "search.degrees",
+        "search.degrees_min",
+        "search.degrees_max",
+        "search.only_bachelor_degree",
+        "search.min_only_bachelor_degree",
+        "search.max_only_bachelor_degree",
+        "search.positions",
+        "search.worktimes",
+        "search.worktimes_min",
+        "search.worktimes_max",
+        "search.min_age",
+        "search.max_age",
+        "search.schools",
+        "search.major",
+    ]
+    assert "age" not in patch_policy["local_filter_only"]
+
+
 def test_search_plan_cli_outputs_json(tmp_path: Path):
     from scripts.maimai_ai_infra_search_plan import main
 

@@ -22,8 +22,18 @@ DEFAULT_TEMPLATE = {
         "positions": "",
         "allcompanies": "",
         "degrees": "",
+        "degrees_min": "",
+        "degrees_max": "",
+        "only_bachelor_degree": 0,
+        "min_only_bachelor_degree": None,
+        "max_only_bachelor_degree": None,
         "worktimes": "",
-        "age": "",
+        "worktimes_min": "",
+        "worktimes_max": "",
+        "schools": "",
+        "major": "",
+        "min_age": "",
+        "max_age": "",
         "query_relation": 0,
         "paginationParam": {"page": 1, "size": 30},
         "page": 0,
@@ -31,10 +41,59 @@ DEFAULT_TEMPLATE = {
     }
 }
 
+CONFIRMED_SEARCH_FILTER_FIELDS = {
+    "allcompanies",
+    "degrees",
+    "degrees_min",
+    "degrees_max",
+    "only_bachelor_degree",
+    "min_only_bachelor_degree",
+    "max_only_bachelor_degree",
+    "positions",
+    "worktimes",
+    "worktimes_min",
+    "worktimes_max",
+    "min_age",
+    "max_age",
+    "schools",
+    "major",
+    "query_relation",
+}
+
 
 def _load_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8-sig") as file:
         return json.load(file)
+
+
+def normalize_confirmed_search_filters(filters: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(filters, dict):
+        raise ValueError("search_filters must be an object")
+
+    normalized: dict[str, Any] = {}
+    for field, value in filters.items():
+        field_name = str(field)
+        if field_name.startswith("search."):
+            field_name = field_name.removeprefix("search.")
+        if field_name not in CONFIRMED_SEARCH_FILTER_FIELDS:
+            raise ValueError(f"unconfirmed search filter field: search.{field_name}")
+        normalized[field_name] = value
+    return normalized
+
+
+def confirmed_search_filters_from_batch(batch: dict[str, Any]) -> dict[str, Any]:
+    filters = batch.get("search_filters") or {}
+    if not isinstance(filters, dict):
+        raise ValueError("search_filters must be an object")
+    if "query_relation" in batch and "query_relation" not in filters:
+        filters = {**filters, "query_relation": batch["query_relation"]}
+    return normalize_confirmed_search_filters(filters)
+
+
+def _apply_confirmed_search_filters(search: dict[str, Any], batch: dict[str, Any]) -> None:
+    for field_name, value in confirmed_search_filters_from_batch(batch).items():
+        if field_name in search:
+            search[field_name] = value
 
 
 def patch_search_body(template: dict[str, Any], batch: dict[str, Any], page: int) -> dict[str, Any]:
@@ -58,6 +117,7 @@ def patch_search_body(template: dict[str, Any], batch: dict[str, Any], page: int
         search["page"] = max(page - 1, 0)
     if "size" in search:
         search["size"] = page_size
+    _apply_confirmed_search_filters(search, batch)
     return body
 
 
