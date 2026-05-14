@@ -12,8 +12,16 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.maimai_ai_infra_campaign import (
+    CampaignPaths,
+    append_import_ledger,
+    ensure_campaign,
+    import_ledger_has_apply,
+    load_completed_pages,
+    page_raw_path,
+)
 from scripts.maimai_ai_infra_rank import rank_candidates
-from scripts.maimai_ai_infra_search_plan import build_plan, load_strategy
+from scripts.maimai_ai_infra_search_plan import build_plan, build_search_units, load_strategy
 from scripts.maimai_ai_infra_search_runner import DEFAULT_TEMPLATE, build_dry_run_result
 from scripts.maimai_detail_targets import export_targets
 from scripts.talent_library import (
@@ -32,6 +40,12 @@ def _load_json(path: Path) -> Any:
 def _write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8-sig")
+
+
+def _write_jsonl(path: Path, items: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = "\n".join(json.dumps(item, ensure_ascii=False, sort_keys=True) for item in items)
+    path.write_text(text + ("\n" if text else ""), encoding="utf-8-sig")
 
 
 def extract_contacts_payload(run_path: str | Path, out_path: str | Path) -> dict[str, Any]:
@@ -53,6 +67,33 @@ def extract_contacts_payload(run_path: str | Path, out_path: str | Path) -> dict
         "contacts": contacts,
     }
     _write_json(Path(out_path), payload)
+    return payload
+
+
+def extract_wave_contacts_from_pages(paths: CampaignPaths, wave_id: str) -> dict[str, Any]:
+    contacts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for unit_id, page in sorted(load_completed_pages(paths)):
+        raw_path = page_raw_path(paths, unit_id, page)
+        data = _load_json(raw_path)
+        if data.get("wave_id") != wave_id:
+            continue
+        for contact in data.get("contacts") or []:
+            key = str(contact.get("id") or contact.get("platform_id") or "")
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            contacts.append(contact)
+    payload = {
+        "exportTime": datetime.now().isoformat(timespec="seconds"),
+        "metadata": {
+            "export_type": "maimai_ai_infra_v2_wave_contacts",
+            "wave_id": wave_id,
+            "total_contacts": len(contacts),
+        },
+        "contacts": contacts,
+    }
+    _write_json(paths.contacts_dir / f"contacts-{wave_id}.json", payload)
     return payload
 
 
@@ -166,6 +207,67 @@ def _clean_dry_run(result: dict[str, Any], metadata: dict[str, Any]) -> bool:
     )
 
 
+def _ensure_campaign_plan_files(paths: CampaignPaths, config: Path) -> None:
+    strategy = load_strategy(config)
+    if not paths.strategy.exists():
+        _write_json(paths.strategy, strategy)
+    if not paths.search_plan.exists():
+        _write_json(paths.search_plan, build_plan(strategy))
+    if not paths.search_units.exists():
+        _write_jsonl(paths.search_units, build_search_units(strategy))
+
+
+def run_campaign_wave(
+    campaign_root: str | Path,
+    config: str | Path = "configs/maimai-ai-infra-v2-cold-start-strategy.json",
+    wave: str = "",
+    db_path: str | Path | None = None,
+    apply: bool = False,
+) -> dict[str, Path]:
+    if not wave:
+        raise ValueError("wave is required")
+
+    paths = ensure_campaign(campaign_root)
+    if apply and import_ledger_has_apply(paths, wave):
+        raise RuntimeError(f"campaign wave already applied: {wave}")
+
+    _ensure_campaign_plan_files(paths, Path(config))
+    extract_wave_contacts_from_pages(paths, wave)
+    contacts_path = paths.contacts_dir / f"contacts-{wave}.json"
+    report_path = paths.reports_dir / f"import-list-{wave}-{'apply' if apply else 'dry-run'}.md"
+    target_db = Path(db_path) if db_path is not None else paths.db
+
+    candidates, metadata = _build_import_candidates([contacts_path], "maimai")
+    ingest_result = _run_batch_ingest(candidates, "maimai", target_db, apply=apply)
+    import_summary = {
+        "mode": "apply" if apply else "dry-run",
+        "platform": "maimai",
+        **metadata,
+        "result": _result_to_dict(ingest_result),
+    }
+    _write_import_outputs(report_path, import_summary)
+    if apply:
+        append_import_ledger(
+            paths,
+            {
+                "wave_id": wave,
+                "action": "apply",
+                "status": "completed",
+                "contacts": len(candidates),
+                "report": str(report_path),
+                "db": str(target_db),
+            },
+        )
+
+    return {
+        "contacts": contacts_path,
+        "import_report": report_path,
+        "db": target_db,
+        "search_plan": paths.search_plan,
+        "search_units": paths.search_units,
+    }
+
+
 def run_pipeline(
     config: Path,
     db_path: Path,
@@ -271,6 +373,12 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("--out-dir", default="data/output")
     run_parser.add_argument("--template")
     run_parser.add_argument("--live", action="store_true")
+    campaign_parser = subparsers.add_parser("run-campaign")
+    campaign_parser.add_argument("--campaign-root", required=True)
+    campaign_parser.add_argument("--config", default="configs/maimai-ai-infra-v2-cold-start-strategy.json")
+    campaign_parser.add_argument("--wave", required=True)
+    campaign_parser.add_argument("--db")
+    campaign_parser.add_argument("--apply", action="store_true")
     args = parser.parse_args(argv)
 
     if args.command == "run":
@@ -280,6 +388,15 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.out_dir),
             dry_run_template_only=not args.live,
             template_path=Path(args.template) if args.template else None,
+        )
+        return 0
+    if args.command == "run-campaign":
+        run_campaign_wave(
+            campaign_root=Path(args.campaign_root),
+            config=Path(args.config),
+            wave=args.wave,
+            db_path=Path(args.db) if args.db else None,
+            apply=args.apply,
         )
         return 0
     return 1

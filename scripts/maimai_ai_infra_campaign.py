@@ -112,6 +112,25 @@ def append_search_event(paths: CampaignPaths, item: dict[str, Any]) -> None:
     append_jsonl(paths.search_events, event)
 
 
+def append_import_ledger(paths: CampaignPaths, item: dict[str, Any]) -> None:
+    ledger_item = {**item, "ts": datetime.now(UTC).isoformat(timespec="seconds")}
+    append_jsonl(paths.import_ledger, ledger_item)
+
+
+def import_ledger_has_apply(paths: CampaignPaths, wave_id: str) -> bool:
+    if not paths.import_ledger.exists():
+        return False
+    for line in paths.import_ledger.read_text(encoding="utf-8").splitlines():
+        item = json.loads(line)
+        if (
+            item.get("wave_id") == wave_id
+            and item.get("action") == "apply"
+            and item.get("status") == "completed"
+        ):
+            return True
+    return False
+
+
 def mark_page_completed(
     paths: CampaignPaths,
     unit_id: str,

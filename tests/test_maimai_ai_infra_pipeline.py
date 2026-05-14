@@ -1,9 +1,19 @@
 import json
 from pathlib import Path
 
+import pytest
+
+from scripts.maimai_ai_infra_campaign import (
+    append_import_ledger,
+    ensure_campaign,
+    import_ledger_has_apply,
+    mark_page_completed,
+)
 from scripts.maimai_ai_infra_pipeline import (
     build_final_report,
     extract_contacts_payload,
+    extract_wave_contacts_from_pages,
+    run_campaign_wave,
     run_pipeline,
     select_detail_candidate_ids,
 )
@@ -31,6 +41,107 @@ def test_extract_contacts_payload_from_runner_result(tmp_path: Path):
     assert payload["metadata"]["source_run"] == str(run_path)
     assert payload["contacts"][0]["name"] == "Alice"
     assert json.loads(out_path.read_text(encoding="utf-8-sig"))["contacts"][0]["id"] == "1"
+
+
+def test_extract_wave_contacts_from_page_raw_dedupes_platform_ids(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    mark_page_completed(
+        paths,
+        "unit-000001",
+        1,
+        {
+            "wave_id": "wave-001",
+            "contacts": [{"id": "u1", "name": "A"}, {"id": "u2", "name": "B"}],
+        },
+    )
+    mark_page_completed(
+        paths,
+        "unit-000002",
+        1,
+        {
+            "wave_id": "wave-001",
+            "contacts": [{"id": "u1", "name": "A again"}],
+        },
+    )
+
+    payload = extract_wave_contacts_from_pages(paths, "wave-001")
+
+    assert payload["metadata"]["wave_id"] == "wave-001"
+    assert payload["metadata"]["total_contacts"] == 2
+    assert [item["id"] for item in payload["contacts"]] == ["u1", "u2"]
+
+
+def test_import_ledger_blocks_duplicate_wave_apply(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+
+    append_import_ledger(paths, {"wave_id": "wave-001", "action": "apply", "status": "completed"})
+
+    assert import_ledger_has_apply(paths, "wave-001")
+
+
+def test_run_campaign_wave_dry_run_writes_contacts_and_report(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    mark_page_completed(
+        paths,
+        "unit-000001",
+        1,
+        {
+            "wave_id": "wave-001",
+            "contacts": [
+                {"id": "u1", "name": "A", "company": "ByteDance", "position": "AI Infra"},
+                {"id": "u2", "name": "B", "company": "Huawei", "position": "ML Infra"},
+            ],
+        },
+    )
+    mark_page_completed(
+        paths,
+        "unit-000002",
+        1,
+        {
+            "wave_id": "wave-001",
+            "contacts": [{"platform_id": "u1", "name": "A again"}],
+        },
+    )
+
+    result = run_campaign_wave(
+        campaign_root=paths.root,
+        config=Path("configs/maimai-ai-infra-v2-cold-start-strategy.json"),
+        wave="wave-001",
+        db_path=tmp_path / "campaign.db",
+    )
+
+    contacts_path = paths.contacts_dir / "contacts-wave-001.json"
+    report_path = paths.reports_dir / "import-list-wave-001-dry-run.md"
+    contacts = json.loads(contacts_path.read_text(encoding="utf-8-sig"))
+    assert result["contacts"] == contacts_path
+    assert contacts["metadata"]["total_contacts"] == 2
+    assert [item["name"] for item in contacts["contacts"]] == ["A", "B"]
+    assert report_path.exists()
+    assert paths.search_plan.exists()
+    assert paths.search_units.exists()
+    assert not import_ledger_has_apply(paths, "wave-001")
+
+
+def test_run_campaign_wave_apply_aborts_when_wave_already_applied(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    append_import_ledger(paths, {"wave_id": "wave-001", "action": "apply", "status": "completed"})
+    mark_page_completed(
+        paths,
+        "unit-000001",
+        1,
+        {"wave_id": "wave-001", "contacts": [{"id": "u1", "name": "A"}]},
+    )
+
+    with pytest.raises(RuntimeError, match="already applied"):
+        run_campaign_wave(
+            campaign_root=paths.root,
+            config=Path("configs/maimai-ai-infra-v2-cold-start-strategy.json"),
+            wave="wave-001",
+            db_path=tmp_path / "campaign.db",
+            apply=True,
+        )
+
+    assert not (paths.contacts_dir / "contacts-wave-001.json").exists()
 
 
 def test_select_detail_candidate_ids_uses_all_a_and_top_b():
