@@ -460,6 +460,63 @@ def test_campaign_mode_missing_unit_id_includes_line_number(tmp_path: Path):
         ])
 
 
+def test_campaign_mode_rejects_negative_unit_max_pages_without_writing_raw(tmp_path: Path):
+    campaign_root = tmp_path / "campaign"
+    units_path = tmp_path / "units.jsonl"
+    _write_units(units_path, [_unit("unit-000001", max_pages=-1)])
+
+    with pytest.raises(ValueError, match="units JSONL line 1: max_pages"):
+        main([
+            "--campaign-root",
+            str(campaign_root),
+            "--units",
+            str(units_path),
+            "--dry-run-template-only",
+        ])
+
+    paths = ensure_campaign(campaign_root)
+    assert not page_raw_path(paths, "unit-000001", 1).exists()
+
+
+def test_campaign_mode_rejects_non_integer_unit_max_pages_with_line_number(tmp_path: Path):
+    campaign_root = tmp_path / "campaign"
+    units_path = tmp_path / "units.jsonl"
+    _write_units(units_path, [{**_unit("unit-000001"), "max_pages": "many"}])
+
+    with pytest.raises(ValueError, match="units JSONL line 1: max_pages"):
+        main([
+            "--campaign-root",
+            str(campaign_root),
+            "--units",
+            str(units_path),
+            "--dry-run-template-only",
+        ])
+
+
+def test_campaign_mode_rejects_negative_max_runtime_minutes(tmp_path: Path):
+    campaign_root = tmp_path / "campaign"
+    units_path = tmp_path / "units.jsonl"
+    out_path = tmp_path / "summary.json"
+    _write_units(units_path, [_unit("unit-000001")])
+
+    with pytest.raises(SystemExit):
+        main([
+            "--campaign-root",
+            str(campaign_root),
+            "--units",
+            str(units_path),
+            "--out",
+            str(out_path),
+            "--dry-run-template-only",
+            "--max-runtime-minutes",
+            "-5",
+        ])
+
+    paths = ensure_campaign(campaign_root)
+    assert not out_path.exists()
+    assert not page_raw_path(paths, "unit-000001", 1).exists()
+
+
 def test_runner_dry_run_template_only_outputs_patched_body(tmp_path: Path):
     plan_path = tmp_path / "plan.json"
     template_path = tmp_path / "template.json"

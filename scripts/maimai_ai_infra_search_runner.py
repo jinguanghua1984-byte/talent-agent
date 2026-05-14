@@ -115,6 +115,10 @@ def _load_units_jsonl(path: Path) -> list[dict[str, Any]]:
         if unit_id in seen_unit_ids:
             raise ValueError(f"units JSONL line {line_number}: duplicate unit_id {unit_id}")
         seen_unit_ids.add(unit_id)
+        if "max_pages" in unit:
+            max_pages = unit["max_pages"]
+            if not isinstance(max_pages, int) or isinstance(max_pages, bool) or max_pages < 0:
+                raise ValueError(f"units JSONL line {line_number}: max_pages must be a non-negative integer")
         units.append(unit)
     return units
 
@@ -259,6 +263,7 @@ def _run_campaign_dry_run(args: argparse.Namespace, parser: argparse.ArgumentPar
         parser.error("campaign mode requires --campaign-root and --units")
     _validate_non_negative_limit(args.max_units, "--max-units", parser)
     _validate_non_negative_limit(args.max_pages, "--max-pages", parser)
+    _validate_non_negative_limit(args.max_runtime_minutes, "--max-runtime-minutes", parser)
 
     paths = ensure_campaign(args.campaign_root)
     units = _load_units_jsonl(Path(args.units))
