@@ -136,8 +136,7 @@ def test_build_search_units_compiles_v2_units_with_confirmed_filters():
 
     assert [unit["unit_id"] for unit in units] == ["unit-000001", "unit-000002", "unit-000003"]
     assert len(units) == 3
-    assert units[0]["wave_id"] == "wave-001"
-    assert units[2]["wave_id"] == "wave-002"
+    assert [unit["wave_id"] for unit in units] == ["wave-001", "wave-001", "wave-002"]
     assert [unit["batch_type"] for unit in units] == [
         "P1_core_precision",
         "P2_technical",
