@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+
+MANIFEST_SCHEMA = "maimai_ai_infra_v2_campaign"
 
 
 @dataclass(frozen=True)
@@ -60,9 +64,23 @@ def campaign_paths(root: str | Path, campaign_id: str | None = None) -> Campaign
 def atomic_write_json(path: str | Path, data: Any) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8-sig")
-    os.replace(tmp, target)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            delete=False,
+            dir=target.parent,
+            encoding="utf-8-sig",
+            prefix=target.name + ".",
+            suffix=".tmp",
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+            tmp.write(json.dumps(data, ensure_ascii=False, indent=2))
+        os.replace(tmp_path, target)
+    except Exception:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def append_jsonl(path: str | Path, item: dict[str, Any]) -> None:
@@ -90,7 +108,19 @@ def ensure_campaign(root: str | Path, campaign_id: str | None = None) -> Campaig
             {
                 "campaign_id": paths.campaign_id,
                 "created_at": datetime.now().isoformat(timespec="seconds"),
-                "schema": "maimai_ai_infra_v2_campaign",
+                "schema": MANIFEST_SCHEMA,
             },
         )
+    else:
+        manifest = json.loads(paths.manifest.read_text(encoding="utf-8-sig"))
+        if manifest.get("campaign_id") != paths.campaign_id:
+            raise ValueError(
+                "campaign manifest campaign_id mismatch: "
+                f"expected {paths.campaign_id!r}, got {manifest.get('campaign_id')!r}"
+            )
+        if manifest.get("schema") != MANIFEST_SCHEMA:
+            raise ValueError(
+                "campaign manifest schema mismatch: "
+                f"expected {MANIFEST_SCHEMA!r}, got {manifest.get('schema')!r}"
+            )
     return paths
