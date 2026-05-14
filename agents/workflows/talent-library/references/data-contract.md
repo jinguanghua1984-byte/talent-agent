@@ -79,6 +79,30 @@ data/output/
 
 微信聊天正文归档到 `data/wechat-timelines/*.md`。SQLite 只在 `candidate_wechat_timelines` 保存索引，包括候选人、微信联系人或群名、起止时间、消息数、归档路径和同步时间。
 
+## 多端 bundle 同步
+
+多台机器同时写入本地人才库时，不要直接复制或覆盖 `data/talent.db`。整库覆盖会丢失另一台机器上的本地新增、删除标记、冲突记录和微信时间线附件索引。
+
+标准同步流程：
+
+```bash
+python scripts/talent_sync.py status --db data/talent.db
+python scripts/talent_sync.py export --db data/talent.db --out data/output/talent-sync-full.zip
+python scripts/talent_sync.py verify-bundle --bundle data/output/talent-sync-full.zip
+python scripts/talent_sync.py import --db data/talent.db --bundle data/output/talent-sync-full.zip
+python scripts/talent_sync.py import --db data/talent.db --bundle data/output/talent-sync-full.zip --apply --confirm "确认同步人才库"
+```
+
+同步规则：
+
+1. `scripts/talent_sync.py export` 导出 zip bundle，bundle 内使用 JSONL、manifest 和 checksum 描述同步数据。
+2. 导入前必须用 `scripts/talent_sync.py verify-bundle` 校验 bundle 完整性。
+3. `scripts/talent_sync.py import` 默认是 dry-run，只生成导入计划，不写入真实人才库。
+4. 真正写入必须同时提供 `--apply --confirm "确认同步人才库"`。
+5. 跨机器同步身份使用 `sync_id`、`candidate_sync_id` 和来源键匹配；本地 SQLite 自增 `id` 只在本机有效，不得写入跨机器引用。
+6. 非空字段冲突写入 `sync_conflicts`，不会静默覆盖本地已有值。
+7. 可选微信时间线附件通过 `--include-wechat-files` 打包；导入写入时，附件恢复到目标库旁的 `data/wechat-timelines/`。
+
 ## 核心 TalentDB API
 
 `talent-library` workflow 只通过以下 API 读写人才库：
