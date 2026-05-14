@@ -1,5 +1,8 @@
 import json
+from collections import Counter
 from pathlib import Path
+
+import pytest
 
 from scripts.maimai_ai_infra_rank import score_candidate
 from scripts.maimai_ai_infra_search_plan import build_search_units, generate_batches, load_strategy
@@ -97,8 +100,11 @@ def _minimal_v2_strategy() -> dict:
             "generic": ["算法工程师"],
         },
         "keyword_packs": {
+            "framework": ["AI Infra", "机器学习", "推理框架"],
             "training": ["分布式训练", "训练框架", "GPU"],
             "inference": ["推理", "算子", "加速"],
+            "cluster": ["智算", "GPU", "集群"],
+            "opensource": ["vLLM", "SGLang", "Triton"],
         },
         "exclude_titles": [],
         "exclude_education": [],
@@ -108,6 +114,7 @@ def _minimal_v2_strategy() -> dict:
                 "P1_core_precision": 1,
                 "P2_technical": 1,
                 "P3_generic_with_strong_query": 1,
+                "P4_gap_fill": 0,
             },
             "default_filters": {
                 "degrees": "1,2,3",
@@ -162,6 +169,61 @@ def test_build_search_units_rejects_unconfirmed_age_filter():
         assert str(error) == "unconfirmed V2 search filter fields: age"
     else:
         raise AssertionError("expected ValueError for unconfirmed age filter")
+
+
+def test_v2_strategy_config_builds_declared_unit_quotas():
+    strategy = load_strategy(Path("configs/maimai-ai-infra-v2-cold-start-strategy.json"))
+
+    units = build_search_units(strategy)
+    counts = Counter(unit["batch_type"] for unit in units)
+
+    assert counts == strategy["v2"]["unit_quotas"]
+    assert len(units) == 450
+    assert units[-1]["batch_type"] == "P4_gap_fill"
+    for unit in units:
+        filters = unit["search_filters"]
+        assert "age" not in filters
+        assert "age_min" not in filters
+        assert "age_max" not in filters
+
+
+def test_build_search_units_rejects_incomplete_v2_quotas():
+    strategy = _minimal_v2_strategy()
+    del strategy["v2"]["unit_quotas"]["P4_gap_fill"]
+
+    with pytest.raises(ValueError, match="v2\\.unit_quotas\\.P4_gap_fill"):
+        build_search_units(strategy)
+
+
+def test_build_search_units_rejects_invalid_wave_size():
+    for wave_size in (0, "2"):
+        strategy = _minimal_v2_strategy()
+        strategy["v2"]["wave_size_units"] = wave_size
+
+        with pytest.raises(ValueError, match="v2\\.wave_size_units"):
+            build_search_units(strategy)
+
+
+def test_search_plan_cli_outputs_v2_units_jsonl(tmp_path: Path):
+    from scripts.maimai_ai_infra_search_plan import main
+
+    out_path = tmp_path / "plan.json"
+    units_path = tmp_path / "units.jsonl"
+
+    assert main([
+        "--config",
+        "configs/maimai-ai-infra-v2-cold-start-strategy.json",
+        "--out",
+        str(out_path),
+        "--out-units",
+        str(units_path),
+    ]) == 0
+
+    lines = units_path.read_text(encoding="utf-8-sig").splitlines()
+    assert len(lines) == 450
+    first = json.loads(lines[0])
+    assert first["unit_id"] == "unit-000001"
+    assert any(json.loads(line)["batch_type"] == "P4_gap_fill" for line in lines)
 
 
 def test_search_plan_cli_outputs_json(tmp_path: Path):

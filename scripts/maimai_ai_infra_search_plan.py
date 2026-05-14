@@ -61,6 +61,16 @@ V2_ALLOWED_FILTERS = {
     "query_relation",
 }
 
+V2_BATCH_TYPES = [
+    "P1_core_precision",
+    "P2_technical",
+    "P3_generic_with_strong_query",
+    "P4_gap_fill",
+]
+
+V2_REQUIRED_TITLE_BATCHES = ["precision", "technical", "generic"]
+V2_REQUIRED_KEYWORD_PACKS = ["training", "inference", "framework", "cluster", "opensource"]
+
 
 def _load_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8-sig") as file:
@@ -171,6 +181,45 @@ def _v2_filters(
     return filters
 
 
+def _require_v2_list(strategy: dict[str, Any], section: str, key: str) -> None:
+    parent = strategy.get(section)
+    if not isinstance(parent, dict):
+        raise ValueError(f"{section} must be an object")
+    value = parent.get(key)
+    if not isinstance(value, list):
+        raise ValueError(f"{section}.{key} must be a list")
+
+
+def _validate_v2_strategy(strategy: dict[str, Any]) -> None:
+    v2 = strategy.get("v2")
+    if not isinstance(v2, dict):
+        raise ValueError("v2 strategy section is required")
+
+    wave_size = v2.get("wave_size_units")
+    if type(wave_size) is not int or wave_size <= 0:
+        raise ValueError("v2.wave_size_units must be a positive integer")
+
+    quotas = v2.get("unit_quotas")
+    if not isinstance(quotas, dict):
+        raise ValueError("v2.unit_quotas must be an object")
+
+    for batch_type in V2_BATCH_TYPES:
+        if batch_type not in quotas:
+            raise ValueError(f"v2.unit_quotas.{batch_type} is required")
+        quota = quotas[batch_type]
+        if type(quota) is not int or quota < 0:
+            raise ValueError(f"v2.unit_quotas.{batch_type} must be a non-negative integer")
+
+    unexpected_quotas = sorted(set(quotas) - set(V2_BATCH_TYPES))
+    if unexpected_quotas:
+        raise ValueError("unrecognized v2.unit_quotas keys: " + ", ".join(unexpected_quotas))
+
+    for title_batch in V2_REQUIRED_TITLE_BATCHES:
+        _require_v2_list(strategy, "title_batches", title_batch)
+    for keyword_pack in V2_REQUIRED_KEYWORD_PACKS:
+        _require_v2_list(strategy, "keyword_packs", keyword_pack)
+
+
 def _unit(
     strategy: dict[str, Any],
     batch_type: str,
@@ -201,6 +250,7 @@ def _unit(
 
 
 def build_search_units(strategy: dict[str, Any]) -> list[dict[str, Any]]:
+    _validate_v2_strategy(strategy)
     units: list[dict[str, Any]] = []
     unit_index = 1
     quotas = strategy["v2"]["unit_quotas"]
@@ -216,7 +266,9 @@ def build_search_units(strategy: dict[str, Any]) -> list[dict[str, Any]]:
         query_relation: int,
     ) -> None:
         nonlocal unit_index
-        quota = quotas.get(batch_type, 0)
+        quota = quotas[batch_type]
+        if quota == 0:
+            return
         start_count = len(units)
         for company in company_names:
             for position in positions:
@@ -234,13 +286,19 @@ def build_search_units(strategy: dict[str, Any]) -> list[dict[str, Any]]:
                         unit_index,
                     ))
                     unit_index += 1
+        produced = len(units) - start_count
+        if produced < quota:
+            raise ValueError(
+                f"insufficient V2 search unit combinations for {batch_type}: "
+                f"expected {quota}, got {produced}"
+            )
 
     add(
         "P1_core_precision",
         "tier1",
         companies.get("tier1", []),
         titles["precision"],
-        ["training", "inference"],
+        ["framework", "training", "inference"],
         1,
     )
     add(
@@ -256,8 +314,16 @@ def build_search_units(strategy: dict[str, Any]) -> list[dict[str, Any]]:
         "tier1",
         companies.get("tier1", []),
         titles["generic"],
-        ["inference"],
+        ["framework", "training", "inference", "cluster", "opensource"],
         0,
+    )
+    add(
+        "P4_gap_fill",
+        "tier3",
+        companies.get("tier3", []),
+        titles["technical"],
+        ["cluster", "opensource", "inference"],
+        1,
     )
     return units
 
