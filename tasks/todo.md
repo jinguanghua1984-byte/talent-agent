@@ -1,3 +1,119 @@
+# Task 14 Documentation - bundle 同步文档
+
+## 计划
+
+- [x] 在 `tests/test_talent_library_workflow.py` 增加 bundle 同步文档契约测试
+- [x] 运行聚焦单测确认红灯
+- [x] 在 `agents/workflows/talent-library/references/data-contract.md` 增加“多端 bundle 同步”说明
+- [x] 在 `README.md` 数据管理附近增加 status/export/verify/import 操作示例
+- [x] 补齐 `scripts/talent_sync.py export --include-wechat-files` CLI 参数
+- [x] 增加 CLI 附件导出测试并增强文档契约测试
+- [x] 运行聚焦单测与文件级回归
+- [x] 记录 Review 结果
+
+## Review
+
+- 红灯：`python -m pytest tests/test_talent_library_workflow.py::test_talent_library_documents_bundle_sync -q` 初次失败，原因是 `data-contract.md` 缺少 `bundle 同步`。
+- 评审修复红灯：`python -m pytest tests/test_talent_sync.py::test_sync_cli_export_can_include_wechat_timeline_attachments -q` 初次失败，原因是 CLI 未识别 `--include-wechat-files`。
+- 绿灯：`python -m pytest tests/test_talent_sync.py::test_sync_cli_export_can_include_wechat_timeline_attachments -q` 通过；`python -m pytest tests/test_talent_library_workflow.py -q` 通过；`python -m pytest tests/test_talent_sync.py -q` 通过，结果 `29 passed`。
+- 差异检查：`git diff --check` 退出码为 0，仅提示 `README.md` 的 CRLF/LF 工作区换行告警。
+- 文档覆盖：多端同步禁止覆盖 `data/talent.db`，记录 export、verify-bundle、dry-run import、apply import、同步身份、冲突记录和微信时间线附件恢复路径。
+
+# Task 15 Full Verification
+
+## Review
+
+- 聚焦测试：`python -m pytest tests/test_talent_sync.py tests/test_talent_db.py tests/test_talent_library_cli.py tests/test_talent_library_workflow.py -q` -> `168 passed`。
+- 语法检查：`python -m py_compile scripts/talent_sync.py scripts/talent_sync_models.py scripts/talent_db.py scripts/talent_models.py` -> PASS。
+- 全量回归：`python -m pytest tests scripts -q` -> `493 passed, 1 warning`；warning 为既有 `scripts/test_boss.py` event loop deprecation。
+- 差异检查：`git diff --check` -> PASS；仅提示 `README.md` 工作区 CRLF 将转 LF。
+- 最终评审：发现 detail 合并、match score 冲突、微信时间线稳定键去重、附件导出根目录约束 4 个 Important，需要修复后重跑验证。
+
+# Final Review Fixes
+
+## 计划
+
+- [x] 修复 `candidate_details` 合并：`summary` 冲突记录，`raw_data` 按顶层 namespace 合并并记录同 key 冲突。
+- [x] 修复 `match_scores` 稳定键冲突：同 `(candidate_sync_id, jd_id, match_type)` 差异记录冲突而非静默丢弃。
+- [x] 修复微信时间线导入稳定键去重，跨机器同一归档不重复插入。
+- [x] 限制 `--include-wechat-files` 只打包数据库旁 `data/wechat-timelines/` 下的 markdown 归档。
+- [x] 补对应回归测试、复审并重跑 Task 15 验证。
+
+## Review
+
+- 红灯：4 个新增回归测试首次运行全部失败，分别覆盖 detail raw_data/summary、match score 冲突、微信时间线稳定键、附件越界路径。
+- 修复后新增测试：`python -m pytest tests/test_talent_sync.py::test_import_candidate_detail_merges_raw_data_and_records_conflicts tests/test_talent_sync.py::test_import_match_score_records_conflict_for_stable_key_difference tests/test_talent_sync.py::test_import_wechat_timeline_dedupes_by_archive_identity_across_nodes tests/test_talent_sync.py::test_export_wechat_attachments_skips_paths_outside_db_archive_dir -q` -> `4 passed`。
+- 聚焦回归：`python -m pytest tests/test_talent_sync.py -q` -> `33 passed`；`python -m pytest tests/test_talent_db.py -q` -> `125 passed`。
+- 语法检查：`python -m py_compile scripts/talent_db.py scripts/talent_sync.py` -> PASS。
+- 差异检查：`git diff --check` -> PASS；仅提示既有 `README.md` 工作区 CRLF/LF 换行告警。
+
+## 追加边界修复计划
+
+- [x] 补默认 `data/talent.db` 形态的微信附件导出红灯测试。
+- [x] 抽共享微信归档目录 helper，兼容主库 `data/talent.db` 与临时库 `source.db`。
+- [x] 让导出 allowed_dir 和导入恢复 target_dir 复用同一 helper。
+- [x] 运行新增测试、用户指定聚焦测试、完整 `tests/test_talent_sync.py`。
+
+### 追加边界修复 Review
+
+- 红灯：`python -m pytest tests/test_talent_sync.py::test_export_wechat_attachments_from_default_data_db_layout -q` 初次失败，确认 `data/talent.db` 会误跳过 `data/wechat-timelines/legal.md`。
+- 绿灯：新增测试修复后通过，结果 `1 passed`。
+- 聚焦验证：`python -m pytest tests/test_talent_sync.py::test_export_wechat_attachments_skips_paths_outside_db_archive_dir tests/test_talent_sync.py::test_export_can_include_wechat_timeline_attachments tests/test_talent_sync.py::test_import_wechat_attachment_is_idempotent_for_duplicate_bundle -q` -> `3 passed`。
+- 完整同步测试：`python -m pytest tests/test_talent_sync.py -q` -> `34 passed`。
+- 语法与差异检查：`python -m py_compile scripts/talent_sync.py` -> PASS；`git diff --check` -> PASS，仅提示既有 `README.md` CRLF/LF 告警。
+
+## 微信时间线单侧 identifier 去重修复
+
+- [x] 补 existing 有 `chat_identifier`、incoming 只有 `chat_name` 的红灯测试。
+- [x] 补 existing 只有 `chat_name`、incoming 有 `chat_identifier` 的红灯测试。
+- [x] 调整 `_matching_wechat_timeline()`：双方都有 identifier 时先按 identifier 匹配；否则回退到 `chat_name + start_time + end_time + markdown_path`。
+- [x] 跑用户建议测试与 DB 回归。
+
+### 微信时间线单侧 identifier 去重 Review
+
+- 红灯：两条新增测试首次运行均失败，均插入了重复 timeline。
+- 绿灯：两条新增测试修复后 `2 passed`。
+- 聚焦验证：`python -m pytest tests/test_talent_sync.py::test_import_wechat_timeline_dedupes_by_archive_identity_across_nodes -q` -> `1 passed`。
+- 完整同步测试：`python -m pytest tests/test_talent_sync.py -q` -> `36 passed`。
+- DB 回归：`python -m pytest tests/test_talent_db.py -q` -> `125 passed`。
+- 语法与差异检查：`python -m py_compile scripts/talent_db.py scripts/talent_sync.py` -> PASS；`git diff --check` -> PASS，仅提示既有 `README.md` CRLF/LF 告警。
+
+# Final Verification
+
+## Review
+
+- 聚焦测试：`python -m pytest tests/test_talent_sync.py tests/test_talent_db.py tests/test_talent_library_cli.py tests/test_talent_library_workflow.py -q` -> `175 passed`。
+- 语法检查：`python -m py_compile scripts/talent_sync.py scripts/talent_sync_models.py scripts/talent_db.py scripts/talent_models.py` -> PASS。
+- 全量回归：`python -m pytest tests scripts -q` -> `500 passed, 1 warning`；warning 为既有 `scripts/test_boss.py` event loop deprecation。
+- 差异检查：`git diff --check` -> PASS；仅提示 `README.md` 工作区 CRLF 将转 LF。
+- 最终评审复审：Final Review Fixes 规格复审通过；质量复审提出的 timeline identifier 非对称问题已修复并复审通过。
+
+# Talent DB Bundle Sync 实施计划（2026-05-13）
+
+> 目标：未来多台机器同时写入本地人才库时，不再靠整库覆盖，而是通过可校验 bundle 做离线合并同步。
+> 计划文档：`docs/superpowers/plans/2026-05-13-talent-db-bundle-sync.md`
+> 当前状态：**已完成**
+
+## 本轮执行清单
+
+- [x] Task 1：同步元数据 schema、节点标识和历史行 `sync_id` 回填。
+- [x] Task 2：本地写入路径同步化，确保候选人及关联表新增行都有 `sync_id`。
+- [x] Task 3：候选人删除写入 tombstone。
+- [x] Task 4：新增 bundle 模型和 canonical hash 工具。
+- [x] Task 5：实现全量 bundle 导出和 JSONL/checksum 生成。
+- [x] Task 6：实现 bundle 校验。
+- [x] Task 7：实现空库导入、id 重映射和 apply 确认。
+- [x] Task 8：实现重复 bundle 幂等跳过。
+- [x] Task 9：实现来源键跨节点合并和 alias 记录。
+- [x] Task 10：实现候选人字段冲突记录。
+- [x] Task 11：实现 tombstone 导入删除。
+- [x] Task 12：实现 `scripts/talent_sync.py` CLI。
+- [x] Task 13：支持可选微信时间线附件打包。
+- [x] Task 14：更新数据契约和 README。
+- [x] Task 15：运行聚焦测试、语法检查、全量回归和 diff 检查。
+
+---
+
 # 通用 Agent 项目架构改造执行清单（2026-05-09）
 
 > 来源计划：`docs/superpowers/plans/2026-05-09-general-agent-architecture.md`

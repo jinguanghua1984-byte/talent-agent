@@ -48,3 +48,13 @@ python scripts/data-manager.py validate    # 校验数据
 python scripts/data-manager.py jd list       # 列出JD
 python scripts/data-manager.py candidate list # 列出候选人
 ```
+
+多台机器同步本地人才库时，不要直接覆盖 `data/talent.db`，使用同步 bundle：
+
+```bash
+python scripts/talent_sync.py status --db data/talent.db
+python scripts/talent_sync.py export --db data/talent.db --out data/output/talent-sync-full.zip
+python scripts/talent_sync.py verify-bundle --bundle data/output/talent-sync-full.zip
+python scripts/talent_sync.py import --db data/talent.db --bundle data/output/talent-sync-full.zip
+python scripts/talent_sync.py import --db data/talent.db --bundle data/output/talent-sync-full.zip --apply --confirm "确认同步人才库"
+```

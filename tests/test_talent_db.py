@@ -191,6 +191,110 @@ def test_creates_all_core_tables(db: TalentDB):
     assert expected.issubset(tables)
 
 
+def test_sync_schema_initializes_node_and_entity_columns(tmp_path: Path):
+    db_path = tmp_path / "talent.db"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest(
+            {"name": "Alice", "platform_id": "maimai-1"},
+            platform="maimai",
+        )
+        row = db._conn.execute(
+            "SELECT sync_id FROM candidates WHERE id = ?",
+            (candidate_id,),
+        ).fetchone()
+        node = db._conn.execute(
+            "SELECT value FROM sync_meta WHERE key = 'node_id'"
+        ).fetchone()
+        tables = {
+            item[0]
+            for item in db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+    finally:
+        db.close()
+
+    assert row is not None
+    assert row["sync_id"]
+    assert node is not None
+    assert node["value"]
+    assert {
+        "sync_meta",
+        "sync_entity_aliases",
+        "sync_conflicts",
+        "sync_tombstones",
+        "sync_imports",
+    }.issubset(tables)
+
+
+def test_sync_entity_aliases_requires_source_node_id(tmp_path: Path):
+    db = TalentDB(tmp_path / "talent.db")
+    try:
+        columns = {
+            row["name"]: row
+            for row in db._conn.execute(
+                "PRAGMA table_info(sync_entity_aliases)"
+            ).fetchall()
+        }
+    finally:
+        db.close()
+
+    assert columns["source_node_id"]["notnull"] == 1
+
+
+def test_new_candidate_and_related_rows_receive_sync_ids(db: TalentDB):
+    candidate_id = db.ingest(
+        {
+            "name": "Alice",
+            "platform_id": "maimai-1",
+            "work_experience": [{"company": "Acme"}],
+        },
+        platform="maimai",
+    )
+    db.update_overall_score(candidate_id, 88, "manual", {"note": "seed"})
+    db.save_match_score(candidate_id, "jd-1", "final", 88, {"skill": 90}, "good")
+    db.add_wechat_timeline(
+        candidate_id,
+        {
+            "chat_name": "Alice",
+            "markdown_path": "data/wechat-timelines/alice.md",
+        },
+    )
+
+    candidate = db._conn.execute(
+        "SELECT sync_id FROM candidates WHERE id = ?",
+        (candidate_id,),
+    ).fetchone()
+    detail = db._conn.execute(
+        "SELECT sync_id FROM candidate_details WHERE candidate_id = ?",
+        (candidate_id,),
+    ).fetchone()
+    source = db._conn.execute(
+        "SELECT sync_id FROM source_profiles WHERE candidate_id = ?",
+        (candidate_id,),
+    ).fetchone()
+    score_event = db._conn.execute(
+        "SELECT sync_id FROM score_events WHERE candidate_id = ?",
+        (candidate_id,),
+    ).fetchone()
+    match_score = db._conn.execute(
+        "SELECT sync_id FROM match_scores WHERE candidate_id = ?",
+        (candidate_id,),
+    ).fetchone()
+    timeline = db._conn.execute(
+        "SELECT sync_id FROM candidate_wechat_timelines WHERE candidate_id = ?",
+        (candidate_id,),
+    ).fetchone()
+
+    assert candidate["sync_id"]
+    assert detail["sync_id"]
+    assert source["sync_id"]
+    assert score_event["sync_id"]
+    assert match_score["sync_id"]
+    assert timeline["sync_id"]
+
+
 def test_init_is_idempotent(tmp_path: Path):
     db_path = tmp_path / "talent.db"
     db1 = TalentDB(db_path)
@@ -1145,6 +1249,29 @@ def test_delete_candidate_removes_candidate_and_related_rows(db_with_candidate):
     assert db.get_detail(candidate_id) is None
     assert db.get_sources(candidate_id) == []
     assert db.get_match_scores("jd-delete-test") == []
+
+
+def test_delete_candidate_records_sync_tombstone(db: TalentDB):
+    candidate_id = db.ingest(
+        {"name": "Alice", "platform_id": "maimai-1"},
+        platform="maimai",
+    )
+    sync_id = db._conn.execute(
+        "SELECT sync_id FROM candidates WHERE id = ?",
+        (candidate_id,),
+    ).fetchone()["sync_id"]
+
+    db.delete_candidate(candidate_id)
+
+    row = db._conn.execute(
+        """
+        SELECT entity_type, entity_sync_id
+        FROM sync_tombstones
+        WHERE entity_type = 'candidate' AND entity_sync_id = ?
+        """,
+        (sync_id,),
+    ).fetchone()
+    assert row is not None
 
 
 def test_add_and_get_wechat_timeline(db_with_candidate):

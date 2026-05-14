@@ -65,3 +65,18 @@ def test_talent_library_mentions_contacts_and_wechat_sync():
     assert "candidate_wechat_timelines" in data_contract
     assert "TalentDB.add_wechat_timeline" in data_contract
     assert "未提供起止时间时不得执行微信聊天导出" in safety
+
+
+def test_talent_library_documents_bundle_sync():
+    data_contract = (WORKFLOW / "references" / "data-contract.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "bundle 同步" in data_contract
+    assert "scripts/talent_sync.py export" in data_contract
+    assert "scripts/talent_sync.py verify-bundle" in data_contract
+    assert "scripts/talent_sync.py import" in data_contract
+    assert "dry-run" in data_contract
+    assert "--apply --confirm" in data_contract
+    assert "确认同步人才库" in data_contract
+    assert "--include-wechat-files" in data_contract
