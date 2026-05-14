@@ -1,11 +1,17 @@
 from pathlib import Path
+import json
 
 import pytest
 
 from scripts.maimai_ai_infra_campaign import (
     append_jsonl,
+    append_search_event,
     atomic_write_json,
     ensure_campaign,
+    load_completed_pages,
+    mark_page_completed,
+    page_raw_path,
+    read_search_progress,
 )
 
 
@@ -102,3 +108,37 @@ def test_ensure_campaign_rejects_mismatched_manifest_schema(tmp_path: Path):
 def test_gitignore_excludes_campaign_runtime_data():
     text = Path(".gitignore").read_text(encoding="utf-8")
     assert "data/campaigns/" in text
+
+
+def test_page_raw_atomic_write_marks_completed(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    payload = {"unit_id": "unit-000001", "page": 1, "contacts": [{"id": "u1"}]}
+
+    mark_page_completed(paths, "unit-000001", 1, payload)
+
+    raw = page_raw_path(paths, "unit-000001", 1)
+    assert raw.exists()
+    assert not raw.with_name(raw.name + ".tmp").exists()
+    assert json.loads(raw.read_text(encoding="utf-8-sig"))["contacts"][0]["id"] == "u1"
+    progress = read_search_progress(paths)
+    assert progress["units"]["unit-000001"]["pages"]["1"]["status"] == "completed"
+
+
+def test_resume_rebuilds_completed_pages_from_raw_when_progress_missing(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    mark_page_completed(paths, "unit-000001", 1, {"contacts": []})
+    paths.search_progress.unlink()
+
+    completed = load_completed_pages(paths)
+
+    assert completed == {("unit-000001", 1)}
+
+
+def test_search_events_are_append_only_jsonl(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    append_search_event(paths, {"event": "page_started", "unit_id": "unit-000001", "page": 1})
+    append_search_event(paths, {"event": "page_completed", "unit_id": "unit-000001", "page": 1})
+
+    lines = paths.search_events.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[0])["event"] == "page_started"

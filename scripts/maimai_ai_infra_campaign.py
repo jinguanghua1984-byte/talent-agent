@@ -90,6 +90,58 @@ def append_jsonl(path: str | Path, item: dict[str, Any]) -> None:
         file.write(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def page_raw_path(paths: CampaignPaths, unit_id: str, page: int) -> Path:
+    return paths.raw_search_dir / unit_id / f"page-{page:03d}.json"
+
+
+def read_search_progress(paths: CampaignPaths) -> dict[str, Any]:
+    if not paths.search_progress.exists():
+        return {"campaign_id": paths.campaign_id, "units": {}}
+    return json.loads(paths.search_progress.read_text(encoding="utf-8-sig"))
+
+
+def write_search_progress(paths: CampaignPaths, progress: dict[str, Any]) -> None:
+    atomic_write_json(paths.search_progress, progress)
+
+
+def append_search_event(paths: CampaignPaths, item: dict[str, Any]) -> None:
+    event = {"ts": datetime.now().isoformat(timespec="seconds"), **item}
+    append_jsonl(paths.search_events, event)
+
+
+def mark_page_completed(
+    paths: CampaignPaths,
+    unit_id: str,
+    page: int,
+    payload: dict[str, Any],
+) -> None:
+    raw_path = page_raw_path(paths, unit_id, page)
+    atomic_write_json(raw_path, payload)
+    progress = read_search_progress(paths)
+    unit = progress.setdefault("units", {}).setdefault(
+        unit_id,
+        {"pages": {}, "status": "running"},
+    )
+    unit.setdefault("pages", {})[str(page)] = {
+        "status": "completed",
+        "raw_path": str(raw_path),
+        "completed_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    write_search_progress(paths, progress)
+    append_search_event(paths, {"event": "page_completed", "unit_id": unit_id, "page": page})
+
+
+def load_completed_pages(paths: CampaignPaths) -> set[tuple[str, int]]:
+    completed: set[tuple[str, int]] = set()
+    for raw_path in paths.raw_search_dir.glob("unit-*/page-*.json"):
+        try:
+            page = int(raw_path.stem.removeprefix("page-"))
+            completed.add((raw_path.parent.name, page))
+        except ValueError:
+            continue
+    return completed
+
+
 def ensure_campaign(root: str | Path, campaign_id: str | None = None) -> CampaignPaths:
     paths = campaign_paths(root, campaign_id)
     for directory in (
