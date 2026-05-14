@@ -10,9 +10,17 @@ import argparse
 import copy
 import json
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from scripts.maimai_ai_infra_campaign import (
+    CampaignPaths,
+    ensure_campaign,
+    load_completed_pages,
+    mark_page_completed,
+)
 
 
 DEFAULT_TEMPLATE = {
@@ -61,9 +69,39 @@ CONFIRMED_SEARCH_FILTER_FIELDS = {
 }
 
 
+@dataclass(frozen=True)
+class PageTask:
+    unit_id: str
+    page: int
+    unit: dict[str, Any]
+
+
+def iter_pending_page_tasks(paths: CampaignPaths, units: list[dict[str, Any]]) -> list[PageTask]:
+    completed = load_completed_pages(paths)
+    tasks: list[PageTask] = []
+    for unit in units:
+        unit_id = str(unit["unit_id"])
+        for page in range(1, int(unit.get("max_pages") or 1) + 1):
+            if (unit_id, page) not in completed:
+                tasks.append(PageTask(unit_id=unit_id, page=page, unit=unit))
+    return tasks
+
+
 def _load_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8-sig") as file:
         return json.load(file)
+
+
+def _load_units_jsonl(path: Path) -> list[dict[str, Any]]:
+    units: list[dict[str, Any]] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), start=1):
+        if not line.strip():
+            continue
+        unit = json.loads(line)
+        if not isinstance(unit, dict):
+            raise ValueError(f"unit JSONL line {line_number} must be an object")
+        units.append(unit)
+    return units
 
 
 def normalize_confirmed_search_filters(filters: dict[str, Any]) -> dict[str, Any]:
@@ -161,17 +199,94 @@ def build_dry_run_result(plan: dict[str, Any], template: dict[str, Any]) -> dict
     }
 
 
+def _batch_from_unit(unit: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "batch_id": unit["unit_id"],
+        "query": unit.get("query", ""),
+        "page_size": unit.get("page_size", 30),
+        "search_filters": unit.get("search_filters", {}),
+        "query_relation": unit.get("search_filters", {}).get(
+            "query_relation",
+            unit.get("query_relation", 1),
+        ),
+    }
+
+
+def build_page_task_dry_run(
+    paths: CampaignPaths,
+    unit: dict[str, Any],
+    page: int,
+    template: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "campaign_id": paths.campaign_id,
+        "unit_id": unit["unit_id"],
+        "wave_id": unit.get("wave_id", ""),
+        "page": page,
+        "status": "dry-run-template-only",
+        "body": patch_search_body(template, _batch_from_unit(unit), page),
+        "contacts": [],
+    }
+
+
+def _write_json(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8-sig")
+
+
+def _run_campaign_dry_run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if not args.campaign_root or not args.units:
+        parser.error("campaign mode requires --campaign-root and --units")
+
+    paths = ensure_campaign(args.campaign_root)
+    units = _load_units_jsonl(Path(args.units))
+    if args.wave:
+        units = [unit for unit in units if unit.get("wave_id") == args.wave]
+    if args.unit:
+        units = [unit for unit in units if unit.get("unit_id") == args.unit]
+    if args.max_units is not None:
+        units = units[: args.max_units]
+
+    pending_tasks = iter_pending_page_tasks(paths, units)
+    selected_tasks = pending_tasks
+    if args.max_pages is not None:
+        selected_tasks = selected_tasks[: args.max_pages]
+
+    template = _load_template(args.template)
+    for task in selected_tasks:
+        payload = build_page_task_dry_run(paths, task.unit, task.page, template)
+        mark_page_completed(paths, task.unit_id, task.page, payload)
+
+    if args.out:
+        summary = {
+            "campaign_id": paths.campaign_id,
+            "status": "dry-run-template-only",
+            "pages_written": len(selected_tasks),
+            "units_seen": len(units),
+            "tasks_pending": len(pending_tasks),
+            "tasks_written": len(selected_tasks),
+        }
+        if args.max_runtime_minutes is not None:
+            summary["max_runtime_minutes"] = args.max_runtime_minutes
+        _write_json(Path(args.out), summary)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="脉脉 AI Infra 搜索执行器")
-    parser.add_argument("--plan", required=True)
-    parser.add_argument("--out", required=True)
+    parser.add_argument("--plan")
+    parser.add_argument("--out")
     parser.add_argument("--template")
     parser.add_argument("--dry-run-template-only", action="store_true")
+    parser.add_argument("--campaign-root")
+    parser.add_argument("--units")
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--wave")
+    parser.add_argument("--unit")
+    parser.add_argument("--max-units", type=int)
+    parser.add_argument("--max-pages", type=int)
+    parser.add_argument("--max-runtime-minutes", type=int)
     args = parser.parse_args(argv)
-
-    plan = _load_json(Path(args.plan))
-    if not isinstance(plan, dict):
-        raise ValueError("plan must be a JSON object")
 
     if not args.dry_run_template_only:
         raise RuntimeError(
@@ -179,11 +294,19 @@ def main(argv: list[str] | None = None) -> int:
             "without logout, captcha, 403 or 429"
         )
 
+    if args.campaign_root or args.units:
+        return _run_campaign_dry_run(args, parser)
+
+    if not args.plan or not args.out:
+        parser.error("legacy mode requires --plan and --out")
+
+    plan = _load_json(Path(args.plan))
+    if not isinstance(plan, dict):
+        raise ValueError("plan must be a JSON object")
+
     template = _load_template(args.template)
     result = build_dry_run_result(plan, template)
-    out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8-sig")
+    _write_json(Path(args.out), result)
     return 0
 
 

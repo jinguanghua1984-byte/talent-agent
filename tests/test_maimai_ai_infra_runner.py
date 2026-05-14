@@ -1,7 +1,19 @@
 import json
 from pathlib import Path
 
-from scripts.maimai_ai_infra_search_runner import patch_search_body
+from scripts.maimai_ai_infra_campaign import (
+    ensure_campaign,
+    mark_page_completed,
+    page_raw_path,
+    read_search_progress,
+)
+from scripts.maimai_ai_infra_search_runner import (
+    DEFAULT_TEMPLATE,
+    build_page_task_dry_run,
+    iter_pending_page_tasks,
+    main,
+    patch_search_body,
+)
 
 
 def _template_body():
@@ -130,6 +142,186 @@ def test_patch_search_body_rejects_incompatible_template():
         raise AssertionError("invalid template should fail")
 
 
+def test_iter_pending_page_tasks_skips_completed_raw_pages(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    units = [
+        {"unit_id": "unit-000001", "max_pages": 3},
+        {"unit_id": "unit-000002", "max_pages": 2},
+    ]
+    mark_page_completed(paths, "unit-000001", 1, {"contacts": []})
+
+    tasks = list(iter_pending_page_tasks(paths, units))
+
+    assert [(task.unit_id, task.page) for task in tasks] == [
+        ("unit-000001", 2),
+        ("unit-000001", 3),
+        ("unit-000002", 1),
+        ("unit-000002", 2),
+    ]
+
+
+def test_build_page_task_dry_run_patches_unit_body(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    unit = {
+        "unit_id": "unit-000001",
+        "wave_id": "wave-a",
+        "query": '"Seed" "training"',
+        "page_size": 20,
+        "search_filters": {
+            "allcompanies": "ByteDance,Alibaba",
+            "positions": "Training Engineer,Infra Engineer",
+            "query_relation": 1,
+        },
+    }
+
+    payload = build_page_task_dry_run(paths, unit, page=2, template=DEFAULT_TEMPLATE)
+
+    assert payload["campaign_id"] == paths.campaign_id
+    assert payload["unit_id"] == "unit-000001"
+    assert payload["wave_id"] == "wave-a"
+    assert payload["page"] == 2
+    assert payload["status"] == "dry-run-template-only"
+    assert payload["contacts"] == []
+    search = payload["body"]["search"]
+    assert search["query"] == '"Seed" "training"'
+    assert search["search_query"] == '"Seed" "training"'
+    assert search["allcompanies"] == "ByteDance,Alibaba"
+    assert search["positions"] == "Training Engineer,Infra Engineer"
+    assert search["query_relation"] == 1
+    assert search["paginationParam"]["page"] == 2
+    assert search["paginationParam"]["size"] == 20
+    assert search["page"] == 1
+    assert search["size"] == 20
+
+
+def _write_units(path: Path, units: list[dict[str, object]]) -> None:
+    path.write_text(
+        "\n".join(json.dumps(unit, ensure_ascii=False) for unit in units) + "\n\n",
+        encoding="utf-8",
+    )
+
+
+def _unit(unit_id: str, wave_id: str = "wave-a", max_pages: int = 1) -> dict[str, object]:
+    return {
+        "unit_id": unit_id,
+        "wave_id": wave_id,
+        "query": f"query {unit_id}",
+        "page_size": 10,
+        "max_pages": max_pages,
+        "search_filters": {
+            "allcompanies": "Company",
+            "positions": "Engineer",
+            "query_relation": 1,
+        },
+    }
+
+
+def test_campaign_mode_writes_raw_pages_without_plan_or_out(tmp_path: Path):
+    campaign_root = tmp_path / "campaign"
+    units_path = tmp_path / "units.jsonl"
+    _write_units(units_path, [_unit("unit-000001", max_pages=2)])
+
+    assert main([
+        "--campaign-root",
+        str(campaign_root),
+        "--units",
+        str(units_path),
+        "--dry-run-template-only",
+    ]) == 0
+
+    paths = ensure_campaign(campaign_root)
+    first = json.loads(page_raw_path(paths, "unit-000001", 1).read_text(encoding="utf-8-sig"))
+    second = json.loads(page_raw_path(paths, "unit-000001", 2).read_text(encoding="utf-8-sig"))
+    assert first["status"] == "dry-run-template-only"
+    assert first["body"]["search"]["paginationParam"]["page"] == 1
+    assert second["body"]["search"]["paginationParam"]["page"] == 2
+    assert read_search_progress(paths)["units"]["unit-000001"]["pages"]["2"]["status"] == "completed"
+
+
+def test_campaign_mode_resume_skips_existing_raw_page(tmp_path: Path):
+    campaign_root = tmp_path / "campaign"
+    paths = ensure_campaign(campaign_root)
+    units_path = tmp_path / "units.jsonl"
+    _write_units(units_path, [_unit("unit-000001", max_pages=3)])
+    mark_page_completed(paths, "unit-000001", 1, {"contacts": [], "sentinel": "keep"})
+
+    assert main([
+        "--campaign-root",
+        str(campaign_root),
+        "--units",
+        str(units_path),
+        "--dry-run-template-only",
+        "--resume",
+        "--max-pages",
+        "1",
+    ]) == 0
+
+    first = json.loads(page_raw_path(paths, "unit-000001", 1).read_text(encoding="utf-8-sig"))
+    assert first["sentinel"] == "keep"
+    assert not page_raw_path(paths, "unit-000001", 3).exists()
+    second = json.loads(page_raw_path(paths, "unit-000001", 2).read_text(encoding="utf-8-sig"))
+    assert second["page"] == 2
+
+
+def test_campaign_mode_filters_wave_and_limits_units_and_pages(tmp_path: Path):
+    campaign_root = tmp_path / "campaign"
+    units_path = tmp_path / "units.jsonl"
+    _write_units(
+        units_path,
+        [
+            _unit("unit-000001", wave_id="wave-a", max_pages=2),
+            _unit("unit-000002", wave_id="wave-a", max_pages=2),
+            _unit("unit-000003", wave_id="wave-b", max_pages=2),
+        ],
+    )
+
+    assert main([
+        "--campaign-root",
+        str(campaign_root),
+        "--units",
+        str(units_path),
+        "--dry-run-template-only",
+        "--wave",
+        "wave-a",
+        "--max-units",
+        "1",
+        "--max-pages",
+        "1",
+    ]) == 0
+
+    paths = ensure_campaign(campaign_root)
+    assert page_raw_path(paths, "unit-000001", 1).exists()
+    assert not page_raw_path(paths, "unit-000001", 2).exists()
+    assert not page_raw_path(paths, "unit-000002", 1).exists()
+    assert not page_raw_path(paths, "unit-000003", 1).exists()
+
+
+def test_campaign_mode_filters_single_unit(tmp_path: Path):
+    campaign_root = tmp_path / "campaign"
+    units_path = tmp_path / "units.jsonl"
+    _write_units(
+        units_path,
+        [
+            _unit("unit-000001", wave_id="wave-a"),
+            _unit("unit-000002", wave_id="wave-b"),
+        ],
+    )
+
+    assert main([
+        "--campaign-root",
+        str(campaign_root),
+        "--units",
+        str(units_path),
+        "--dry-run-template-only",
+        "--unit",
+        "unit-000002",
+    ]) == 0
+
+    paths = ensure_campaign(campaign_root)
+    assert not page_raw_path(paths, "unit-000001", 1).exists()
+    assert page_raw_path(paths, "unit-000002", 1).exists()
+
+
 def test_runner_dry_run_template_only_outputs_patched_body(tmp_path: Path):
     plan_path = tmp_path / "plan.json"
     template_path = tmp_path / "template.json"
@@ -139,8 +331,6 @@ def test_runner_dry_run_template_only_outputs_patched_body(tmp_path: Path):
         encoding="utf-8",
     )
     template_path.write_text(json.dumps(_template_body(), ensure_ascii=False), encoding="utf-8")
-
-    from scripts.maimai_ai_infra_search_runner import main
 
     assert main([
         "--plan",
