@@ -126,12 +126,57 @@ def test_page_raw_atomic_write_marks_completed(tmp_path: Path):
 
 def test_resume_rebuilds_completed_pages_from_raw_when_progress_missing(tmp_path: Path):
     paths = ensure_campaign(tmp_path / "campaign")
-    mark_page_completed(paths, "unit-000001", 1, {"contacts": []})
+    mark_page_completed(paths, "unit-000001", 1, {"unit_id": "unit-000001", "page": 1, "contacts": []})
     paths.search_progress.unlink()
 
     completed = load_completed_pages(paths)
 
     assert completed == {("unit-000001", 1)}
+
+
+def test_load_completed_pages_ignores_malformed_raw_content(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    invalid_cases = {
+        ("unit-000001", 1): "{not-json",
+        ("unit-000002", 2): "[]",
+        ("unit-000003", 3): json.dumps({"page": 3, "contacts": []}),
+        ("unit-000004", 4): json.dumps({"unit_id": "unit-000004", "contacts": []}),
+        ("unit-000005", 5): json.dumps({"unit_id": "unit-000005", "page": 5}),
+        ("unit-000006", 6): json.dumps({"unit_id": "unit-000006", "page": 6, "contacts": {}}),
+        ("unit-000007", 7): json.dumps({"unit_id": "unit-999999", "page": 7, "contacts": []}),
+        ("unit-000008", 8): json.dumps({"unit_id": "unit-000008", "page": 9, "contacts": []}),
+    }
+    for (unit_id, page), content in invalid_cases.items():
+        raw = page_raw_path(paths, unit_id, page)
+        raw.parent.mkdir(parents=True, exist_ok=True)
+        raw.write_text(content, encoding="utf-8")
+    mark_page_completed(paths, "unit-000009", 9, {"unit_id": "unit-000009", "page": 9, "contacts": []})
+
+    completed = load_completed_pages(paths)
+
+    assert completed == {("unit-000009", 9)}
+
+
+def test_load_completed_pages_ignores_malformed_raw_names(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    malformed_paths = [
+        paths.raw_search_dir / "unit-backup" / "page-001.json",
+        paths.raw_search_dir / "unit-abc" / "page-001.json",
+        paths.raw_search_dir / "unit-000001" / "page-1.json",
+        paths.raw_search_dir / "unit-000001" / "page--1.json",
+        paths.raw_search_dir / "unit-000001" / "page-000.json",
+    ]
+    for raw in malformed_paths:
+        raw.parent.mkdir(parents=True, exist_ok=True)
+        raw.write_text(
+            json.dumps({"unit_id": raw.parent.name, "page": 1, "contacts": []}),
+            encoding="utf-8",
+        )
+    mark_page_completed(paths, "unit-000002", 2, {"unit_id": "unit-000002", "page": 2, "contacts": []})
+
+    completed = load_completed_pages(paths)
+
+    assert completed == {("unit-000002", 2)}
 
 
 def test_search_events_are_append_only_jsonl(tmp_path: Path):
@@ -142,3 +187,13 @@ def test_search_events_are_append_only_jsonl(tmp_path: Path):
     lines = paths.search_events.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
     assert json.loads(lines[0])["event"] == "page_started"
+
+
+def test_append_search_event_caller_cannot_override_generated_ts(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+
+    append_search_event(paths, {"event": "page_started", "ts": "caller-ts"})
+
+    event = json.loads(paths.search_events.read_text(encoding="utf-8").splitlines()[0])
+    assert event["ts"] != "caller-ts"
+    assert event["event"] == "page_started"

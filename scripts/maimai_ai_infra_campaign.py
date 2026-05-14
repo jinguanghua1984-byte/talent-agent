@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 
 MANIFEST_SCHEMA = "maimai_ai_infra_v2_campaign"
+RAW_UNIT_PATTERN = re.compile(r"^unit-\d{6}$")
+RAW_PAGE_PATTERN = re.compile(r"^page-(\d{3})\.json$")
 
 
 @dataclass(frozen=True)
@@ -105,7 +108,7 @@ def write_search_progress(paths: CampaignPaths, progress: dict[str, Any]) -> Non
 
 
 def append_search_event(paths: CampaignPaths, item: dict[str, Any]) -> None:
-    event = {"ts": datetime.now().isoformat(timespec="seconds"), **item}
+    event = {**item, "ts": datetime.now(UTC).isoformat(timespec="seconds")}
     append_jsonl(paths.search_events, event)
 
 
@@ -134,11 +137,26 @@ def mark_page_completed(
 def load_completed_pages(paths: CampaignPaths) -> set[tuple[str, int]]:
     completed: set[tuple[str, int]] = set()
     for raw_path in paths.raw_search_dir.glob("unit-*/page-*.json"):
-        try:
-            page = int(raw_path.stem.removeprefix("page-"))
-            completed.add((raw_path.parent.name, page))
-        except ValueError:
+        unit_id = raw_path.parent.name
+        page_match = RAW_PAGE_PATTERN.fullmatch(raw_path.name)
+        if RAW_UNIT_PATTERN.fullmatch(unit_id) is None or page_match is None:
             continue
+        page = int(page_match.group(1))
+        if page <= 0:
+            continue
+        try:
+            payload = json.loads(raw_path.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("unit_id") != unit_id:
+            continue
+        if payload.get("page") != page:
+            continue
+        if not isinstance(payload.get("contacts"), list):
+            continue
+        completed.add((unit_id, page))
     return completed
 
 
