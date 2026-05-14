@@ -120,8 +120,15 @@ def append_import_ledger(paths: CampaignPaths, item: dict[str, Any]) -> None:
 def import_ledger_has_apply(paths: CampaignPaths, wave_id: str) -> bool:
     if not paths.import_ledger.exists():
         return False
-    for line in paths.import_ledger.read_text(encoding="utf-8").splitlines():
-        item = json.loads(line)
+    for line_number, line in enumerate(paths.import_ledger.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"malformed import ledger line {line_number}: {exc}") from exc
+        if not isinstance(item, dict):
+            raise ValueError(f"malformed import ledger line {line_number}: expected object")
         if (
             item.get("wave_id") == wave_id
             and item.get("action") == "apply"

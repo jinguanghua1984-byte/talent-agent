@@ -79,6 +79,8 @@ def extract_wave_contacts_from_pages(paths: CampaignPaths, wave_id: str) -> dict
         if data.get("wave_id") != wave_id:
             continue
         for contact in data.get("contacts") or []:
+            if not isinstance(contact, dict):
+                continue
             keys = {
                 str(value).strip()
                 for value in (contact.get("id"), contact.get("platform_id"))
@@ -221,6 +223,14 @@ def _ensure_campaign_plan_files(paths: CampaignPaths, config: Path) -> None:
         _write_jsonl(paths.search_units, build_search_units(strategy))
 
 
+def _apply_import_is_clean(import_result: dict[str, Any], metadata: dict[str, Any]) -> bool:
+    return (
+        metadata.get("pre_errors", 0) == 0
+        and import_result.get("errors", 0) == 0
+        and import_result.get("pending", 0) == 0
+    )
+
+
 def run_campaign_wave(
     campaign_root: str | Path,
     config: str | Path = "configs/maimai-ai-infra-v2-cold-start-strategy.json",
@@ -242,26 +252,46 @@ def run_campaign_wave(
     target_db = Path(db_path) if db_path is not None else paths.db
 
     candidates, metadata = _build_import_candidates([contacts_path], "maimai")
-    ingest_result = _run_batch_ingest(candidates, "maimai", target_db, apply=apply)
-    import_summary = {
-        "mode": "apply" if apply else "dry-run",
-        "platform": "maimai",
-        **metadata,
-        "result": _result_to_dict(ingest_result),
-    }
-    _write_import_outputs(report_path, import_summary)
     if apply:
         append_import_ledger(
             paths,
             {
                 "wave_id": wave,
                 "action": "apply",
-                "status": "completed",
+                "status": "started",
                 "contacts": len(candidates),
                 "report": str(report_path),
                 "db": str(target_db),
             },
         )
+    ingest_result = _run_batch_ingest(candidates, "maimai", target_db, apply=apply)
+    import_result = _result_to_dict(ingest_result)
+    import_summary = {
+        "mode": "apply" if apply else "dry-run",
+        "platform": "maimai",
+        **metadata,
+        "result": import_result,
+    }
+    _write_import_outputs(report_path, import_summary)
+    if apply:
+        clean_apply = _apply_import_is_clean(import_result, metadata)
+        ledger_status = "completed" if clean_apply else "partial"
+        append_import_ledger(
+            paths,
+            {
+                "wave_id": wave,
+                "action": "apply",
+                "status": ledger_status,
+                "contacts": len(candidates),
+                "report": str(report_path),
+                "db": str(target_db),
+                "errors": import_result.get("errors", 0),
+                "pending": import_result.get("pending", 0),
+                "pre_errors": metadata.get("pre_errors", 0),
+            },
+        )
+        if not clean_apply:
+            raise RuntimeError(f"campaign wave apply was partial: {wave}")
 
     return {
         "contacts": contacts_path,

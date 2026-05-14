@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+import scripts.maimai_ai_infra_pipeline as pipeline
 from scripts.maimai_ai_infra_campaign import (
     append_import_ledger,
     ensure_campaign,
@@ -17,6 +18,7 @@ from scripts.maimai_ai_infra_pipeline import (
     run_pipeline,
     select_detail_candidate_ids,
 )
+from scripts.talent_models import IngestResult
 from scripts.talent_db import TalentDB
 
 
@@ -98,12 +100,38 @@ def test_extract_wave_contacts_dedupes_when_one_contact_has_id_and_platform_id(t
     assert payload["contacts"][0]["name"] == "A"
 
 
+def test_extract_wave_contacts_skips_non_object_contacts(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    mark_page_completed(
+        paths,
+        "unit-000001",
+        1,
+        {
+            "wave_id": "wave-001",
+            "contacts": ["bad", {"id": "u1", "name": "A"}],
+        },
+    )
+
+    payload = extract_wave_contacts_from_pages(paths, "wave-001")
+
+    assert payload["metadata"]["total_contacts"] == 1
+    assert payload["contacts"][0]["id"] == "u1"
+
+
 def test_import_ledger_blocks_duplicate_wave_apply(tmp_path: Path):
     paths = ensure_campaign(tmp_path / "campaign")
 
     append_import_ledger(paths, {"wave_id": "wave-001", "action": "apply", "status": "completed"})
 
     assert import_ledger_has_apply(paths, "wave-001")
+
+
+def test_import_ledger_rejects_malformed_json_with_line_number(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    paths.import_ledger.write_text("\n{bad}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="malformed import ledger line 2"):
+        import_ledger_has_apply(paths, "wave-001")
 
 
 def test_run_campaign_wave_dry_run_writes_contacts_and_report(tmp_path: Path):
@@ -169,6 +197,47 @@ def test_run_campaign_wave_apply_aborts_when_wave_already_applied(tmp_path: Path
         )
 
     assert not (paths.contacts_dir / "contacts-wave-001.json").exists()
+
+
+def test_run_campaign_wave_apply_partial_does_not_mark_completed_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    paths = ensure_campaign(tmp_path / "campaign")
+    mark_page_completed(
+        paths,
+        "unit-000001",
+        1,
+        {
+            "wave_id": "wave-001",
+            "contacts": [
+                {"id": "u1", "name": "A", "company": "ByteDance", "position": "AI Infra"}
+            ],
+        },
+    )
+
+    def fake_ingest(candidates, platform, db_path, apply):  # noqa: ANN001
+        assert apply is True
+        return IngestResult(created=1, errors=1, error_details=["bad candidate"])
+
+    monkeypatch.setattr(pipeline, "_run_batch_ingest", fake_ingest)
+
+    with pytest.raises(RuntimeError, match="partial"):
+        run_campaign_wave(
+            campaign_root=paths.root,
+            config=Path("configs/maimai-ai-infra-v2-cold-start-strategy.json"),
+            wave="wave-001",
+            db_path=tmp_path / "campaign.db",
+            apply=True,
+        )
+
+    ledger = [
+        json.loads(line)
+        for line in paths.import_ledger.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [item["status"] for item in ledger] == ["started", "partial"]
+    assert not import_ledger_has_apply(paths, "wave-001")
 
 
 def test_select_detail_candidate_ids_uses_all_a_and_top_b():
