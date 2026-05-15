@@ -1,3 +1,76 @@
+# AI Infra 冷启动寻访 V2 计划重制（2026-05-14）
+
+> 目标：基于初版人工搜索计划、Phase 0 技术边界、5/13 半自动闭环和 5/14 搜索 API 校准结果，重新制定一份不依赖既有人才库数据的 V2 实施计划。
+
+## 执行清单
+
+- [x] 复读 `docs/design-discussions/2026-05-12-maimai-ai-infra-talent-search-plan.md`，抽取原始业务目标、搜索原则、公司/职位/关键词结构。
+- [x] 复读 `docs/superpowers/plans/2026-05-13-maimai-ai-infra-feasible-execution.md` 与 Phase 0 复盘，确认搜索、详情和写库的人机边界。
+- [x] 复读 `docs/superpowers/plans/2026-05-14-maimai-search-api-calibration.md` 与搜索 API 说明书，确认可写筛选字段和禁用字段。
+- [x] 新增 V2 冷启动实施计划文档，重点覆盖列表抓取、粗筛评分、初版报告、人工审核、详情任务包和最终寻访报告。
+- [x] 校验 V2 文档无占位符、关键文件路径正确，并写入 Review。
+
+## Review
+
+- 新增文档：`docs/design-discussions/2026-05-14-maimai-ai-infra-talent-search-plan-v2.md`。
+- 计划定位：冷启动 campaign，不复用既有 `data/talent.db` 候选人；列表抓取为主，详情只补人工审核圈定范围。
+- 搜索字段：只使用 2026-05-14 已确认字段；年龄范围使用 `min_age/max_age`，不写 `search.age` 或 `age_min/age_max`。
+- 安全边界：搜索按门禁小步放大；详情补全继续使用 popup 本地任务包路径，不使用 `automation.html` 或 CDP 触发真实详情。
+- 文档校验：占位词扫描无命中；关键章节扫描通过；`git diff --check` 通过。
+
+## 规模和长时执行调整
+
+- [x] 将搜索目标指标按 10 倍放大：原始列表 15,000-30,000、去重 8,000-18,000、列表 A+B 2,000-4,000、最终强推荐/推荐 200-500。
+- [x] 将搜索执行拆成 campaign、wave、search unit、page task 四层，明确每层粒度和持久化文件。
+- [x] 增加长时任务中断恢复机制：页级 raw 原子写入、`search-progress.json`、`search-events.jsonl`、`import-ledger.jsonl`、`--resume` 和 runtime 切片参数。
+- [x] 调整详情审核和补全规模：总详情目标 600-1,200，拆成 5-10 个详情 wave，详情成功 500-1,000 后支撑 200-500 人最终推荐。
+- [x] 补充详情 wave 恢复规则：capture 已归档不重抓、dry-run clean 后等待 apply、apply ledger 防重复写入。
+
+## 下一步：V2 工程实施计划
+
+- [x] 使用 `superpowers:writing-plans` 将 V2 设计转成工程实施计划。
+- [x] 新增计划文档 `docs/superpowers/plans/2026-05-14-maimai-ai-infra-v2-cold-start-campaign.md`。
+- [x] 计划拆分为 campaign helper、V2 strategy/search units、runner resume、wave import ledger、list/detailed scoring、human review、detail wave 和最终验证。
+- [x] 自检计划文档无占位词、关键路径正确，并汇报执行选项。
+
+## Subagent 执行进度
+
+- [x] Task 1：Campaign helper 和数据安全边界，提交 `6a48ca6` + review fix `84bcdb9`，spec review 通过，code quality review 通过。
+- [x] Task 2：原子 page raw、事件日志和 resume 状态重建，提交 `8ebe867` + review fix `72cf168` + re-review fix `e382c00`，spec review 通过，code quality review 通过；验证 `python -m pytest tests/test_maimai_ai_infra_campaign.py -q` -> `16 passed`，`python -m py_compile scripts/maimai_ai_infra_campaign.py` -> PASS，`git diff --check` -> PASS。
+- [x] Task 3：V2 策略配置和 Search Unit 编译，提交 `a259f66` + spec fix `fbcd1b2` + quality fix `388bf82`，spec review 通过，code quality review 通过；验证 `python -m pytest tests/test_maimai_ai_infra_strategy.py -q` -> `11 passed`，`python -m py_compile scripts/maimai_ai_infra_search_plan.py` -> PASS，`git diff --check` -> PASS。
+- [x] Task 4：Runner page task、resume 和 runtime 切片，提交 `a3d6ac1` + quality fix `24ea8b4` + re-review fix `585802a`，spec review 通过，code quality review 通过；验证 `python -m pytest tests/test_maimai_ai_infra_runner.py -q` -> `22 passed`，`python -m pytest tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_runner.py -q` -> `38 passed`，`python -m py_compile scripts/maimai_ai_infra_search_runner.py` -> PASS，`git diff --check` -> PASS。
+- [x] Task 5：Wave contacts、import ledger 和 campaign pipeline，提交 `feac3ea` + spec fix `2057987` + quality fix `0475855`，spec review 通过，code quality review 通过；验证 `python -m pytest tests/test_maimai_ai_infra_pipeline.py -q` -> `12 passed`，`python -m pytest tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_pipeline.py -q` -> `28 passed`，`python -m py_compile scripts/maimai_ai_infra_campaign.py scripts/maimai_ai_infra_pipeline.py` -> PASS，`git diff --check` -> PASS。
+- [x] Task 6：List/Detailed scoring modes and reports，提交 `ef38dc6` + `4a43848` + `086705a` + `1d33d97` + `c70bd98` + `870b435` + `ed72ec1` + `cd09253` + `224b992` + `1c1f663` + `de29229`；spec review 通过，code quality review 通过；验证 `python -m pytest tests/test_maimai_ai_infra_strategy.py tests/test_maimai_ai_infra_pipeline.py -q` -> `39 passed`，`python -m py_compile scripts/maimai_ai_infra_rank.py scripts/maimai_ai_infra_pipeline.py` -> PASS，`git diff --check` -> PASS。
+- [x] Task 7：Human review input and detail wave targets，提交 `371c195` + quality fix `ff96e4c`；spec review 通过，code quality review 通过；验证 `python -m pytest tests/test_maimai_ai_infra_review.py tests/test_maimai_detail_targets.py -q` -> `11 passed`，`python -m pytest tests/test_maimai_ai_infra_pipeline.py -q` -> `14 passed`，`python -m py_compile scripts/maimai_ai_infra_review.py scripts/maimai_detail_targets.py` -> PASS，`git diff --check` -> PASS。
+- [x] Task 8：Detail wave progress and duplicate apply guard，提交 `312ac34` + quality fix `98f3203` + re-review fix `76e9d4d`；spec review 通过，code quality review 通过；验证 `python -m pytest tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_detail_import.py -q` -> `28 passed`，`python -m py_compile scripts/maimai_ai_infra_pipeline.py scripts/maimai_detail_import.py` -> PASS，`git diff --check` -> PASS；复查方全量验证 `python -m pytest tests scripts -q` -> `591 passed, 1 warning`。
+- [x] Task 9：Documentation, verification, and final review；已更新 V2 设计文档的 Implemented CLI Map，并完成聚焦、相关和全量回归。
+
+## Task 9 Documentation, Verification, and Final Review
+
+- [x] 确认当前断点：Task 1-8 已完成，剩余工作为 V2 设计文档 CLI 映射、聚焦验证、相关回归、全量回归和 Review 回填。
+- [x] 在 `docs/design-discussions/2026-05-14-maimai-ai-infra-talent-search-plan-v2.md` 增加“已实现 CLI 映射”，覆盖 `search_plan --out-units`、`search_runner --campaign-root --resume`、`pipeline run-campaign`、`detail_targets from-review`、`pipeline detail-wave dry-run/apply`。
+- [x] 运行聚焦验证：`python -m pytest tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_strategy.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_review.py tests/test_maimai_detail_targets.py -q` -> `97 passed`。
+- [x] 运行相关回归：`python -m pytest tests/test_maimai_search_api_spec.py tests/test_maimai_detail_import.py tests/test_maimai_detail_plan_server.py -q` -> `13 passed`；`python -m py_compile scripts/maimai_ai_infra_campaign.py scripts/maimai_ai_infra_search_plan.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_rank.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_review.py scripts/maimai_detail_targets.py scripts/maimai_detail_plan_server.py scripts/maimai_detail_import.py` -> PASS；`git diff --check` -> PASS。
+- [x] 运行全量回归：`python -m pytest tests scripts -q` -> `591 passed, 1 warning`；warning 为既有 `scripts/test_boss.py` event loop deprecation。
+- [x] 回填 Task 9 Review，标记最终验证状态。
+
+### Task 9 Review
+
+- 文档同步：`docs/design-discussions/2026-05-14-maimai-ai-infra-talent-search-plan-v2.md` 已新增“已实现 CLI 映射”，覆盖搜索计划、runner dry-run/resume、campaign wave 导入、人工审核转详情任务包、详情 wave dry-run/apply。
+- CLI 复核：只读复核确认文档映射与当前代码一致；`search_runner --campaign-root --resume` 实际需要配合 `--dry-run-template-only --units`，文档已写明。
+- 聚焦验证：`python -m pytest tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_strategy.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_review.py tests/test_maimai_detail_targets.py -q` -> `97 passed`。
+- 相关回归：`python -m pytest tests/test_maimai_search_api_spec.py tests/test_maimai_detail_import.py tests/test_maimai_detail_plan_server.py -q` -> `13 passed`。
+- 语法检查：`python -m py_compile scripts/maimai_ai_infra_campaign.py scripts/maimai_ai_infra_search_plan.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_rank.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_review.py scripts/maimai_detail_targets.py scripts/maimai_detail_plan_server.py scripts/maimai_detail_import.py` -> PASS。
+- 差异检查：`git diff --check` -> PASS。
+- 全量回归：`python -m pytest tests scripts -q` -> `591 passed, 1 warning`；warning 为既有 `scripts/test_boss.py` event loop deprecation。
+
+## 筛选条件更新
+
+- [x] 更新 V2 设计文档：毕业院校硬门槛改为 985/211/QS Top500/海外 Top500，专科和非重点不看。
+- [x] 更新 V2 设计文档：年龄默认搜索 `24-40`，`24-35` 最佳，`35-40` 第二梯队，`40+` 淘汰。
+- [x] 更新工程实施计划：V2 config 增加 `min_age=24/max_age=40`、`school_gate` 和 `age_bands`。
+- [x] 更新工程实施计划：list/detailed scoring 任务增加院校硬筛、年龄分层、`40+` 淘汰测试要求。
+
 # Task 14 Documentation - bundle 同步文档
 
 ## 计划
