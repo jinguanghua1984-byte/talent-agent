@@ -293,7 +293,7 @@ def test_write_initial_list_report_contains_funnel_and_coverage(tmp_path: Path):
     write_initial_list_report(
         out_path,
         shortlist={
-            "summary": {"A": 2, "B": 3, "C": 4, "娣樻卑": 5},
+            "summary": {"A": 2, "B": 3, "C": 4, "淘汰": 5},
             "grades": {
                 "A": [{"candidate_id": 1, "name": "Alice", "score": 90, "evidence": {"company": "瀛楄妭璺冲姩"}}],
                 "B": [{"candidate_id": 2, "name": "Bob", "score": 75, "evidence": {"company": "DeepSeek"}}],
@@ -309,7 +309,7 @@ def test_write_initial_list_report_contains_funnel_and_coverage(tmp_path: Path):
 
     text = out_path.read_text(encoding="utf-8-sig")
     assert "raw/page/wave" in text
-    assert "A/B/C/淘汰" in text
+    assert "A/B/C/淘汰: 2/3/4/5" in text
     assert "A Top 100" in text
     assert "B Top 150" in text
     assert "direction/company coverage" in text

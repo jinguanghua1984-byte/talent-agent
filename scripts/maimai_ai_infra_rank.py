@@ -120,38 +120,67 @@ def _contains_term(text: str, term: str) -> bool:
     return term in text
 
 
+def _normalized_text(text: str) -> str:
+    return text.replace(" ", "").lower()
+
+
+def _has_negated_school_term(education_text: str, token: str) -> bool:
+    normalized = _normalized_text(education_text)
+    token_norm = _normalized_text(token)
+    return any(
+        pattern in normalized
+        for pattern in (
+            f"非{token_norm}",
+            f"不是{token_norm}",
+            f"双非{token_norm}",
+            "双非",
+        )
+    )
+
+
 def _matches_top500_school(education_text: str) -> bool:
-    normalized = education_text.lower()
-    if any(marker.lower() in normalized for marker in ["qs前500", "世界前500"]):
+    normalized = _normalized_text(education_text)
+    if any(marker.lower().replace(" ", "") in normalized for marker in ("qs前500", "世界前500")):
         return True
-    if any(marker.lower() in normalized for marker in _TOP500_MARKERS):
-        return any(_contains_term(education_text, term) for term in _TOP500_CONTEXT_TERMS)
-    return False
+    if not any(marker.lower().replace(" ", "") in normalized for marker in ("Top500", "top500", "top 500")):
+        return False
+    return any(_contains_term(education_text, term) for term in _TOP500_CONTEXT_TERMS)
+
+
+def _positive_school_label_from_strategy(
+    strategy: dict[str, Any],
+    education_text: str,
+) -> str | None:
+    groups = strategy.get("education_groups", {})
+    if any(_contains_term(education_text, school) for school in groups.get("c9", [])):
+        return "C9"
+    if any(
+        _contains_term(education_text, school) for school in groups.get("top985", [])
+    ) or ("985" in education_text and not _has_negated_school_term(education_text, "985")):
+        return "985"
+    if any(
+        _contains_term(education_text, school) for school in groups.get("top211", [])
+    ) or ("211" in education_text and not _has_negated_school_term(education_text, "211")):
+        return "211"
+    if _matches_top500_school(education_text):
+        return "TOP500"
+    return None
 
 
 def _is_priority_school(strategy: dict[str, Any], candidate: Candidate, detail: CandidateDetail | None) -> bool:
     education_text = _education_text(candidate, detail)
-    groups = strategy.get("education_groups", {})
-    if any(_contains_term(education_text, term) for term in groups.get("c9", [])):
-        return True
-    if any(_contains_term(education_text, term) for term in groups.get("top985", [])) or "985" in education_text:
-        return True
-    if any(_contains_term(education_text, term) for term in groups.get("top211", [])) or "211" in education_text:
-        return True
-    return _matches_top500_school(education_text)
+    return _positive_school_label_from_strategy(strategy, education_text) is not None
 
 
 def _education_score(strategy: dict[str, Any], candidate: Candidate, detail: CandidateDetail | None) -> tuple[int, str]:
     education_text = _education_text(candidate, detail)
-    groups = strategy.get("education_groups", {})
-    if any(_contains_term(education_text, school) for school in groups.get("c9", [])):
+    label = _positive_school_label_from_strategy(strategy, education_text)
+    if label == "C9":
         return 10, "C9"
-    if any(_contains_term(education_text, school) for school in groups.get("top985", [])) or "985" in education_text:
+    if label == "985":
         return 8, "985"
-    if any(_contains_term(education_text, school) for school in groups.get("top211", [])) or "211" in education_text:
-        return 6, "211"
-    if _matches_top500_school(education_text):
-        return 6, "Top500"
+    if label in {"211", "TOP500"}:
+        return 6, label
     if any(_contains_term(education_text, term) for term in _SECONDARY_SCHOOL_TERMS):
         return 4, candidate.education or "本科及以上"
     return 0, candidate.education or ""
@@ -199,7 +228,8 @@ def score_candidate(
     if mode not in {"list", "detailed"}:
         raise ValueError("mode must be either 'list' or 'detailed'")
 
-    text = _candidate_text(candidate, detail)
+    source_detail = detail if mode == "detailed" else None
+    text = _candidate_text(candidate, source_detail)
     title = candidate.current_title or ""
     risk_flags: list[str] = []
     age_band = _age_band(candidate.age)
@@ -207,7 +237,7 @@ def score_candidate(
     if any(term and term.lower() in title.lower() for term in strategy.get("exclude_titles", [])):
         risk_flags.append("excluded_title")
 
-    education_text = _education_text(candidate, detail)
+    education_text = _education_text(candidate, source_detail)
     excluded_education_terms = set(strategy.get("exclude_education", [])) | _EXCLUDED_EDUCATION_TERMS
     if any(_contains_term(education_text, term) for term in excluded_education_terms):
         risk_flags.append("excluded_education")
@@ -220,11 +250,11 @@ def score_candidate(
     title_points, title_level = _title_score(title)
     keywords = [term for term in _tech_keywords(strategy) if term and term.lower() in text.lower()]
     tech_points = min(25, len(keywords) * 5)
-    education_points, education_level = _education_score(strategy, candidate, detail)
+    education_points, education_level = _education_score(strategy, candidate, source_detail)
     years_points = _years_score(candidate)
     score = company_points + title_points + tech_points + education_points + years_points
 
-    if not _is_priority_school(strategy, candidate, detail):
+    if not _is_priority_school(strategy, candidate, source_detail):
         risk_flags.append("school_not_priority")
     if candidate.age is not None and candidate.age > 40:
         risk_flags.append("age_over_40")
@@ -285,7 +315,12 @@ def score_candidate(
     }
 
 
-def rank_candidates(db_path: str | Path, strategy: dict[str, Any], limit: int = 5000) -> dict[str, Any]:
+def rank_candidates(
+    db_path: str | Path,
+    strategy: dict[str, Any],
+    limit: int = 5000,
+    mode: str = "list",
+) -> dict[str, Any]:
     db = TalentDB(db_path)
     try:
         page = db.search(
@@ -295,7 +330,12 @@ def rank_candidates(db_path: str | Path, strategy: dict[str, Any], limit: int = 
             page_size=limit,
         )
         scores = [
-            score_candidate(candidate, strategy, db.get_detail(candidate.id))
+            score_candidate(
+                candidate,
+                strategy,
+                db.get_detail(candidate.id) if mode == "detailed" else None,
+                mode=mode,
+            )
             for candidate in page.items
         ]
     finally:

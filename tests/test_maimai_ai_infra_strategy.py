@@ -269,6 +269,7 @@ def test_ai_infra_score_grades_common_candidate_shapes():
         ),
         strategy,
         detail,
+        mode="detailed",
     )
     assert high["grade"] == "A"
     assert high["score"] >= 80
@@ -533,3 +534,77 @@ def test_score_candidate_top500_requires_context_to_pass_school_gate():
     assert "school_not_priority" in failing_qs["risk_flags"]
     assert failing_overseas["grade"] == "淘汰"
     assert "school_not_priority" in failing_overseas["risk_flags"]
+
+
+def test_score_candidate_negated_985_211_text_is_rejected():
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+
+    result = score_candidate(
+        Candidate(
+            id=108,
+            name="Negated School",
+            current_company="Seed",
+            current_title="AI Infra 宸ョ▼甯?",
+            education="非985 非211 普通本科",
+            work_years=6,
+            age=30,
+            skill_tags=("GPU", "vLLM"),
+        ),
+        strategy,
+        None,
+        mode="list",
+    )
+
+    assert result["grade"] == "淘汰"
+    assert "school_not_priority" in result["risk_flags"]
+
+
+def test_score_candidate_list_mode_ignores_detail_but_detailed_mode_uses_it():
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+    detail = CandidateDetail(
+        candidate_id=109,
+        education_experience=[{"school": "清华大学", "description": "985"}],
+        work_experience=[
+            {
+                "company": "字节跳动",
+                "title": "AI Infra 工程师",
+                "description": "大模型训练与推理平台",
+            }
+        ],
+    )
+
+    list_result = score_candidate(
+        Candidate(
+            id=109,
+            name="List Ignores Detail",
+            current_company="Seed",
+            current_title="AI Infra 宸ョ▼甯?",
+            education="普通本科",
+            work_years=6,
+            age=30,
+            skill_tags=("GPU", "vLLM"),
+        ),
+        strategy,
+        detail,
+        mode="list",
+    )
+    detailed_result = score_candidate(
+        Candidate(
+            id=109,
+            name="List Ignores Detail",
+            current_company="Seed",
+            current_title="AI Infra 宸ョ▼甯?",
+            education="普通本科",
+            work_years=6,
+            age=30,
+            skill_tags=("GPU", "vLLM"),
+        ),
+        strategy,
+        detail,
+        mode="detailed",
+    )
+
+    assert list_result["grade"] == "淘汰"
+    assert "school_not_priority" in list_result["risk_flags"]
+    assert detailed_result["grade"] != "淘汰"
+    assert "school_not_priority" not in detailed_result["risk_flags"]
