@@ -369,7 +369,19 @@ def run_campaign_wave(
 
 
 def _detail_result_is_clean(result: dict[str, Any]) -> bool:
-    return result.get("failed_jobs", 0) == 0 and result.get("unmatched", 0) == 0
+    return (
+        result.get("matched", 0) > 0
+        and result.get("failed_jobs", 0) == 0
+        and result.get("unmatched", 0) == 0
+    )
+
+
+def _detail_dry_run_status(result: dict[str, Any]) -> str:
+    if _detail_result_is_clean(result):
+        return "dry_run_clean"
+    if result.get("matched", 0) == 0 and result.get("failed_jobs", 0) == 0 and result.get("unmatched", 0) == 0:
+        return "dry_run_empty"
+    return "dry_run_dirty"
 
 
 def _detail_state_extra(
@@ -406,7 +418,7 @@ def run_detail_wave_dry_run(
     report_path = paths.reports_dir / f"detail-wave-{wave}-dry-run.md"
     result = dry_run_capture(capture_path, target_db, report_path)
     result_path = report_path.with_suffix(".json")
-    status = "dry_run_clean" if _detail_result_is_clean(result) else "dry_run_dirty"
+    status = _detail_dry_run_status(result)
     mark_detail_wave_state(
         paths,
         wave,
@@ -434,28 +446,87 @@ def run_detail_wave_apply(
     paths = ensure_campaign(campaign_root)
     if import_ledger_has_detail_apply(paths, wave):
         raise RuntimeError(f"detail wave already applied: {wave}")
+    if confirm != CONFIRM_TEXT:
+        raise ValueError(f"apply requires confirm text: {CONFIRM_TEXT}")
 
     target_db = Path(db_path) if db_path is not None else paths.db
     capture_path = Path(capture_file)
     preflight = build_dry_run(capture_path, target_db)
     report_path = paths.reports_dir / f"detail-wave-{wave}-apply.md"
     result_path = paths.reports_dir / f"detail-wave-{wave}-apply.json"
+    if preflight.get("matched", 0) == 0 and preflight.get("failed_jobs", 0) == 0 and preflight.get("unmatched", 0) == 0:
+        noop_report_path = paths.reports_dir / f"detail-wave-{wave}-apply-noop.md"
+        noop_result = dry_run_capture(capture_path, target_db, noop_report_path)
+        noop_result_path = noop_report_path.with_suffix(".json")
+        mark_detail_wave_state(
+            paths,
+            wave,
+            "apply_noop",
+            _detail_state_extra(noop_result, capture_path, noop_report_path, noop_result_path),
+        )
+        return {
+            "status": "apply_noop",
+            "result": noop_result,
+            "report": noop_report_path,
+            "result_json": noop_result_path,
+            "db": target_db,
+        }
     if not _detail_result_is_clean(preflight):
+        blocked_report_path = paths.reports_dir / f"detail-wave-{wave}-apply-blocked.md"
+        blocked_result = dry_run_capture(capture_path, target_db, blocked_report_path)
+        blocked_result_path = blocked_report_path.with_suffix(".json")
         mark_detail_wave_state(
             paths,
             wave,
             "apply_blocked",
-            _detail_state_extra(preflight, capture_path, report_path, result_path),
+            _detail_state_extra(blocked_result, capture_path, blocked_report_path, blocked_result_path),
         )
         raise RuntimeError(f"detail wave apply requires clean dry-run: {wave}")
 
-    result = apply_capture(
-        capture_path,
-        target_db,
-        report_path=report_path,
-        result_path=result_path,
-        confirm=confirm,
+    append_import_ledger(
+        paths,
+        {
+            "wave_id": wave,
+            "action": "detail_apply",
+            "status": "started",
+            "matched": preflight.get("matched", 0),
+            "report": str(report_path),
+            "result": str(result_path),
+            "db": str(target_db),
+        },
     )
+    try:
+        result = apply_capture(
+            capture_path,
+            target_db,
+            report_path=report_path,
+            result_path=result_path,
+            confirm=confirm,
+        )
+    except Exception as exc:
+        failed_report_path = paths.reports_dir / f"detail-wave-{wave}-apply-failed.md"
+        failed_result = dry_run_capture(capture_path, target_db, failed_report_path)
+        failed_result_path = failed_report_path.with_suffix(".json")
+        append_import_ledger(
+            paths,
+            {
+                "wave_id": wave,
+                "action": "detail_apply",
+                "status": "failed",
+                "matched": failed_result.get("matched", 0),
+                "error": str(exc),
+                "report": str(failed_report_path),
+                "result": str(failed_result_path),
+                "db": str(target_db),
+            },
+        )
+        mark_detail_wave_state(
+            paths,
+            wave,
+            "apply_failed",
+            _detail_state_extra(failed_result, capture_path, failed_report_path, failed_result_path),
+        )
+        raise
     append_import_ledger(
         paths,
         {

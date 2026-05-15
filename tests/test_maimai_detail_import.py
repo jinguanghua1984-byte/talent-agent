@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
-from scripts.maimai_detail_import import apply_capture, dry_run_capture
+import pytest
+
+from scripts.maimai_detail_import import CONFIRM_TEXT, apply_capture, dry_run_capture
 from scripts.talent_db import TalentDB
 
 
@@ -56,6 +58,30 @@ def _write_capture(path: Path) -> None:
         "details": [],
         "requests": [],
         "contacts": [],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _write_no_work_capture(path: Path) -> None:
+    payload = {
+        "exportTime": "2026-05-10T00:00:00.000Z",
+        "metadata": {"detail_mode": "batch_replay"},
+        "detailJobs": [
+            {
+                "id": "166812124",
+                "status": "done",
+                "detail": {
+                    "basic": {
+                        "id": "166812124",
+                        "name": "鑼冮潚",
+                        "company": "OpenAI",
+                        "position": "AI PM",
+                        "edu": [{"school": "Fudan", "major": "CS"}],
+                    }
+                },
+            }
+        ],
+        "details": [],
     }
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
@@ -138,6 +164,36 @@ def test_apply_writes_only_matched_details_with_confirmation(tmp_path: Path):
         assert capture["platform_id"] == "166812124"
         assert capture["capture_file"] == str(capture_path)
         assert capture["mode"] == "batch_replay"
+    finally:
+        db.close()
+
+
+def test_apply_rolls_back_when_detail_verification_fails(tmp_path: Path):
+    db_path = tmp_path / "talent.db"
+    db = TalentDB(db_path)
+    candidate_id = db.ingest(
+        {
+            "name": "鑼冮潚",
+            "current_company": "OldCo",
+            "current_title": "PM",
+            "platform_id": "166812124",
+        },
+        platform="maimai",
+    )
+    db.close()
+
+    capture_path = tmp_path / "capture.json"
+    _write_no_work_capture(capture_path)
+
+    with pytest.raises(RuntimeError, match="detail verification failed"):
+        apply_capture(capture_path, db_path, confirm=CONFIRM_TEXT)
+
+    db = TalentDB(db_path)
+    try:
+        candidate = db.get(candidate_id)
+        assert candidate is not None
+        assert candidate.data_level != "detailed"
+        assert db.get_detail(candidate_id) is None
     finally:
         db.close()
 

@@ -94,6 +94,52 @@ def _write_detail_capture(
     )
 
 
+def _write_empty_detail_capture(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "exportTime": "2026-05-15T00:00:00.000Z",
+                "metadata": {"detail_mode": "batch_replay"},
+                "detailJobs": [],
+                "details": [],
+                "contacts": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_no_work_detail_capture(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "exportTime": "2026-05-15T00:00:00.000Z",
+                "metadata": {"detail_mode": "batch_replay"},
+                "detailJobs": [
+                    {
+                        "id": "166812124",
+                        "status": "done",
+                        "detail": {
+                            "basic": {
+                                "id": "166812124",
+                                "name": "Alice",
+                                "company": "OpenAI",
+                                "position": "AI PM",
+                                "edu": [{"school": "Fudan", "major": "CS"}],
+                            }
+                        },
+                    }
+                ],
+                "details": [],
+                "contacts": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_extract_contacts_payload_from_runner_result(tmp_path: Path):
     run_path = tmp_path / "run.json"
     out_path = tmp_path / "contacts.json"
@@ -321,7 +367,67 @@ def test_detail_wave_apply_rejects_unclean_capture(tmp_path: Path):
 
     progress = read_detail_progress(paths)
     assert progress["waves"]["wave-001"]["status"] == "apply_blocked"
+    assert Path(progress["waves"]["wave-001"]["report"]).exists()
+    assert Path(progress["waves"]["wave-001"]["result"]).exists()
     assert not import_ledger_has_detail_apply(paths, "wave-001")
+
+
+def test_detail_wave_apply_noops_empty_capture_without_completed_ledger(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    _make_detail_db(paths.db)
+    capture_path = tmp_path / "empty-capture.json"
+    _write_empty_detail_capture(capture_path)
+
+    result = run_detail_wave_apply(
+        campaign_root=paths.root,
+        wave="wave-001",
+        capture_file=capture_path,
+        db_path=paths.db,
+        confirm=CONFIRM_TEXT,
+    )
+
+    progress = read_detail_progress(paths)
+    assert result["status"] == "apply_noop"
+    assert result["result"]["matched"] == 0
+    assert progress["waves"]["wave-001"]["status"] == "apply_noop"
+    assert Path(progress["waves"]["wave-001"]["report"]).exists()
+    assert not import_ledger_has_detail_apply(paths, "wave-001")
+
+
+def test_detail_wave_apply_records_failed_state_when_import_rolls_back(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    candidate_id = _make_detail_db(paths.db)
+    capture_path = tmp_path / "no-work-capture.json"
+    _write_no_work_detail_capture(capture_path)
+
+    with pytest.raises(RuntimeError, match="detail verification failed"):
+        run_detail_wave_apply(
+            campaign_root=paths.root,
+            wave="wave-001",
+            capture_file=capture_path,
+            db_path=paths.db,
+            confirm=CONFIRM_TEXT,
+        )
+
+    progress = read_detail_progress(paths)
+    ledger = [
+        json.loads(line)
+        for line in paths.import_ledger.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert [item["status"] for item in ledger] == ["started", "failed"]
+    assert progress["waves"]["wave-001"]["status"] == "apply_failed"
+    assert Path(progress["waves"]["wave-001"]["report"]).exists()
+    assert not import_ledger_has_detail_apply(paths, "wave-001")
+
+    db = TalentDB(paths.db)
+    try:
+        candidate = db.get(candidate_id)
+        assert candidate is not None
+        assert candidate.data_level != "detailed"
+        assert db.get_detail(candidate_id) is None
+    finally:
+        db.close()
 
 
 def test_detail_wave_cli_dry_run_returns_zero_and_updates_progress(tmp_path: Path):

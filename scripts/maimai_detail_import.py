@@ -297,7 +297,7 @@ def apply_capture(
     try:
         for item in result["matches"]:
             candidate_id = int(item["candidate_id"])
-            db.enrich(candidate_id, item["detail_data"])
+            db._enrich_no_commit(candidate_id, item["detail_data"])
             detail = db.get_detail(candidate_id)
             candidate = db.get(candidate_id)
             if (
@@ -309,6 +309,10 @@ def apply_capture(
                 raise RuntimeError(f"detail verification failed for candidate {candidate_id}")
             written += 1
             verified.append(candidate_id)
+        db._conn.commit()
+    except Exception:
+        db._conn.rollback()
+        raise
     finally:
         db.close()
 
