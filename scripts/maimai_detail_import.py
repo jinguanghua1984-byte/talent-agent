@@ -215,9 +215,30 @@ def _write_report(path: Path, title: str, result: dict[str, Any]) -> None:
             "- {name} (`{platform_id}`): work {old_work}->{new_work}, "
             "edu {old_education}->{new_education}, project {old_project}->{new_project}".format(**item)
         )
+    apply_blockers = result.get("apply_blockers") or []
+    if apply_blockers:
+        lines.extend(["", "## Apply blockers", ""])
+        for item in apply_blockers:
+            lines.append(
+                "- {name} (`{platform_id}`): {blockers}".format(
+                    name=item.get("name", ""),
+                    platform_id=item.get("platform_id", ""),
+                    blockers=", ".join(item.get("blockers") or []),
+                )
+            )
     for item in result.get("unmatched_entries", []):
         lines.append(f"- 未匹配 `{item['platform_id']}`")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
+
+
+def _apply_blockers_for_detail(detail_data: dict[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    if not detail_data.get("work_experience"):
+        blockers.append("missing_work_experience")
+    raw_data = detail_data.get("raw_data") or {}
+    if "maimai_detail_capture" not in raw_data:
+        blockers.append("missing_capture_metadata")
+    return blockers
 
 
 def build_dry_run(capture_file: Path, db_path: Path) -> dict[str, Any]:
@@ -227,6 +248,7 @@ def build_dry_run(capture_file: Path, db_path: Path) -> dict[str, Any]:
     db = TalentDB(db_path)
     try:
         matches = []
+        apply_blockers = []
         unmatched_entries = []
         for entry in entries:
             candidate = _find_candidate(db, entry.platform_id)
@@ -241,27 +263,39 @@ def build_dry_run(capture_file: Path, db_path: Path) -> dict[str, Any]:
                 "education": len(mapped["education_experience"] or []),
                 "project": len(mapped["project_experience"] or []),
             }
-            matches.append(
-                {
-                    "candidate_id": int(candidate["candidate_id"]),
-                    "name": candidate["name"],
-                    "platform_id": entry.platform_id,
-                    "profile_url": candidate.get("profile_url") or "",
-                    "old_work": old_counts["work"],
-                    "new_work": new_counts["work"],
-                    "old_education": old_counts["education"],
-                    "new_education": new_counts["education"],
-                    "old_project": old_counts["project"],
-                    "new_project": new_counts["project"],
-                    "detail_data": mapped,
-                }
-            )
+            candidate_id = int(candidate["candidate_id"])
+            match = {
+                "candidate_id": candidate_id,
+                "name": candidate["name"],
+                "platform_id": entry.platform_id,
+                "profile_url": candidate.get("profile_url") or "",
+                "old_work": old_counts["work"],
+                "new_work": new_counts["work"],
+                "old_education": old_counts["education"],
+                "new_education": new_counts["education"],
+                "old_project": old_counts["project"],
+                "new_project": new_counts["project"],
+                "detail_data": mapped,
+            }
+            blockers = _apply_blockers_for_detail(mapped)
+            if blockers:
+                match["apply_blockers"] = blockers
+                apply_blockers.append(
+                    {
+                        "candidate_id": candidate_id,
+                        "name": candidate["name"],
+                        "platform_id": entry.platform_id,
+                        "blockers": blockers,
+                    }
+                )
+            matches.append(match)
 
         return {
             "capture_file": str(capture_file),
             "matched": len(matches),
             "unmatched": len(unmatched_entries),
             "failed_jobs": failed_jobs,
+            "apply_blockers": apply_blockers,
             "matches": matches,
             "unmatched_entries": unmatched_entries,
         }

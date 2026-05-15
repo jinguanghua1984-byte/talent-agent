@@ -369,10 +369,14 @@ def run_campaign_wave(
 
 
 def _detail_result_is_clean(result: dict[str, Any]) -> bool:
+    matches = result.get("matches") or []
     return (
         result.get("matched", 0) > 0
         and result.get("failed_jobs", 0) == 0
         and result.get("unmatched", 0) == 0
+        and len(matches) == result.get("matched", 0)
+        and not result.get("apply_blockers")
+        and all((item.get("new_work") or 0) > 0 and not item.get("apply_blockers") for item in matches)
     )
 
 
@@ -401,6 +405,8 @@ def _detail_state_extra(
         extra["result"] = str(result_path)
     if "written" in result:
         extra["written"] = result.get("written", 0)
+    if result.get("apply_blockers"):
+        extra["apply_blockers"] = result.get("apply_blockers")
     return extra
 
 

@@ -120,6 +120,31 @@ def test_dry_run_matches_exact_platform_id_without_modifying_db(tmp_path: Path):
         db.close()
 
 
+def test_dry_run_flags_no_work_detail_as_apply_blocker(tmp_path: Path):
+    db_path = tmp_path / "talent.db"
+    db = TalentDB(db_path)
+    db.ingest(
+        {
+            "name": "Alice",
+            "current_company": "OldCo",
+            "current_title": "PM",
+            "platform_id": "166812124",
+        },
+        platform="maimai",
+    )
+    db.close()
+
+    capture_path = tmp_path / "capture.json"
+    report_path = tmp_path / "dry-run.md"
+    _write_no_work_capture(capture_path)
+
+    result = dry_run_capture(capture_path, db_path, report_path)
+
+    assert result["matched"] == 1
+    assert result["apply_blockers"][0]["blockers"] == ["missing_work_experience"]
+    assert "Apply blockers" in report_path.read_text(encoding="utf-8-sig")
+
+
 def test_apply_writes_only_matched_details_with_confirmation(tmp_path: Path):
     db_path = tmp_path / "talent.db"
     db = TalentDB(db_path)
