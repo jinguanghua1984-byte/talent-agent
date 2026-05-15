@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -238,6 +240,32 @@ def test_campaign_mode_writes_raw_pages_without_plan_or_out(tmp_path: Path):
     assert first["body"]["search"]["paginationParam"]["page"] == 1
     assert second["body"]["search"]["paginationParam"]["page"] == 2
     assert read_search_progress(paths)["units"]["unit-000001"]["pages"]["2"]["status"] == "completed"
+
+
+def test_search_runner_direct_script_entrypoint_supports_campaign_mode(tmp_path: Path):
+    campaign_root = tmp_path / "campaign"
+    units_path = tmp_path / "units.jsonl"
+    _write_units(units_path, [_unit("unit-000001", max_pages=1)])
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/maimai_ai_infra_search_runner.py",
+            "--campaign-root",
+            str(campaign_root),
+            "--units",
+            str(units_path),
+            "--dry-run-template-only",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    paths = ensure_campaign(campaign_root)
+    assert page_raw_path(paths, "unit-000001", 1).exists()
 
 
 def test_campaign_mode_resume_skips_existing_raw_page(tmp_path: Path):

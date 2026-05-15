@@ -71,6 +71,31 @@
 - [x] 更新工程实施计划：V2 config 增加 `min_age=24/max_age=40`、`school_gate` 和 `age_bands`。
 - [x] 更新工程实施计划：list/detailed scoring 任务增加院校硬筛、年龄分层、`40+` 淘汰测试要求。
 
+# AI Infra V2 Campaign Dry-Run（2026-05-15）
+
+> 目标：只执行离线 campaign dry-run，生成搜索计划、Search Units 和 page task 请求体 raw；不触发真实脉脉搜索，不写 DB。
+
+## 计划
+
+- [x] 复核工作树和入口参数，确认 `data/campaigns/` 已被 `.gitignore` 忽略。
+- [x] 创建 campaign root：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/`。
+- [x] 生成 `search-plan.json` 和 `search-units.jsonl`。
+- [x] 执行 runner `--dry-run-template-only --campaign-root --units --resume`，限制首轮 dry-run 范围，验证请求体 patch、raw 落盘和 resume 行为。
+- [x] 检查 dry-run 产物统计：`search-units.jsonl` 共 450 个 unit；`wave-001` 本轮 dry-run 已落盘 13 个 page raw，其中 1 页来自 CLI import 路径诊断，12 页来自修复后的正式 direct-script dry-run；样本请求体不含禁用字段 `age`，包含 `min_age=24/max_age=40`。
+- [x] 运行必要聚焦测试和 `git diff --check`：`python -m pytest tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_pipeline.py -q` -> `58 passed`；`python -m py_compile scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_pipeline.py` -> PASS；`git diff --check` -> PASS。
+- [x] 运行全量回归：`python -m pytest tests scripts -q` -> `592 passed, 1 warning`；warning 为既有 `scripts/test_boss.py` event loop deprecation。
+- [x] 写入 Review。
+
+## Review
+
+- 生成 campaign root：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/`；该目录被 `.gitignore` 忽略，未进入待提交文件。
+- 生成计划产物：`search-plan.json` 和 `search-units.jsonl`；Search Units 共 450 个，`wave-001` 覆盖 40 个 unit。
+- dry-run 产物：`raw/search/` 已落盘 13 个 page raw；`reports/search-runner-dry-run-wave-001-summary.json` 记录正式 dry-run 写入 12 页，`tasks_pending=119`，`units_seen=40`。
+- 字段检查：样本请求体 `status=dry-run-template-only`，`query_relation=1`，`min_age=24`，`max_age=40`，不含禁用字段 `age`。
+- 中途修复：直接运行 `python scripts/maimai_ai_infra_search_runner.py ...` 初次报 `ModuleNotFoundError: scripts.maimai_ai_infra_campaign`；已按 TDD 补子进程红测并给 runner 增加直接脚本入口路径保护，同类 `pipeline` 和 `detail_targets` 已有保护，无需改动。
+- 错误沉淀：已按项目规则追加 `memory/error-log.md` 一行，记录 direct-script import path 问题。
+- 验证：runner 直接入口红测修复后通过；受影响模块回归 `58 passed`；全量回归 `592 passed, 1 warning`；`git diff --check` PASS。
+
 # Task 14 Documentation - bundle 同步文档
 
 ## 计划
