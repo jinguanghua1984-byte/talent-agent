@@ -116,12 +116,16 @@ _TOP500_PHRASES = [
 ]
 _SECONDARY_SCHOOL_TERMS = ["博士", "硕士", "本科"]
 _EXCLUDED_EDUCATION_TERMS = {"大专", "专科", "junior college", "juniorcollege"}
-_NEGATOR_RE = re.compile(r"不是|非|not\b|non(?:-|\b)", re.IGNORECASE)
-_DIRECT_NEGATOR_RE = re.compile(r"(不是|非|not\b|non(?:-|\b))\s*$", re.IGNORECASE)
+_NEGATOR_PATTERN = r"不是|非|not\b|non(?:-|\b)|neither\b"
+_NEGATOR_RE = re.compile(_NEGATOR_PATTERN, re.IGNORECASE)
+_DIRECT_NEGATOR_RE = re.compile(rf"(?:{_NEGATOR_PATTERN})\s*$", re.IGNORECASE)
 _STRONG_EDUCATION_BOUNDARY_RE = re.compile(r"[，,；;\n。]")
-_LIST_CONNECTOR_AT_END_RE = re.compile(r"(?:[/、]|和|或|及|与|\b(?:and|or)\b)\s*$", re.IGNORECASE)
+_LIST_CONNECTOR_AT_END_RE = re.compile(
+    r"(?:[/、]|和|或|及|与|且|并|又|也|\b(?:and|or|nor)\b)\s*$",
+    re.IGNORECASE,
+)
 _NEGATED_LIST_CONTINUATION_AT_END_RE = re.compile(r"(?:985|211)\s*(?:不是|非)\s*$", re.IGNORECASE)
-_NEGATOR_LEFT_BOUNDARIES = set("（([{、/，,；;。和或及与也")
+_NEGATOR_LEFT_BOUNDARIES = set("（([{、/，,；;。和或及与且并又也既")
 
 
 def _education_text(candidate: Candidate, detail: CandidateDetail | None) -> str:

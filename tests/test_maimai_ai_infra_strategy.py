@@ -571,8 +571,12 @@ def test_score_candidate_compressed_negated_school_lists_are_rejected():
         "非985不是211本科",
         "不是985也不是211本科",
         "非985也非211本科",
+        "非985且非211本科",
+        "非985并非211本科",
+        "既不是985也不是211本科",
         "not QS Top500 or overseas Top500 university",
         "not QS Top500 and overseas Top500 university",
+        "neither QS Top500 nor overseas Top500 university",
         "双非（非985/211）本科",
     ]
 
@@ -740,6 +744,7 @@ def test_score_candidate_mixed_local_negation_keeps_later_priority_school():
         "非211本科，211硕士",
         "非QS Top500本科，QS Top500硕士",
         "非清华大学本科，清华大学硕士",
+        "not QS Top500 university, overseas Top500 graduate",
     ]
 
     for idx, education in enumerate(mixed_cases, start=140):
