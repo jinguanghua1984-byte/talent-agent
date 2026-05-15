@@ -117,7 +117,7 @@ def append_import_ledger(paths: CampaignPaths, item: dict[str, Any]) -> None:
     append_jsonl(paths.import_ledger, ledger_item)
 
 
-def import_ledger_has_apply(paths: CampaignPaths, wave_id: str) -> bool:
+def import_ledger_has_completed_action(paths: CampaignPaths, wave_id: str, action: str) -> bool:
     if not paths.import_ledger.exists():
         return False
     for line_number, line in enumerate(paths.import_ledger.read_text(encoding="utf-8").splitlines(), start=1):
@@ -131,11 +131,39 @@ def import_ledger_has_apply(paths: CampaignPaths, wave_id: str) -> bool:
             raise ValueError(f"malformed import ledger line {line_number}: expected object")
         if (
             item.get("wave_id") == wave_id
-            and item.get("action") == "apply"
+            and item.get("action") == action
             and item.get("status") == "completed"
         ):
             return True
     return False
+
+
+def import_ledger_has_apply(paths: CampaignPaths, wave_id: str) -> bool:
+    return import_ledger_has_completed_action(paths, wave_id, "apply")
+
+
+def import_ledger_has_detail_apply(paths: CampaignPaths, wave_id: str) -> bool:
+    return import_ledger_has_completed_action(paths, wave_id, "detail_apply")
+
+
+def read_detail_progress(paths: CampaignPaths) -> dict[str, Any]:
+    if not paths.detail_progress.exists():
+        return {"campaign_id": paths.campaign_id, "waves": {}}
+    return json.loads(paths.detail_progress.read_text(encoding="utf-8-sig"))
+
+
+def mark_detail_wave_state(
+    paths: CampaignPaths,
+    wave_id: str,
+    status: str,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    progress = read_detail_progress(paths)
+    wave_state = {"status": status, "updated_at": datetime.now(UTC).isoformat(timespec="seconds")}
+    if extra:
+        wave_state.update(extra)
+    progress.setdefault("waves", {})[wave_id] = wave_state
+    atomic_write_json(paths.detail_progress, progress)
 
 
 def mark_page_completed(

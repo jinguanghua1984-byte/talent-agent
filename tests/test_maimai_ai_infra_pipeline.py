@@ -8,20 +8,90 @@ from scripts.maimai_ai_infra_campaign import (
     append_import_ledger,
     ensure_campaign,
     import_ledger_has_apply,
+    import_ledger_has_detail_apply,
     mark_page_completed,
+    mark_detail_wave_state,
+    read_detail_progress,
 )
 from scripts.maimai_ai_infra_pipeline import (
     build_final_report,
     extract_contacts_payload,
     extract_wave_contacts_from_pages,
+    run_detail_wave_apply,
+    run_detail_wave_dry_run,
     run_campaign_wave,
     run_pipeline,
     select_detail_candidate_ids,
     write_final_search_report,
     write_initial_list_report,
 )
+from scripts.maimai_detail_import import CONFIRM_TEXT
 from scripts.talent_models import IngestResult
 from scripts.talent_db import TalentDB
+
+
+def _make_detail_db(path: Path) -> int:
+    db = TalentDB(path)
+    try:
+        return db.ingest(
+            {
+                "name": "Alice",
+                "current_company": "OldCo",
+                "current_title": "AI PM",
+                "platform_id": "166812124",
+                "profile_url": "https://maimai.cn/u/166812124",
+            },
+            platform="maimai",
+        )
+    finally:
+        db.close()
+
+
+def _write_detail_capture(
+    path: Path,
+    *,
+    include_unmatched: bool = False,
+    include_failed: bool = False,
+) -> None:
+    jobs = [
+        {
+            "id": "166812124",
+            "status": "done",
+            "detail": {
+                "basic": {
+                    "id": "166812124",
+                    "name": "Alice",
+                    "company": "OpenAI",
+                    "position": "AI PM",
+                    "exp": [{"company": "OpenAI", "position": "AI PM"}],
+                    "edu": [{"school": "Fudan", "major": "CS"}],
+                }
+            },
+        }
+    ]
+    if include_unmatched:
+        jobs.append(
+            {
+                "id": "unmatched-1",
+                "status": "done",
+                "detail": {"basic": {"id": "unmatched-1", "name": "Unknown"}},
+            }
+        )
+    if include_failed:
+        jobs.append({"id": "failed-1", "status": "failed", "errors": ["403"]})
+    path.write_text(
+        json.dumps(
+            {
+                "exportTime": "2026-05-15T00:00:00.000Z",
+                "metadata": {"detail_mode": "batch_replay"},
+                "detailJobs": jobs,
+                "details": [],
+                "contacts": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_extract_contacts_payload_from_runner_result(tmp_path: Path):
@@ -134,6 +204,148 @@ def test_import_ledger_rejects_malformed_json_with_line_number(tmp_path: Path):
 
     with pytest.raises(ValueError, match="malformed import ledger line 2"):
         import_ledger_has_apply(paths, "wave-001")
+
+
+def test_detail_wave_progress_records_recovery_state(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+
+    mark_detail_wave_state(paths, "wave-001", "dry_run_clean", {"matched": 100})
+
+    progress = read_detail_progress(paths)
+    assert progress["campaign_id"] == paths.campaign_id
+    assert progress["waves"]["wave-001"]["status"] == "dry_run_clean"
+    assert progress["waves"]["wave-001"]["matched"] == 100
+    assert "updated_at" in progress["waves"]["wave-001"]
+
+
+def test_detail_wave_dry_run_updates_progress_and_reports_clean_status(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    _make_detail_db(paths.db)
+    capture_path = tmp_path / "capture.json"
+    _write_detail_capture(capture_path)
+
+    result = run_detail_wave_dry_run(
+        campaign_root=paths.root,
+        wave="wave-001",
+        capture_file=capture_path,
+        db_path=paths.db,
+    )
+
+    progress = read_detail_progress(paths)
+    assert result["status"] == "dry_run_clean"
+    assert result["result"]["matched"] == 1
+    assert result["result"]["unmatched"] == 0
+    assert result["result"]["failed_jobs"] == 0
+    assert progress["waves"]["wave-001"]["status"] == "dry_run_clean"
+    assert progress["waves"]["wave-001"]["matched"] == 1
+    assert progress["waves"]["wave-001"]["unmatched"] == 0
+    assert (paths.reports_dir / "detail-wave-wave-001-dry-run.md").exists()
+
+
+def test_detail_wave_dry_run_marks_dirty_when_capture_is_not_clean(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    _make_detail_db(paths.db)
+    capture_path = tmp_path / "capture.json"
+    _write_detail_capture(capture_path, include_unmatched=True, include_failed=True)
+
+    result = run_detail_wave_dry_run(
+        campaign_root=paths.root,
+        wave="wave-001",
+        capture_file=capture_path,
+        db_path=paths.db,
+    )
+
+    progress = read_detail_progress(paths)
+    assert result["status"] == "dry_run_dirty"
+    assert result["result"]["matched"] == 1
+    assert result["result"]["unmatched"] == 1
+    assert result["result"]["failed_jobs"] == 1
+    assert progress["waves"]["wave-001"]["status"] == "dry_run_dirty"
+
+
+def test_detail_wave_apply_writes_ledger_and_blocks_duplicate_apply(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    candidate_id = _make_detail_db(paths.db)
+    capture_path = tmp_path / "capture.json"
+    _write_detail_capture(capture_path)
+
+    result = run_detail_wave_apply(
+        campaign_root=paths.root,
+        wave="wave-001",
+        capture_file=capture_path,
+        db_path=paths.db,
+        confirm=CONFIRM_TEXT,
+    )
+
+    progress = read_detail_progress(paths)
+    assert result["status"] == "apply_completed"
+    assert result["result"]["written"] == 1
+    assert import_ledger_has_detail_apply(paths, "wave-001")
+    assert progress["waves"]["wave-001"]["status"] == "apply_completed"
+    assert (paths.reports_dir / "detail-wave-wave-001-apply.md").exists()
+
+    db = TalentDB(paths.db)
+    try:
+        candidate = db.get(candidate_id)
+        detail = db.get_detail(candidate_id)
+        assert candidate is not None
+        assert candidate.data_level == "detailed"
+        assert detail is not None
+    finally:
+        db.close()
+
+    with pytest.raises(RuntimeError, match="already applied"):
+        run_detail_wave_apply(
+            campaign_root=paths.root,
+            wave="wave-001",
+            capture_file=capture_path,
+            db_path=paths.db,
+            confirm=CONFIRM_TEXT,
+        )
+
+
+def test_detail_wave_apply_rejects_unclean_capture(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    _make_detail_db(paths.db)
+    capture_path = tmp_path / "capture.json"
+    _write_detail_capture(capture_path, include_unmatched=True, include_failed=True)
+
+    with pytest.raises(RuntimeError, match="requires clean dry-run"):
+        run_detail_wave_apply(
+            campaign_root=paths.root,
+            wave="wave-001",
+            capture_file=capture_path,
+            db_path=paths.db,
+            confirm=CONFIRM_TEXT,
+        )
+
+    progress = read_detail_progress(paths)
+    assert progress["waves"]["wave-001"]["status"] == "apply_blocked"
+    assert not import_ledger_has_detail_apply(paths, "wave-001")
+
+
+def test_detail_wave_cli_dry_run_returns_zero_and_updates_progress(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    _make_detail_db(paths.db)
+    capture_path = tmp_path / "capture.json"
+    _write_detail_capture(capture_path)
+
+    assert pipeline.main(
+        [
+            "detail-wave",
+            "dry-run",
+            "--campaign-root",
+            str(paths.root),
+            "--wave",
+            "wave-001",
+            "--capture-file",
+            str(capture_path),
+            "--db",
+            str(paths.db),
+        ]
+    ) == 0
+
+    assert read_detail_progress(paths)["waves"]["wave-001"]["status"] == "dry_run_clean"
 
 
 def test_run_campaign_wave_dry_run_writes_contacts_and_report(tmp_path: Path):

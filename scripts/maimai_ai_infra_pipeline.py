@@ -17,12 +17,15 @@ from scripts.maimai_ai_infra_campaign import (
     append_import_ledger,
     ensure_campaign,
     import_ledger_has_apply,
+    import_ledger_has_detail_apply,
     load_completed_pages,
+    mark_detail_wave_state,
     page_raw_path,
 )
 from scripts.maimai_ai_infra_rank import rank_candidates
 from scripts.maimai_ai_infra_search_plan import build_plan, build_search_units, load_strategy
 from scripts.maimai_ai_infra_search_runner import DEFAULT_TEMPLATE, build_dry_run_result
+from scripts.maimai_detail_import import CONFIRM_TEXT, apply_capture, build_dry_run, dry_run_capture
 from scripts.maimai_detail_targets import export_targets
 from scripts.talent_library import (
     _build_import_candidates,
@@ -365,6 +368,122 @@ def run_campaign_wave(
     }
 
 
+def _detail_result_is_clean(result: dict[str, Any]) -> bool:
+    return result.get("failed_jobs", 0) == 0 and result.get("unmatched", 0) == 0
+
+
+def _detail_state_extra(
+    result: dict[str, Any],
+    capture_file: Path,
+    report_path: Path,
+    result_path: Path | None = None,
+) -> dict[str, Any]:
+    extra = {
+        "capture_file": str(capture_file),
+        "report": str(report_path),
+        "matched": result.get("matched", 0),
+        "unmatched": result.get("unmatched", 0),
+        "failed_jobs": result.get("failed_jobs", 0),
+    }
+    if result_path is not None:
+        extra["result"] = str(result_path)
+    if "written" in result:
+        extra["written"] = result.get("written", 0)
+    return extra
+
+
+def run_detail_wave_dry_run(
+    campaign_root: str | Path,
+    wave: str,
+    capture_file: str | Path,
+    db_path: str | Path | None = None,
+) -> dict[str, Any]:
+    if not wave:
+        raise ValueError("wave is required")
+    paths = ensure_campaign(campaign_root)
+    target_db = Path(db_path) if db_path is not None else paths.db
+    capture_path = Path(capture_file)
+    report_path = paths.reports_dir / f"detail-wave-{wave}-dry-run.md"
+    result = dry_run_capture(capture_path, target_db, report_path)
+    result_path = report_path.with_suffix(".json")
+    status = "dry_run_clean" if _detail_result_is_clean(result) else "dry_run_dirty"
+    mark_detail_wave_state(
+        paths,
+        wave,
+        status,
+        _detail_state_extra(result, capture_path, report_path, result_path),
+    )
+    return {
+        "status": status,
+        "result": result,
+        "report": report_path,
+        "result_json": result_path,
+        "db": target_db,
+    }
+
+
+def run_detail_wave_apply(
+    campaign_root: str | Path,
+    wave: str,
+    capture_file: str | Path,
+    db_path: str | Path | None = None,
+    confirm: str = "",
+) -> dict[str, Any]:
+    if not wave:
+        raise ValueError("wave is required")
+    paths = ensure_campaign(campaign_root)
+    if import_ledger_has_detail_apply(paths, wave):
+        raise RuntimeError(f"detail wave already applied: {wave}")
+
+    target_db = Path(db_path) if db_path is not None else paths.db
+    capture_path = Path(capture_file)
+    preflight = build_dry_run(capture_path, target_db)
+    report_path = paths.reports_dir / f"detail-wave-{wave}-apply.md"
+    result_path = paths.reports_dir / f"detail-wave-{wave}-apply.json"
+    if not _detail_result_is_clean(preflight):
+        mark_detail_wave_state(
+            paths,
+            wave,
+            "apply_blocked",
+            _detail_state_extra(preflight, capture_path, report_path, result_path),
+        )
+        raise RuntimeError(f"detail wave apply requires clean dry-run: {wave}")
+
+    result = apply_capture(
+        capture_path,
+        target_db,
+        report_path=report_path,
+        result_path=result_path,
+        confirm=confirm,
+    )
+    append_import_ledger(
+        paths,
+        {
+            "wave_id": wave,
+            "action": "detail_apply",
+            "status": "completed",
+            "matched": result.get("matched", 0),
+            "written": result.get("written", 0),
+            "report": str(report_path),
+            "result": str(result_path),
+            "db": str(target_db),
+        },
+    )
+    mark_detail_wave_state(
+        paths,
+        wave,
+        "apply_completed",
+        _detail_state_extra(result, capture_path, report_path, result_path),
+    )
+    return {
+        "status": "apply_completed",
+        "result": result,
+        "report": report_path,
+        "result_json": result_path,
+        "db": target_db,
+    }
+
+
 def run_pipeline(
     config: Path,
     db_path: Path,
@@ -476,6 +595,19 @@ def main(argv: list[str] | None = None) -> int:
     campaign_parser.add_argument("--wave", required=True)
     campaign_parser.add_argument("--db")
     campaign_parser.add_argument("--apply", action="store_true")
+    detail_parser = subparsers.add_parser("detail-wave")
+    detail_subparsers = detail_parser.add_subparsers(dest="detail_command", required=True)
+    detail_dry = detail_subparsers.add_parser("dry-run")
+    detail_dry.add_argument("--campaign-root", required=True)
+    detail_dry.add_argument("--wave", required=True)
+    detail_dry.add_argument("--capture-file", required=True)
+    detail_dry.add_argument("--db")
+    detail_apply = detail_subparsers.add_parser("apply")
+    detail_apply.add_argument("--campaign-root", required=True)
+    detail_apply.add_argument("--wave", required=True)
+    detail_apply.add_argument("--capture-file", required=True)
+    detail_apply.add_argument("--db")
+    detail_apply.add_argument("--confirm", required=True, help=f"must equal: {CONFIRM_TEXT}")
     args = parser.parse_args(argv)
 
     if args.command == "run":
@@ -496,6 +628,24 @@ def main(argv: list[str] | None = None) -> int:
             apply=args.apply,
         )
         return 0
+    if args.command == "detail-wave":
+        if args.detail_command == "dry-run":
+            run_detail_wave_dry_run(
+                campaign_root=Path(args.campaign_root),
+                wave=args.wave,
+                capture_file=Path(args.capture_file),
+                db_path=Path(args.db) if args.db else None,
+            )
+            return 0
+        if args.detail_command == "apply":
+            run_detail_wave_apply(
+                campaign_root=Path(args.campaign_root),
+                wave=args.wave,
+                capture_file=Path(args.capture_file),
+                db_path=Path(args.db) if args.db else None,
+                confirm=args.confirm,
+            )
+            return 0
     return 1
 
 
