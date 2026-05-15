@@ -119,9 +119,9 @@ _EXCLUDED_EDUCATION_TERMS = {"大专", "专科", "junior college", "juniorcolleg
 _NEGATOR_RE = re.compile(r"不是|非|not\b|non(?:-|\b)", re.IGNORECASE)
 _DIRECT_NEGATOR_RE = re.compile(r"(不是|非|not\b|non(?:-|\b))\s*$", re.IGNORECASE)
 _STRONG_EDUCATION_BOUNDARY_RE = re.compile(r"[，,；;\n。]")
-_LIST_CONNECTOR_AT_END_RE = re.compile(r"(?:[/、]|和|或|及|与)\s*$")
+_LIST_CONNECTOR_AT_END_RE = re.compile(r"(?:[/、]|和|或|及|与|\b(?:and|or)\b)\s*$", re.IGNORECASE)
 _NEGATED_LIST_CONTINUATION_AT_END_RE = re.compile(r"(?:985|211)\s*(?:不是|非)\s*$", re.IGNORECASE)
-_NEGATOR_LEFT_BOUNDARIES = set("（([{、/，,；;。和或及与")
+_NEGATOR_LEFT_BOUNDARIES = set("（([{、/，,；;。和或及与也")
 
 
 def _education_text(candidate: Candidate, detail: CandidateDetail | None) -> str:

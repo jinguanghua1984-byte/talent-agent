@@ -569,6 +569,10 @@ def test_score_candidate_compressed_negated_school_lists_are_rejected():
         "非985与211本科",
         "非985非211本科",
         "非985不是211本科",
+        "不是985也不是211本科",
+        "非985也非211本科",
+        "not QS Top500 or overseas Top500 university",
+        "not QS Top500 and overseas Top500 university",
         "双非（非985/211）本科",
     ]
 
@@ -589,8 +593,8 @@ def test_score_candidate_compressed_negated_school_lists_are_rejected():
             mode="list",
         )
 
-        assert result["grade"] == "淘汰"
-        assert "school_not_priority" in result["risk_flags"]
+        assert result["grade"] == "淘汰", education
+        assert "school_not_priority" in result["risk_flags"], education
 
 
 def test_score_candidate_list_mode_ignores_detail_but_detailed_mode_uses_it():
