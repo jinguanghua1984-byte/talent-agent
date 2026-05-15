@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -102,8 +103,17 @@ def _tech_keywords(strategy: dict[str, Any]) -> list[str]:
     return terms
 
 
-_TOP500_MARKERS = ["Top500", "top500", "top 500", "世界前500", "QS前500"]
-_TOP500_CONTEXT_TERMS = ["QS", "海外", "overseas"]
+_TOP500_PHRASES = [
+    "QS Top500",
+    "QS Top 500",
+    "QS前500",
+    "世界前500",
+    "海外 Top500",
+    "海外 Top 500",
+    "overseas Top500",
+    "overseas Top 500",
+    "overseas前500",
+]
 _SECONDARY_SCHOOL_TERMS = ["博士", "硕士", "本科"]
 _EXCLUDED_EDUCATION_TERMS = {"大专", "专科", "junior college", "juniorcollege"}
 
@@ -121,30 +131,32 @@ def _contains_term(text: str, term: str) -> bool:
 
 
 def _normalized_text(text: str) -> str:
-    return text.replace(" ", "").lower()
+    return re.sub(r"\s+", "", text).lower()
 
 
-def _has_negated_school_term(education_text: str, token: str) -> bool:
+def _phrase_is_negated(education_text: str, phrase: str) -> bool:
     normalized = _normalized_text(education_text)
-    token_norm = _normalized_text(token)
+    phrase_norm = _normalized_text(phrase)
+    if "双非" in normalized:
+        return True
     return any(
         pattern in normalized
         for pattern in (
-            f"非{token_norm}",
-            f"不是{token_norm}",
-            f"双非{token_norm}",
-            "双非",
+            f"非{phrase_norm}",
+            f"不是{phrase_norm}",
+            f"not{phrase_norm}",
+            f"non{phrase_norm}",
+            f"non-{phrase_norm}",
         )
     )
 
 
+def _positive_school_phrase(education_text: str, phrase: str) -> bool:
+    return _contains_term(education_text, phrase) and not _phrase_is_negated(education_text, phrase)
+
+
 def _matches_top500_school(education_text: str) -> bool:
-    normalized = _normalized_text(education_text)
-    if any(marker.lower().replace(" ", "") in normalized for marker in ("qs前500", "世界前500")):
-        return True
-    if not any(marker.lower().replace(" ", "") in normalized for marker in ("Top500", "top500", "top 500")):
-        return False
-    return any(_contains_term(education_text, term) for term in _TOP500_CONTEXT_TERMS)
+    return any(_positive_school_phrase(education_text, phrase) for phrase in _TOP500_PHRASES)
 
 
 def _positive_school_label_from_strategy(
@@ -152,15 +164,15 @@ def _positive_school_label_from_strategy(
     education_text: str,
 ) -> str | None:
     groups = strategy.get("education_groups", {})
-    if any(_contains_term(education_text, school) for school in groups.get("c9", [])):
+    if any(_positive_school_phrase(education_text, school) for school in groups.get("c9", [])):
         return "C9"
     if any(
-        _contains_term(education_text, school) for school in groups.get("top985", [])
-    ) or ("985" in education_text and not _has_negated_school_term(education_text, "985")):
+        _positive_school_phrase(education_text, school) for school in groups.get("top985", [])
+    ) or _positive_school_phrase(education_text, "985"):
         return "985"
     if any(
-        _contains_term(education_text, school) for school in groups.get("top211", [])
-    ) or ("211" in education_text and not _has_negated_school_term(education_text, "211")):
+        _positive_school_phrase(education_text, school) for school in groups.get("top211", [])
+    ) or _positive_school_phrase(education_text, "211"):
         return "211"
     if _matches_top500_school(education_text):
         return "TOP500"

@@ -608,3 +608,57 @@ def test_score_candidate_list_mode_ignores_detail_but_detailed_mode_uses_it():
     assert "school_not_priority" in list_result["risk_flags"]
     assert detailed_result["grade"] != "淘汰"
     assert "school_not_priority" not in detailed_result["risk_flags"]
+
+
+def test_score_candidate_negated_top500_and_named_school_are_rejected():
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+
+    negated_qs = score_candidate(
+        Candidate(
+            id=110,
+            name="Negated QS",
+            current_company="Seed",
+            current_title="AI Infra 宸ョ▼甯?",
+            education="非QS Top500 university",
+            work_years=6,
+            age=30,
+            skill_tags=("GPU", "vLLM"),
+        ),
+        strategy,
+        None,
+        mode="list",
+    )
+    negated_not = score_candidate(
+        Candidate(
+            id=111,
+            name="Not QS",
+            current_company="Seed",
+            current_title="AI Infra 宸ョ▼甯?",
+            education="not QS Top500 university",
+            work_years=6,
+            age=30,
+            skill_tags=("GPU", "vLLM"),
+        ),
+        strategy,
+        None,
+        mode="list",
+    )
+    negated_c9 = score_candidate(
+        Candidate(
+            id=112,
+            name="Negated C9",
+            current_company="Seed",
+            current_title="AI Infra 宸ョ▼甯?",
+            education="非清华大学 普通本科",
+            work_years=6,
+            age=30,
+            skill_tags=("GPU", "vLLM"),
+        ),
+        strategy,
+        None,
+        mode="list",
+    )
+
+    for result in (negated_qs, negated_not, negated_c9):
+        assert result["grade"] == "淘汰"
+        assert "school_not_priority" in result["risk_flags"]
