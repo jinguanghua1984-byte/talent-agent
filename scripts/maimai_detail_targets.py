@@ -182,9 +182,12 @@ def export_targets(
     out_path: str | Path,
     recommendation_file: str | Path | None = None,
     candidate_ids: list[int] | None = None,
+    allow_empty_candidate_ids: bool = False,
 ) -> dict[str, Any]:
     if recommendation_file is None and candidate_ids is None:
         raise ValueError("recommendation_file or candidate_ids is required")
+    if recommendation_file is None and candidate_ids == [] and not allow_empty_candidate_ids:
+        raise ValueError("candidate_ids must not be empty")
 
     if recommendation_file is not None:
         data = _load_json(Path(recommendation_file))
@@ -262,7 +265,12 @@ def main(argv: list[str] | None = None) -> int:
         result = export_targets(args.db, args.out, recommendation_file=args.input)
     elif args.command == "from-review":
         decisions = load_review_decisions(args.review)
-        result = export_targets(args.db, args.out, candidate_ids=decisions.detail_candidate_ids)
+        result = export_targets(
+            args.db,
+            args.out,
+            candidate_ids=decisions.detail_candidate_ids,
+            allow_empty_candidate_ids=True,
+        )
     else:
         result = export_targets(args.db, args.out, candidate_ids=_parse_ids(args.ids))
     print(json.dumps(result["metadata"], ensure_ascii=False, indent=2))

@@ -24,10 +24,12 @@ def _load_json(path: Path) -> Any:
 def _candidate_id(value: Any, *, item_index: int) -> int:
     if isinstance(value, bool):
         raise ValueError(f"invalid candidate_id in review item {item_index}: {value}")
-    try:
+    if isinstance(value, int):
+        candidate_id = value
+    elif isinstance(value, str) and value.isdecimal():
         candidate_id = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"invalid candidate_id in review item {item_index}: {value}") from exc
+    else:
+        raise ValueError(f"invalid candidate_id in review item {item_index}: {value}")
     if candidate_id <= 0:
         raise ValueError(f"invalid candidate_id in review item {item_index}: {value}")
     return candidate_id

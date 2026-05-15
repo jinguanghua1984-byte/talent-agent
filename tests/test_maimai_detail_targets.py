@@ -174,3 +174,51 @@ def test_detail_targets_from_review_cli_rejects_invalid_input(tmp_path: Path):
                 str(output_path),
             ]
         )
+
+
+def test_detail_targets_from_ids_rejects_empty_id_list(tmp_path: Path):
+    db_path = tmp_path / "talent.db"
+    _make_db(db_path)
+
+    with pytest.raises(ValueError, match="candidate_ids must not be empty"):
+        detail_targets_main(
+            [
+                "from-ids",
+                "--ids",
+                " , ",
+                "--db",
+                str(db_path),
+                "--out",
+                str(tmp_path / "targets.json"),
+            ]
+        )
+
+
+def test_detail_targets_from_review_allows_empty_detail_now_list(tmp_path: Path):
+    db_path = tmp_path / "talent.db"
+    _make_db(db_path)
+    review_path = tmp_path / "review.json"
+    output_path = tmp_path / "targets.json"
+    review_path.write_text(
+        json.dumps({"items": [{"candidate_id": 1, "decision": "hold"}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    assert (
+        detail_targets_main(
+            [
+                "from-review",
+                "--review",
+                str(review_path),
+                "--db",
+                str(db_path),
+                "--out",
+                str(output_path),
+            ]
+        )
+        == 0
+    )
+
+    result = json.loads(output_path.read_text(encoding="utf-8-sig"))
+    assert result["metadata"]["total_input"] == 0
+    assert result["metadata"]["total_contacts"] == 0

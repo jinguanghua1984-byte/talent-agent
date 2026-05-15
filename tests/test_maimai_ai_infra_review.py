@@ -58,3 +58,14 @@ def test_load_review_decisions_rejects_duplicate_candidate_id(tmp_path: Path):
 
     with pytest.raises(ValueError, match="duplicate candidate_id"):
         load_review_decisions(path)
+
+
+def test_load_review_decisions_rejects_non_integral_candidate_id(tmp_path: Path):
+    path = tmp_path / "review.json"
+    path.write_text(
+        json.dumps({"items": [{"candidate_id": 1.9, "decision": "detail_now"}]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="invalid candidate_id"):
+        load_review_decisions(path)
