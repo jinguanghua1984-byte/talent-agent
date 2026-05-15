@@ -559,6 +559,37 @@ def test_score_candidate_negated_985_211_text_is_rejected():
     assert "school_not_priority" in result["risk_flags"]
 
 
+def test_score_candidate_compressed_negated_school_lists_are_rejected():
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+
+    negated_cases = [
+        "非985/211本科",
+        "非985、211本科",
+        "非985和211本科",
+        "双非（非985/211）本科",
+    ]
+
+    for idx, education in enumerate(negated_cases, start=160):
+        result = score_candidate(
+            Candidate(
+                id=idx,
+                name=f"Compressed Negation {idx}",
+                current_company="Seed",
+                current_title="AI Infra 工程师",
+                education=education,
+                work_years=6,
+                age=30,
+                skill_tags=("GPU", "vLLM"),
+            ),
+            strategy,
+            None,
+            mode="list",
+        )
+
+        assert result["grade"] == "淘汰"
+        assert "school_not_priority" in result["risk_flags"]
+
+
 def test_score_candidate_list_mode_ignores_detail_but_detailed_mode_uses_it():
     strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
     detail = CandidateDetail(

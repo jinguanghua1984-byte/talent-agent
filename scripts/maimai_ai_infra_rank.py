@@ -116,6 +116,11 @@ _TOP500_PHRASES = [
 ]
 _SECONDARY_SCHOOL_TERMS = ["博士", "硕士", "本科"]
 _EXCLUDED_EDUCATION_TERMS = {"大专", "专科", "junior college", "juniorcollege"}
+_NEGATOR_RE = re.compile(r"不是|非|not\b|non(?:-|\b)", re.IGNORECASE)
+_DIRECT_NEGATOR_RE = re.compile(r"(不是|非|not\b|non(?:-|\b))\s*$", re.IGNORECASE)
+_STRONG_EDUCATION_BOUNDARY_RE = re.compile(r"[，,；;\n。]")
+_LIST_CONNECTOR_AT_END_RE = re.compile(r"(?:[/、]|和|或|及)\s*$")
+_NEGATOR_LEFT_BOUNDARIES = set("（([{、/，,；;。和或及")
 
 
 def _education_text(candidate: Candidate, detail: CandidateDetail | None) -> str:
@@ -130,20 +135,34 @@ def _contains_term(text: str, term: str) -> bool:
     return term in text
 
 
-def _normalized_text(text: str) -> str:
-    return re.sub(r"[\s-]+", "", text).lower()
-
-
 def _split_education_segments(education_text: str) -> list[str]:
-    return [segment.strip() for segment in re.split(r"[，,；;\n。]", education_text) if segment.strip()]
+    return [segment.strip() for segment in _STRONG_EDUCATION_BOUNDARY_RE.split(education_text) if segment.strip()]
 
 
-def _prefix_is_negated(prefix: str) -> bool:
-    normalized = _normalized_text(prefix)
-    if not normalized:
+def _negator_has_left_boundary(text: str, start: int) -> bool:
+    if start == 0:
+        return True
+    previous = text[start - 1]
+    return previous.isspace() or previous in _NEGATOR_LEFT_BOUNDARIES
+
+
+def _prefix_has_applicable_negation(prefix: str) -> bool:
+    if not prefix.strip():
         return False
-    negators = ("非", "不是", "not", "non")
-    return any(normalized.endswith(negator) for negator in negators)
+
+    direct_match = _DIRECT_NEGATOR_RE.search(prefix)
+    if direct_match and _negator_has_left_boundary(prefix, direct_match.start()):
+        return True
+
+    for match in _NEGATOR_RE.finditer(prefix):
+        if not _negator_has_left_boundary(prefix, match.start()):
+            continue
+        tail = prefix[match.end():]
+        if _STRONG_EDUCATION_BOUNDARY_RE.search(tail):
+            continue
+        if _LIST_CONNECTOR_AT_END_RE.search(tail):
+            return True
+    return False
 
 
 def _segment_has_positive_phrase(segment: str, phrase: str) -> bool:
@@ -152,7 +171,7 @@ def _segment_has_positive_phrase(segment: str, phrase: str) -> bool:
     pattern = re.escape(phrase)
     flags = re.IGNORECASE if phrase.isascii() else 0
     for match in re.finditer(pattern, segment, flags):
-        if not _prefix_is_negated(segment[: match.start()]):
+        if not _prefix_has_applicable_negation(segment[: match.start()]):
             return True
     return False
 
