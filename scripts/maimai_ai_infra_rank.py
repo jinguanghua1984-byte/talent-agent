@@ -134,23 +134,36 @@ def _normalized_text(text: str) -> str:
     return re.sub(r"[\s-]+", "", text).lower()
 
 
-def _phrase_is_negated(education_text: str, phrase: str) -> bool:
-    normalized = _normalized_text(education_text)
-    phrase_norm = _normalized_text(phrase)
-    return any(
-        pattern in normalized
-        for pattern in (
-            f"非{phrase_norm}",
-            f"不是{phrase_norm}",
-            f"not{phrase_norm}",
-            f"non{phrase_norm}",
-            f"non-{phrase_norm}",
-        )
-    )
+def _split_education_segments(education_text: str) -> list[str]:
+    return [segment.strip() for segment in re.split(r"[，,；;\n。]", education_text) if segment.strip()]
+
+
+def _prefix_is_negated(prefix: str) -> bool:
+    normalized = _normalized_text(prefix)
+    if not normalized:
+        return False
+    negators = ("非", "不是", "not", "non")
+    return any(normalized.endswith(negator) for negator in negators)
+
+
+def _segment_has_positive_phrase(segment: str, phrase: str) -> bool:
+    if not phrase:
+        return False
+    pattern = re.escape(phrase)
+    flags = re.IGNORECASE if phrase.isascii() else 0
+    for match in re.finditer(pattern, segment, flags):
+        if not _prefix_is_negated(segment[: match.start()]):
+            return True
+    return False
 
 
 def _positive_school_phrase(education_text: str, phrase: str) -> bool:
-    return _contains_term(education_text, phrase) and not _phrase_is_negated(education_text, phrase)
+    if not phrase:
+        return False
+    for segment in _split_education_segments(education_text):
+        if _segment_has_positive_phrase(segment, phrase):
+            return True
+    return False
 
 
 def _matches_top500_school(education_text: str) -> bool:
