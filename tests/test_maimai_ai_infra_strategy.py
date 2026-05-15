@@ -566,6 +566,9 @@ def test_score_candidate_compressed_negated_school_lists_are_rejected():
         "非985/211本科",
         "非985、211本科",
         "非985和211本科",
+        "非985与211本科",
+        "非985非211本科",
+        "非985不是211本科",
         "双非（非985/211）本科",
     ]
 
