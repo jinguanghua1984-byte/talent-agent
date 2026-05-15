@@ -119,6 +119,7 @@ _EXCLUDED_EDUCATION_TERMS = {"大专", "专科", "junior college", "juniorcolleg
 _NEGATOR_PATTERN = r"不是|非|not\b|non(?:-|\b)|neither\b"
 _NEGATOR_RE = re.compile(_NEGATOR_PATTERN, re.IGNORECASE)
 _DIRECT_NEGATOR_RE = re.compile(rf"(?:{_NEGATOR_PATTERN})\s*$", re.IGNORECASE)
+_DIRECT_CHINESE_NEGATOR_RE = re.compile(r"(?:不是|非)\s*$")
 _STRONG_EDUCATION_BOUNDARY_RE = re.compile(r"[，,；;\n。]")
 _LIST_CONNECTOR_AT_END_RE = re.compile(
     r"(?:[/、]|和|或|及|与|且|并|又|也|\b(?:and|or|nor)\b)\s*$",
@@ -173,13 +174,20 @@ def _prefix_has_applicable_negation(prefix: str) -> bool:
     return False
 
 
+def _prefix_has_direct_chinese_negation(prefix: str) -> bool:
+    return bool(_DIRECT_CHINESE_NEGATOR_RE.search(prefix))
+
+
 def _segment_has_positive_phrase(segment: str, phrase: str) -> bool:
     if not phrase:
         return False
     pattern = re.escape(phrase)
     flags = re.IGNORECASE if phrase.isascii() else 0
     for match in re.finditer(pattern, segment, flags):
-        if not _prefix_has_applicable_negation(segment[: match.start()]):
+        prefix = segment[: match.start()]
+        if _prefix_has_direct_chinese_negation(prefix):
+            continue
+        if not _prefix_has_applicable_negation(prefix):
             return True
     return False
 
