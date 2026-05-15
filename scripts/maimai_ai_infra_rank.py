@@ -131,14 +131,12 @@ def _contains_term(text: str, term: str) -> bool:
 
 
 def _normalized_text(text: str) -> str:
-    return re.sub(r"\s+", "", text).lower()
+    return re.sub(r"[\s-]+", "", text).lower()
 
 
 def _phrase_is_negated(education_text: str, phrase: str) -> bool:
     normalized = _normalized_text(education_text)
     phrase_norm = _normalized_text(phrase)
-    if "双非" in normalized:
-        return True
     return any(
         pattern in normalized
         for pattern in (

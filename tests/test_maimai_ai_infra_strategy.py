@@ -610,6 +610,90 @@ def test_score_candidate_list_mode_ignores_detail_but_detailed_mode_uses_it():
     assert "school_not_priority" not in detailed_result["risk_flags"]
 
 
+def test_score_candidate_mixed_double_non_with_later_priority_school_passes():
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+
+    mixed_cases = [
+        ("双非本科 清华大学硕士", "清华大学硕士"),
+        ("双非本科，QS Top500 硕士", "QS Top500 硕士"),
+        ("双非本科，211硕士", "211硕士"),
+    ]
+
+    for idx, (education, _) in enumerate(mixed_cases, start=120):
+        result = score_candidate(
+            Candidate(
+                id=idx,
+                name=f"Mixed {idx}",
+                current_company="Seed",
+                current_title="AI Infra 工程师",
+                education=education,
+                work_years=6,
+                age=30,
+                skill_tags=("GPU", "vLLM"),
+            ),
+            strategy,
+            None,
+            mode="list",
+        )
+
+        assert result["grade"] != "淘汰"
+        assert "school_not_priority" not in result["risk_flags"]
+
+
+def test_score_candidate_detailed_mode_mixed_double_non_uses_later_priority_school():
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+    detail = CandidateDetail(
+        candidate_id=130,
+        education_experience=[
+            {"school": "双非本科", "description": "普通本科"},
+            {"school": "清华大学", "description": "硕士"},
+        ],
+        work_experience=[
+            {
+                "company": "字节跳动",
+                "title": "AI Infra 工程师",
+                "description": "训练与推理平台",
+            }
+        ],
+    )
+
+    list_result = score_candidate(
+        Candidate(
+            id=130,
+            name="Detail Mixed",
+            current_company="Seed",
+            current_title="AI Infra 工程师",
+            education="双非本科",
+            work_years=6,
+            age=30,
+            skill_tags=("GPU",),
+        ),
+        strategy,
+        detail,
+        mode="list",
+    )
+    detailed_result = score_candidate(
+        Candidate(
+            id=130,
+            name="Detail Mixed",
+            current_company="Seed",
+            current_title="AI Infra 工程师",
+            education="双非本科",
+            work_years=6,
+            age=30,
+            skill_tags=("GPU",),
+        ),
+        strategy,
+        detail,
+        mode="detailed",
+    )
+
+    assert list_result["grade"] == "淘汰"
+    assert "school_not_priority" in list_result["risk_flags"]
+    assert detailed_result["grade"] != "淘汰"
+    assert "school_not_priority" not in detailed_result["risk_flags"]
+
+
 def test_score_candidate_negated_top500_and_named_school_are_rejected():
     strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
 
