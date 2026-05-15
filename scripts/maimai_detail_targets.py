@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlparse
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.maimai_ai_infra_review import load_review_decisions
 from scripts.talent_db import TalentDB
 
 
@@ -182,7 +183,7 @@ def export_targets(
     recommendation_file: str | Path | None = None,
     candidate_ids: list[int] | None = None,
 ) -> dict[str, Any]:
-    if recommendation_file is None and not candidate_ids:
+    if recommendation_file is None and candidate_ids is None:
         raise ValueError("recommendation_file or candidate_ids is required")
 
     if recommendation_file is not None:
@@ -190,7 +191,7 @@ def export_targets(
         items = extract_recommendation_items(data)
         source_file = str(recommendation_file)
     else:
-        items = _items_from_candidate_ids(candidate_ids or [])
+        items = _items_from_candidate_ids(candidate_ids)
         source_file = ""
 
     db = TalentDB(db_path)
@@ -251,9 +252,17 @@ def main(argv: list[str] | None = None) -> int:
     from_ids.add_argument("--db", default="data/talent.db")
     from_ids.add_argument("--out", required=True)
 
+    from_review = subparsers.add_parser("from-review")
+    from_review.add_argument("--review", required=True)
+    from_review.add_argument("--db", default="data/talent.db")
+    from_review.add_argument("--out", required=True)
+
     args = parser.parse_args(argv)
     if args.command == "from-file":
         result = export_targets(args.db, args.out, recommendation_file=args.input)
+    elif args.command == "from-review":
+        decisions = load_review_decisions(args.review)
+        result = export_targets(args.db, args.out, candidate_ids=decisions.detail_candidate_ids)
     else:
         result = export_targets(args.db, args.out, candidate_ids=_parse_ids(args.ids))
     print(json.dumps(result["metadata"], ensure_ascii=False, indent=2))

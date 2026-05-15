@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
-from scripts.maimai_detail_targets import export_targets
+import pytest
+
+from scripts.maimai_detail_targets import export_targets, main as detail_targets_main
 from scripts.talent_db import TalentDB
 
 
@@ -106,3 +108,69 @@ def test_export_targets_uses_profile_url_from_recommendation_when_present(tmp_pa
     assert result["contacts"][0]["id"] == "222"
     assert result["contacts"][0]["trackable_token"] == "token-carol"
     assert result["contacts"][0]["candidate_id"] is None
+
+
+def test_detail_targets_from_review_cli_exports_detail_now_ids(tmp_path: Path):
+    db_path = tmp_path / "talent.db"
+    candidate_id, boss_id = _make_db(db_path)
+    review_path = tmp_path / "review.json"
+    output_path = tmp_path / "targets.json"
+    review_path.write_text(
+        json.dumps(
+            {
+                "campaign_id": "ai-infra-v2-smoke",
+                "items": [
+                    {"candidate_id": candidate_id, "decision": "detail_now", "priority": "P0"},
+                    {"candidate_id": boss_id, "decision": "hold", "priority": "P1"},
+                    {"candidate_id": 999, "decision": "reject", "priority": "P2"},
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        detail_targets_main(
+            [
+                "from-review",
+                "--review",
+                str(review_path),
+                "--db",
+                str(db_path),
+                "--out",
+                str(output_path),
+            ]
+        )
+        == 0
+    )
+
+    result = json.loads(output_path.read_text(encoding="utf-8-sig"))
+    assert result["metadata"]["total_input"] == 1
+    assert result["metadata"]["total_contacts"] == 1
+    assert result["metadata"]["missing"] == 0
+    assert [item["candidate_id"] for item in result["contacts"]] == [candidate_id]
+
+
+def test_detail_targets_from_review_cli_rejects_invalid_input(tmp_path: Path):
+    db_path = tmp_path / "talent.db"
+    _make_db(db_path)
+    review_path = tmp_path / "review.json"
+    output_path = tmp_path / "targets.json"
+    review_path.write_text(
+        json.dumps({"items": [{"candidate_id": 1, "decision": "maybe"}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="invalid review decision"):
+        detail_targets_main(
+            [
+                "from-review",
+                "--review",
+                str(review_path),
+                "--db",
+                str(db_path),
+                "--out",
+                str(output_path),
+            ]
+        )
