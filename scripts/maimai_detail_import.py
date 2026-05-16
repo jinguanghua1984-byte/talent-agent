@@ -210,6 +210,19 @@ def _write_report(path: Path, title: str, result: dict[str, Any]) -> None:
         "## 明细",
         "",
     ]
+    capture_blockers = result.get("capture_blockers") or []
+    if capture_blockers:
+        lines.extend(["## Capture blockers", ""])
+        for item in capture_blockers:
+            lines.append(
+                "- {reason}: status={status}, completed={completed_jobs}, total={total_contacts}".format(
+                    reason=item.get("reason", ""),
+                    status=item.get("status", ""),
+                    completed_jobs=item.get("completed_jobs", ""),
+                    total_contacts=item.get("total_contacts", ""),
+                )
+            )
+        lines.append("")
     for item in result.get("matches", []):
         lines.append(
             "- {name} (`{platform_id}`): work {old_work}->{new_work}, "
@@ -241,9 +254,49 @@ def _apply_blockers_for_detail(detail_data: dict[str, Any]) -> list[str]:
     return blockers
 
 
+def _capture_blockers(capture: dict[str, Any]) -> list[dict[str, Any]]:
+    metadata = capture.get("metadata") if isinstance(capture.get("metadata"), dict) else {}
+    status = str(metadata.get("status") or "")
+    completed_jobs = metadata.get("completed_jobs")
+    total_contacts = metadata.get("total_contacts")
+    has_direct_gate_metadata = (
+        metadata.get("export_type") == "maimai_ai_infra_direct_detail_live_gate"
+        or "partial" in metadata
+        or status != ""
+        or completed_jobs is not None
+        or total_contacts is not None
+    )
+    if not has_direct_gate_metadata:
+        return []
+
+    partial = bool(metadata.get("partial"))
+    if status and status != "completed":
+        partial = True
+    try:
+        if completed_jobs is not None and total_contacts is not None and int(completed_jobs) < int(total_contacts):
+            partial = True
+    except (TypeError, ValueError):
+        partial = True
+
+    if not partial:
+        return []
+    return [
+        {
+            "reason": "partial_detail_capture",
+            "status": status,
+            "completed_jobs": completed_jobs,
+            "total_contacts": total_contacts,
+            "stopReason": metadata.get("stopReason"),
+            "interruptionReport": metadata.get("interruptionReport"),
+            "continuationPlan": metadata.get("continuationPlan"),
+        }
+    ]
+
+
 def build_dry_run(capture_file: Path, db_path: Path) -> dict[str, Any]:
     capture_file = Path(capture_file)
     capture = _load_json(capture_file)
+    capture_blockers = _capture_blockers(capture)
     entries, failed_jobs = extract_detail_entries(capture, capture_file)
     db = TalentDB(db_path)
     try:
@@ -295,6 +348,8 @@ def build_dry_run(capture_file: Path, db_path: Path) -> dict[str, Any]:
             "matched": len(matches),
             "unmatched": len(unmatched_entries),
             "failed_jobs": failed_jobs,
+            "capture_blockers": capture_blockers,
+            "capture_metadata": capture.get("metadata") if isinstance(capture.get("metadata"), dict) else {},
             "apply_blockers": apply_blockers,
             "matches": matches,
             "unmatched_entries": unmatched_entries,
@@ -325,6 +380,8 @@ def apply_capture(
     capture_path = Path(capture_file)
     db_file = Path(db_path)
     result = build_dry_run(capture_path, db_file)
+    if result.get("capture_blockers"):
+        raise RuntimeError("detail capture is partial or incomplete")
     db = TalentDB(db_file)
     written = 0
     verified: list[int] = []

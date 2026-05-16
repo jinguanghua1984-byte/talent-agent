@@ -4,8 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from scripts.maimai_ai_infra_rank import score_candidate
+from scripts.maimai_ai_infra_rank import _load_candidate_ids_file, rank_candidates, score_candidate
 from scripts.maimai_ai_infra_search_plan import build_search_units, generate_batches, load_strategy
+from scripts.talent_db import TalentDB
 from scripts.talent_models import Candidate, CandidateDetail
 
 
@@ -534,6 +535,160 @@ def test_score_candidate_top500_requires_context_to_pass_school_gate():
     assert "school_not_priority" in failing_qs["risk_flags"]
     assert failing_overseas["grade"] == "淘汰"
     assert "school_not_priority" in failing_overseas["risk_flags"]
+
+
+def test_score_candidate_list_mode_uses_maimai_list_raw_school_tags():
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+
+    result = score_candidate(
+        Candidate(
+            id=109,
+            name="List Raw School",
+            current_company="Seed",
+            current_title="AI Infra 工程师",
+            education="本科",
+            work_years=6,
+            age=30,
+            skill_tags=("GPU", "vLLM"),
+        ),
+        strategy,
+        CandidateDetail(
+            candidate_id=109,
+            raw_data={
+                "maimai_list": {
+                    "school": "哈尔滨工业大学",
+                    "edu": [
+                        {
+                            "school": "哈尔滨工业大学",
+                            "sdegree": "硕士",
+                            "hover": {"tags": "985,211,QS500,C9"},
+                        }
+                    ],
+                }
+            },
+        ),
+        mode="list",
+    )
+
+    assert result["grade"] != "淘汰"
+    assert "school_not_priority" not in result["risk_flags"]
+    assert result["evidence"]["education"] in {"C9", "985", "211", "TOP500"}
+
+
+def test_rank_candidates_list_mode_uses_maimai_list_raw_school_tags(tmp_path: Path):
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+    db_path = tmp_path / "talent.db"
+    db = TalentDB(db_path)
+    try:
+        db.ingest(
+            {
+                "name": "List Raw Ranked",
+                "current_company": "Seed",
+                "current_title": "AI Infra 工程师",
+                "education": "本科",
+                "work_years": 6,
+                "age": 30,
+                "skill_tags": ["GPU", "vLLM"],
+                "platform_id": "maimai-list-raw-ranked",
+                "raw_data": {
+                    "maimai_list": {
+                        "school": "哈尔滨工业大学",
+                        "edu": [
+                            {
+                                "school": "哈尔滨工业大学",
+                                "hover": {"tags": "985,211,QS500,C9"},
+                            }
+                        ],
+                    }
+                },
+            },
+            platform="maimai",
+        )
+    finally:
+        db.close()
+
+    result = rank_candidates(db_path, strategy, mode="list")
+
+    assert result["summary"]["淘汰"] == 0
+    assert result["summary"]["A"] + result["summary"]["B"] + result["summary"]["C"] == 1
+
+
+def test_rank_candidates_detailed_mode_can_scope_to_candidate_ids(tmp_path: Path):
+    strategy = load_strategy(Path("configs/maimai-ai-infra-search-strategy.json"))
+    db_path = tmp_path / "talent.db"
+    db = TalentDB(db_path)
+    try:
+        target_a_id = db.ingest(
+            {
+                "name": "Scoped Target A",
+                "current_company": "Seed",
+                "current_title": "AI Infra 工程师",
+                "education": "清华大学 985",
+                "work_years": 6,
+                "age": 30,
+                "skill_tags": ["GPU", "vLLM"],
+                "platform_id": "scoped-target-a",
+                "work_experience": [{"company": "Seed", "title": "AI Infra 工程师"}],
+                "education_experience": [{"school": "清华大学", "description": "985"}],
+            },
+            platform="maimai",
+        )
+        target_b_id = db.ingest(
+            {
+                "name": "Scoped Target B",
+                "current_company": "Seed",
+                "current_title": "推理引擎工程师",
+                "education": "上海交通大学 985",
+                "work_years": 7,
+                "age": 31,
+                "skill_tags": ["TensorRT", "推理"],
+                "platform_id": "scoped-target-b",
+                "work_experience": [{"company": "Seed", "title": "推理引擎工程师"}],
+                "education_experience": [{"school": "上海交通大学", "description": "985"}],
+            },
+            platform="maimai",
+        )
+        non_target_id = db.ingest(
+            {
+                "name": "Scoped Non Target",
+                "current_company": "字节跳动",
+                "current_title": "大模型训练工程师",
+                "education": "北京大学 985",
+                "work_years": 8,
+                "age": 29,
+                "skill_tags": ["训练", "GPU"],
+                "platform_id": "scoped-non-target",
+                "work_experience": [{"company": "字节跳动", "title": "大模型训练工程师"}],
+                "education_experience": [{"school": "北京大学", "description": "985"}],
+            },
+            platform="maimai",
+        )
+    finally:
+        db.close()
+
+    result = rank_candidates(
+        db_path,
+        strategy,
+        mode="detailed",
+        candidate_ids=[target_b_id, target_a_id, non_target_id + 1000],
+    )
+
+    assert {item["candidate_id"] for item in result["ranked"]} == {target_a_id, target_b_id}
+    assert all(item["score_mode"] == "detailed" for item in result["ranked"])
+    assert non_target_id not in {item["candidate_id"] for item in result["ranked"]}
+
+
+def test_candidate_ids_file_accepts_id_list_and_detail_manifest(tmp_path: Path):
+    ids_path = tmp_path / "ids.json"
+    ids_path.write_text('{"candidate_ids": [1, "2", 2, null]}', encoding="utf-8")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        '{"contacts": [{"candidate_id": 3}, {"candidate_id": "4"}, {"candidate_id": 3}]}',
+        encoding="utf-8",
+    )
+
+    assert _load_candidate_ids_file(ids_path) == [1, 2]
+    assert _load_candidate_ids_file(manifest_path) == [3, 4]
 
 
 def test_score_candidate_negated_985_211_text_is_rejected():

@@ -330,6 +330,36 @@ def test_detail_wave_dry_run_marks_dirty_when_capture_has_apply_blockers(tmp_pat
     assert progress["waves"]["wave-001"]["apply_blockers"][0]["platform_id"] == "166812124"
 
 
+def test_detail_wave_dry_run_marks_dirty_when_direct_capture_is_partial(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    _make_detail_db(paths.db)
+    capture_path = tmp_path / "partial-direct-capture.json"
+    _write_detail_capture(capture_path)
+    payload = json.loads(capture_path.read_text(encoding="utf-8"))
+    payload["metadata"] = {
+        "export_type": "maimai_ai_infra_direct_detail_live_gate",
+        "detail_mode": "direct_page_fetch",
+        "status": "completed_limited",
+        "partial": True,
+        "total_contacts": 2,
+        "completed_jobs": 1,
+    }
+    capture_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    result = run_detail_wave_dry_run(
+        campaign_root=paths.root,
+        wave="detail-ab-pack-001",
+        capture_file=capture_path,
+        db_path=paths.db,
+    )
+
+    progress = read_detail_progress(paths)
+    assert result["status"] == "dry_run_dirty"
+    assert result["result"]["capture_blockers"][0]["reason"] == "partial_detail_capture"
+    assert progress["waves"]["detail-ab-pack-001"]["status"] == "dry_run_dirty"
+    assert progress["waves"]["detail-ab-pack-001"]["capture_blockers"][0]["reason"] == "partial_detail_capture"
+
+
 def test_detail_wave_apply_writes_ledger_and_blocks_duplicate_apply(tmp_path: Path):
     paths = ensure_campaign(tmp_path / "campaign")
     candidate_id = _make_detail_db(paths.db)
@@ -391,6 +421,37 @@ def test_detail_wave_apply_rejects_unclean_capture(tmp_path: Path):
     assert Path(progress["waves"]["wave-001"]["report"]).exists()
     assert Path(progress["waves"]["wave-001"]["result"]).exists()
     assert not import_ledger_has_detail_apply(paths, "wave-001")
+
+
+def test_detail_wave_apply_rejects_partial_direct_capture(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    _make_detail_db(paths.db)
+    capture_path = tmp_path / "partial-direct-capture.json"
+    _write_detail_capture(capture_path)
+    payload = json.loads(capture_path.read_text(encoding="utf-8"))
+    payload["metadata"] = {
+        "export_type": "maimai_ai_infra_direct_detail_live_gate",
+        "detail_mode": "direct_page_fetch",
+        "status": "completed_limited",
+        "partial": True,
+        "total_contacts": 2,
+        "completed_jobs": 1,
+    }
+    capture_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="requires clean dry-run"):
+        run_detail_wave_apply(
+            campaign_root=paths.root,
+            wave="detail-ab-pack-001",
+            capture_file=capture_path,
+            db_path=paths.db,
+            confirm=CONFIRM_TEXT,
+        )
+
+    progress = read_detail_progress(paths)
+    assert progress["waves"]["detail-ab-pack-001"]["status"] == "apply_blocked"
+    assert progress["waves"]["detail-ab-pack-001"]["capture_blockers"][0]["reason"] == "partial_detail_capture"
+    assert not import_ledger_has_detail_apply(paths, "detail-ab-pack-001")
 
 
 def test_detail_wave_apply_noops_empty_capture_without_completed_ledger(tmp_path: Path):

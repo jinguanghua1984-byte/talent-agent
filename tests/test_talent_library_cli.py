@@ -184,6 +184,52 @@ def test_import_entry_apply_uses_batch_ingest_with_normalized_maimai_contacts(tm
         db.close()
 
 
+def test_import_entry_apply_preserves_maimai_list_raw_for_scoring(tmp_path: Path):
+    db_path = tmp_path / "talent.db"
+    capture = tmp_path / "capture.json"
+    out_path = tmp_path / "import-report.md"
+    _write_capture(
+        capture,
+        [
+            _maimai_contact(
+                school="哈尔滨工业大学",
+                edu=[
+                    {
+                        "school": "哈尔滨工业大学",
+                        "sdegree": "硕士",
+                        "hover": {"tags": "985,211,QS500,C9"},
+                    }
+                ],
+            )
+        ],
+    )
+
+    exit_code = main([
+        "import",
+        "--input",
+        str(capture),
+        "--db",
+        str(db_path),
+        "--out",
+        str(out_path),
+        "--apply",
+        "--confirm",
+        "确认导入人才",
+    ])
+
+    db = TalentDB(db_path)
+    try:
+        candidate = db.fulltext_search("Alice")[0]
+        detail = db.get_detail(candidate.id)
+        assert exit_code == 0
+        assert detail is not None
+        assert detail.raw_data is not None
+        assert detail.raw_data["maimai_list"]["school"] == "哈尔滨工业大学"
+        assert detail.raw_data["maimai_list"]["edu"][0]["hover"]["tags"] == "985,211,QS500,C9"
+    finally:
+        db.close()
+
+
 def test_wechat_sync_exports_markdown_and_indexes_timeline(
     tmp_path: Path, monkeypatch
 ):

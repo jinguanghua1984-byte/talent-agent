@@ -124,6 +124,11 @@ def _normalize_mapped_candidate(
         "source": {**source, "capture_file": str(source_file)},
         "maimai_contact": raw_item,
     }
+    raw_data = data.get("raw_data") if isinstance(data.get("raw_data"), dict) else {}
+    data["raw_data"] = {
+        **raw_data,
+        "maimai_list": raw_item,
+    }
     return data
 
 

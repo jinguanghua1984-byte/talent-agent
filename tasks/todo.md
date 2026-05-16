@@ -1690,3 +1690,775 @@
 - 语法检查：`python -m py_compile scripts/maimai_ai_infra_rank.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_search_plan.py` -> **PASS**。
 - 差异空白检查：`git diff --check` -> **PASS**。
 - 下一步建议：先人工审查 `maimai-ai-infra-db-audit-2026-05-14.md` 的 A 档 Top 50 和 B 档 Top 50；若 A 档质量足够，进入人工外联/深审名单整理；若质量不足，再设计 S4 calibrated search，真实搜索仍需单独授权。
+
+# AI Infra V2 S4a 小样本列表搜索（2026-05-15）
+
+> 目标：在用户明确授权“确认执行 AI Infra V2 列表搜索”后，只执行 S4a 小样本真实列表搜索。范围限定为 3 个 batch、每个 batch 1 页；不写 DB、不抓详情、不 apply。
+
+## 执行计划
+
+- [x] 确认授权与边界：只跑 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-s4a-plan.json` 中的 3 个 batch。
+- [x] 执行 live gate：通过已登录 CDP 页面模板请求 `/api/ent/v3/search/basic`，延迟 8 秒，超时 30 秒。
+- [x] 检查输出 JSON：核对 `status`、`stopReason`、每页 HTTP 状态、解析错误、列表长度、页面健康状态和 contacts 数量。
+- [x] 写入 Review：记录 raw 证据路径、是否熔断、是否需要人工处理；本轮不导入 DB。
+
+## Review
+
+- 执行命令：`python scripts/maimai_ai_infra_search_live_gate.py --plan data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-s4a-plan.json --out data/campaigns/ai-infra-v2-2026-05-15-dry-run/raw/search-live-s4a-run-2026-05-15.json --cdp-url http://127.0.0.1:9888 --delay-seconds 8 --timeout-seconds 30`。
+- 输出证据：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/raw/search-live-s4a-run-2026-05-15.json`，该目录受 `.gitignore` 管理，不提交运行数据。
+- 结果：`status=completed`，`stopReason=null`，3 个 batch 全部完成，共保留 90 条列表 contacts。
+- 分页核验：`unit-000001/000002/000003` 均为 1 页；每页 `httpStatus=200`、`parseError=null`、`contentType=application/json`、`listLength=30`。
+- 页面健康：执行前后均为 `title=人才银行`、`readyState=complete`、`visibilityState=visible`、`hasLoginPrompt=false`、`hasCaptcha=false`。
+- 请求体核验：每页请求均不含禁用字段 `age`；包含 `min_age=24`、`max_age=40`、`worktimes_min=2`、`worktimes_max=10`、`degrees=1,2,3`。
+- 边界确认：本轮只做列表搜索；未抓详情、未写 `data/talent.db`、未执行 apply。若继续导入列表结果，需要单独授权 `确认导入 AI Infra V2 列表结果`。
+
+# AI Infra V2 S4a 列表结果导入门禁（2026-05-15）
+
+> 目标：把 S4a 小样本真实列表搜索结果接入 campaign 标准流水线，只跑列表导入 dry-run；不写主库、不写 campaign 库、不抓详情、不 apply。
+
+## 执行计划
+
+- [x] 将 `raw/search-live-s4a-run-2026-05-15.json` 中的 3 个真实 page 标准化落到 `raw/search/unit-*/page-001.json`，保留 `responseSummary`、`request` 和 contacts。
+- [x] 运行 `run-campaign --wave wave-001` dry-run，从页级 raw 重建 `contacts-wave-001.json` 并生成导入报告。
+- [x] 检查 dry-run 报告：原始/去重 contacts、新建/合并/待确认/失败数量，以及是否产生真实 DB 写入。
+- [x] 写入 Review；若 dry-run clean，再等待单独授权后才允许列表结果 apply。
+
+## Review
+
+- 标准化页级 raw：`unit-000001/page-001.json`、`unit-000002/page-001.json`、`unit-000003/page-001.json` 已从 S4a live run 落盘，合计 90 条原始 contacts。
+- dry-run 命令：`python scripts/maimai_ai_infra_pipeline.py run-campaign --campaign-root data/campaigns/ai-infra-v2-2026-05-15-dry-run --config configs/maimai-ai-infra-v2-cold-start-strategy.json --wave wave-001 --db data/campaigns/ai-infra-v2-2026-05-15-dry-run/talent.db`。
+- contacts payload：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/raw/contacts/contacts-wave-001.json`，跨 batch 去重后 `total_contacts=73`。
+- dry-run 报告：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/import-list-wave-001-dry-run.md/json`。
+- dry-run 结果：`raw_contacts=73`，`unique_contacts=73`，`duplicates_skipped=0`，`pre_errors=0`；导入模拟为 `created=73`、`merged=0`、`pending=0`、`errors=0`。
+- 写入边界：本轮未加 `--apply`，未创建 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/talent.db`，未写主库，未生成 import ledger。
+
+# AI Infra V2 S4b continuation 准备（2026-05-15）
+
+> 目标：在不执行真实搜索的前提下，准备 S4b wave-001 continuation 计划。执行 S4b 前仍需用户明确授权。
+
+## 执行计划
+
+- [x] 读取 `search-units.jsonl`，确认 wave-001 共 40 个 unit。
+- [x] 生成 continuation plan：跳过 S4a 已完成的 `unit-000001..unit-000003` 第 1 页，从剩余 page task 继续。
+- [x] 写入 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-s4b-continuation-plan.json`。
+
+## Review
+
+- S4b plan：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-s4b-continuation-plan.json`。
+- 范围：40 个 batch；`unit-000001..unit-000003` 从 `start_page=2` 到 `max_pages=3`，其余 `unit-000004..unit-000040` 从第 1 页到第 3 页。
+- 规模：`expected_page_tasks=117`，理论最多 `expected_max_contacts=3510`。
+- 边界：尚未执行真实搜索；执行前需要明确授权。建议授权语为 `确认执行 AI Infra V2 S4b 列表搜索`。
+
+# AI Infra V2 S4b 列表搜索执行（2026-05-15）
+
+> 目标：在用户明确授权 `确认执行 AI Infra V2 S4b 列表搜索` 后，执行 wave-001 continuation 列表搜索；只抓列表，不抓详情、不写 DB、不 apply。
+
+## 执行计划
+
+- [x] 记录授权和范围：使用 `search-live-s4b-continuation-plan.json`，40 个 batch、117 个 page task。
+- [x] 执行 S4b live gate，输出 `raw/search-live-s4b-run-2026-05-15.json`。
+- [x] 检查 live raw：`status/stopReason`、每页 HTTP 状态、解析错误、页面健康、请求体字段。
+- [x] 若 completed，将 S4b 聚合 raw 标准化落到 `raw/search/unit-*/page-*.json`。
+- [x] 运行 `run-campaign --wave wave-001` dry-run，重建 wave contacts 并生成导入报告。
+- [x] 运行聚焦测试和 `git diff --check`，记录 Review。
+
+## Review
+
+- live gate 命令：`python scripts/maimai_ai_infra_search_live_gate.py --plan data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-s4b-continuation-plan.json --out data/campaigns/ai-infra-v2-2026-05-15-dry-run/raw/search-live-s4b-run-2026-05-15.json --cdp-url http://127.0.0.1:9888 --delay-seconds 8 --timeout-seconds 30`。
+- live raw 证据：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/raw/search-live-s4b-run-2026-05-15.json`；结果为 `status=completed`、`stopReason=null`，40 个 batch、117 个 page task 全部完成，S4b 原始列表 contacts 为 2121。
+- 分页核验：117 页全部 `httpStatus=200`、`parseError=null`；执行后页面健康为 `title=人才银行`、`readyState=complete`、`hasLoginPrompt=false`、`hasCaptcha=false`，`visibilityState=hidden` 但未影响请求完成。
+- 请求体核验：每页请求均不含禁用字段 `age`；包含 `min_age=24`、`max_age=40`、`worktimes_min=2`、`worktimes_max=10`、`degrees=1,2,3`。
+- 页级 raw：S4b 已标准化落盘到 `raw/search/unit-*/page-*.json`，当前 wave-001 页级 raw 合计 120 页、2211 条 page contacts，其中包含 S4a 3 页 90 条和 S4b 117 页 2121 条。
+- dry-run 命令：`python scripts/maimai_ai_infra_pipeline.py run-campaign --campaign-root data/campaigns/ai-infra-v2-2026-05-15-dry-run --config configs/maimai-ai-infra-v2-cold-start-strategy.json --wave wave-001 --db data/campaigns/ai-infra-v2-2026-05-15-dry-run/talent.db`。
+- contacts payload：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/raw/contacts/contacts-wave-001.json`，pipeline 标准化去重后 `total_contacts=818`。
+- dry-run 报告：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/import-list-wave-001-dry-run.md/json`；结果为 `raw_contacts=818`、`unique_contacts=818`、`duplicates_skipped=0`、`pre_errors=0`、`created=818`、`merged=0`、`pending=0`、`errors=0`。
+- 写入边界：本轮未加 `--apply`，未创建 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/talent.db`，未写 `data/talent.db`，未生成 import ledger，未抓详情。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_search_live_gate.py -q` -> `51 passed`；`git diff --check` -> PASS。
+
+# AI Infra V2 S4b 列表结果 apply 到 campaign DB（2026-05-15）
+
+> 目标：在用户明确授权“把这 818 条列表 dry-run 结果真实写入 campaign DB”后，只把 wave-001 列表结果 apply 到 campaign 专用库；不写主库、不抓详情、不执行详情 apply。
+
+## 执行计划
+
+- [x] 记录 apply 授权和边界：目标库仅为 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/talent.db`。
+- [x] 执行 `run-campaign --wave wave-001 --apply`，输入仍为 S4a+S4b 标准化页级 raw 生成的 818 条唯一联系人。
+- [x] 检查 apply 报告、campaign DB 计数、import ledger，并确认 `data/talent.db` 未修改。
+- [x] 运行聚焦测试和 `git diff --check`。
+- [x] 写入 Review，明确下一步若要详情抓取或主库写入仍需单独授权。
+
+## Review
+
+- apply 命令：`python scripts/maimai_ai_infra_pipeline.py run-campaign --campaign-root data/campaigns/ai-infra-v2-2026-05-15-dry-run --config configs/maimai-ai-infra-v2-cold-start-strategy.json --wave wave-001 --db data/campaigns/ai-infra-v2-2026-05-15-dry-run/talent.db --apply`。
+- apply 报告：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/import-list-wave-001-apply.md/json`；结果为 `raw_contacts=818`、`unique_contacts=818`、`duplicates_skipped=0`、`pre_errors=0`、`created=818`、`merged=0`、`pending=0`、`errors=0`。
+- campaign DB：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/talent.db` 已创建；核验计数为 `candidates=818`、`source_profiles=818`、`candidate_details=818`、`pending_merges=0`、`sync_conflicts=0`、`maimai_profiles=818`。
+- apply ledger：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/state/import-ledger.jsonl` 已写入 `started` 和 `completed` 两条，`import_ledger_has_apply(..., "wave-001")=True`。
+- 主库边界：`data/talent.db` 未修改，核验时间戳仍为 `2026-05-14 13:54:21`；本轮未抓详情、未执行详情 apply。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_campaign.py -q` -> `39 passed`；`git diff --check` -> PASS。
+
+# AI Infra V2 wave-001 列表初筛报告（2026-05-15）
+
+> 目标：基于已 apply 到 campaign DB 的 818 条列表联系人，生成 V2 list-mode 初筛名单和初版报告；不触发真实脉脉请求、不抓详情、不写主库。
+
+## 执行计划
+
+- [x] 对 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/talent.db` 运行 V2 list-mode 评分，输出 shortlist JSON/MD。
+- [x] 基于 shortlist 和 wave-001 产物生成 `initial-list-report.md/json`，覆盖 raw/page/wave、A/B/C/淘汰 funnel 和 A/B Top 名单。
+- [x] 若 A/B 名单存在，生成人工审核队列草稿；仅作为 `detail_now/hold/reject` 输入素材，不生成详情任务包。
+- [x] 核验报告统计、主库未修改、聚焦测试和 `git diff --check`。
+- [x] 写入 Review，明确下一步为人工审核或继续搜索，不自动进入详情抓取。
+
+## Review
+
+- 中途发现初筛异常：首次评分结果为 `A=0/B=0/C=0/淘汰=818`，原因是列表 raw 中已有 `school/edu/schools`，但导入后只保存在 `source_profiles.raw_profile`，list-mode 评分未读取，导致院校硬门槛全部命中 `school_not_priority`。
+- 修复：`scripts/talent_library.py` 在导入脉脉列表联系人时同步保存 `candidate_details.raw_data.maimai_list`；`scripts/maimai_ai_infra_rank.py` 的 list-mode 只读取该命名空间里的列表学校证据，不读取完整详情文本、不放松院校硬门槛。
+- 回归测试：新增 `tests/test_talent_library_cli.py::test_import_entry_apply_preserves_maimai_list_raw_for_scoring`、`tests/test_maimai_ai_infra_strategy.py::test_score_candidate_list_mode_uses_maimai_list_raw_school_tags`、`tests/test_maimai_ai_infra_strategy.py::test_rank_candidates_list_mode_uses_maimai_list_raw_school_tags`。
+- campaign DB 补全：用修复后的导入映射对同一 `contacts-wave-001.json` 幂等补齐 raw data，结果 `created=0`、`merged=818`、`pending=0`、`errors=0`；DB 核验 `raw_maimai_list=818`。
+- shortlist：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/initial-list-shortlist-wave-001.json/md`；结果 `total_candidates=818`，`A=120`、`B=144`、`C=261`、`淘汰=293`。
+- 初版报告：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/initial-list-report-wave-001.md/json`；funnel 为 `raw_count=2211`、`page_count=120`、`wave_count=1`。
+- 人工审核草稿：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/review/initial-human-review-draft-wave-001.json`；包含 A+B 共 264 人，默认 `decision=hold`，仅供人工改为 `detail_now/hold/reject`，未生成详情任务包。
+- 边界：`data/talent.db` 未修改，核验时间戳仍为 `2026-05-14 13:54:21`；本轮未触发脉脉请求、未抓详情、未执行详情 apply。
+- 错误沉淀：已在 `memory/error-log.md` 记录 list-mode 院校证据丢失问题。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_strategy.py tests/test_talent_library_cli.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_campaign.py -q` -> `75 passed`；`python -m py_compile scripts/maimai_ai_infra_rank.py scripts/talent_library.py scripts/maimai_ai_infra_pipeline.py` -> PASS；`git diff --check` -> PASS。
+
+# AI Infra V2 后续 wave 执行规则（2026-05-15）
+
+> 用户确认：后续每个搜索批次都执行到 pipeline 的人工评审草稿为止；真正的人工评审决策和详情抓取等所有搜索任务完成后统一处理。
+
+## 固定边界
+
+- [x] 每个 wave 的自动步骤：列表 live search -> 页级 raw 标准化 -> run-campaign dry-run -> run-campaign apply 到 campaign DB -> list-mode 初筛报告 -> 人工审核草稿。
+- [x] 每个 wave 的停止点：只生成 `review/initial-human-review-draft-<wave>.json`，默认 `decision=hold`。
+- [x] 禁止中途做人工评审决策、生成详情任务包、启动详情 plan server、抓详情或详情 apply。
+- [x] 主库 `data/talent.db` 继续保持只读边界；自动写入只允许发生在 campaign DB。
+- [x] 纠正规则：若某个 wave 因 429/403/验证码/登录/非 JSON/模板异常等条件中断，只记录中断点、中断原因、已完成页级 raw、continuation plan 和页面健康状态；不基于 partial 数据继续 dry-run/apply/评分/生成评审草稿。等该 wave 补齐并 clean 后再进入后续 pipeline。
+
+# AI Infra V2 wave-002 列表搜索到人工评审草稿（2026-05-15）
+
+> 目标：继续后续搜索任务，执行 wave-002 的 40 个 search unit；完成列表搜索、campaign DB apply、初筛报告和人工审核草稿，仍不进入详情。
+
+## 执行计划
+
+- [x] 生成 wave-002 live gate plan，范围为 `unit-000041..unit-000080`、每 unit 3 页。
+- [x] 执行 wave-002 live gate；若登录、验证码、403、429、非 JSON 或模板异常则立即熔断，不重试。
+- [x] 检查 live raw：`status/stopReason`、每页 HTTP 状态、解析错误、页面健康和请求体字段。
+- [x] 标准化 wave-002 页级 raw，运行 `run-campaign --wave wave-002` dry-run；若 clean，再 apply 到 campaign DB。
+- [x] 生成 wave-002 list-mode shortlist、initial-list-report 和人工审核草稿，默认 `decision=hold`。
+- [x] 运行聚焦测试和 `git diff --check`，写入 Review。
+
+## Review
+
+- plan：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-002-plan.json`；范围为 40 个 batch、120 个 page task，理论最多 3600 条原始 contacts。
+- live gate 命令：`python scripts/maimai_ai_infra_search_live_gate.py --plan data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-002-plan.json --out data/campaigns/ai-infra-v2-2026-05-15-dry-run/raw/search-live-wave-002-run-2026-05-15.json --cdp-url http://127.0.0.1:9888 --delay-seconds 8 --timeout-seconds 30`。
+- 熔断结果：`status=stopped`、`stopReason=http_429`；按规则未重试。raw 证据为 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/raw/search-live-wave-002-run-2026-05-15.json`。
+- 已完成范围：9 个 batch 有结果，26 次 page 请求中 25 页成功、1 页 `httpStatus=429`；已成功页落盘为 `unit-000041..unit-000048/page-001..003` 和 `unit-000049/page-001`，合计 25 页、302 条 page contacts。
+- 页面健康：熔断后仍为 `title=人才银行`、`readyState=complete`、`hasLoginPrompt=false`、`hasCaptcha=false`，`visibilityState=hidden`；未见登录或验证码。
+- continuation plan：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-002-continuation-after-429-plan.json`；从 `unit-000049/page-002` 继续，剩余 32 个 batch、95 个 page task，理论最多 2850 条原始 contacts。
+- 已废弃的 partial pipeline：本轮曾基于 429 前的部分数据生成 `contacts-wave-002.json`、`import-list-wave-002-*`、`initial-list-*-wave-002-partial.*` 和 `initial-human-review-draft-wave-002-partial.json`；用户已纠正后续规则，之后类似中断只记录断点和过程数据，不再基于 partial 继续 pipeline。
+- 主库边界：`data/talent.db` 未修改，核验时间戳仍为 `2026-05-14 13:54:21`；本轮未抓详情、未生成详情任务包、未执行详情 apply。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_strategy.py tests/test_talent_library_cli.py -q` -> `87 passed`；`python -m py_compile scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_rank.py scripts/talent_library.py` -> PASS；`git diff --check` -> PASS。
+
+# AI Infra V2 wave-002 continuation after 429（2026-05-15）
+
+> 目标：在用户要求“继续执行 wave-002”后，从 `search-live-wave-002-continuation-after-429-plan.json` 继续列表搜索；仍执行到人工审核草稿为止，不进入详情。
+
+## 执行计划
+
+- [x] 使用 continuation plan 从 `unit-000049/page-002` 继续，剩余 32 个 batch、95 个 page task。
+- [x] 执行 live gate；遇 429/403/验证码/登录/非 JSON/模板异常立即熔断，不自动重试。
+- [x] 标准化成功页，更新 wave-002 contacts；注意 wave-002 partial 已 apply，后续写库需按增量处理，不能直接重复整波 apply。
+- [x] 更新 wave-002 shortlist、initial-list-report 和人工审核草稿。
+- [x] 运行聚焦测试和 `git diff --check`，写入 Review。
+
+## Review
+
+- continuation plan：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-002-continuation-after-429-plan.json`；从 `unit-000049/page-002` 继续，32 个 batch、95 个 page task。
+- live gate 命令：`python scripts/maimai_ai_infra_search_live_gate.py --plan data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-002-continuation-after-429-plan.json --out data/campaigns/ai-infra-v2-2026-05-15-dry-run/raw/search-live-wave-002-continuation-run-2026-05-15.json --cdp-url http://127.0.0.1:9888 --delay-seconds 8 --timeout-seconds 30`。
+- live gate 结果：`status=completed`、`stopReason=null`；32 个 batch、95 页全部完成，continuation 原始 contacts 为 1623。
+- 分页核验：95 页全部 `httpStatus=200`、`parseError=null`；无登录、无验证码；请求体不含 `age`，包含 `min_age=24`、`max_age=40`、`worktimes_min=2`、`worktimes_max=10`、`degrees=1,2,3`。
+- 页级 raw：continuation 成功页已标准化落盘；wave-002 现为完整 120 页、1925 条 page contacts。
+- full dry-run：重新生成 `contacts-wave-002.json`，全量去重后 `total_contacts=537`；`import-list-wave-002-dry-run.json` 为 `raw_contacts=537`、`unique_contacts=537`、`created=295`、`merged=242`、`pending=0`、`errors=0`。
+- continuation apply：由于 wave-002 partial 已有 completed apply ledger，本轮没有重复调用 `run-campaign --apply`，而是使用底层导入器做幂等全量补写，并单独记录 `action=apply_continuation`；结果 `created=295`、`merged=242`、`pending=0`、`errors=0`。
+- apply 报告：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/import-list-wave-002-continuation-apply.md/json`；ledger 已写入 `state/import-ledger.jsonl` 的 `apply_continuation started/completed`。
+- campaign DB：当前 `candidates=1213`、`source_profiles=1213`、`candidate_details=1213`、`pending_merges=0`、`sync_conflicts=0`。
+- wave-002 shortlist：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/initial-list-shortlist-wave-002.json/md`；结果 `total_candidates=537`，`A=63`、`B=93`、`C=169`、`淘汰=212`。
+- wave-002 初版报告：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/initial-list-report-wave-002.md/json`；funnel 为 `raw_count=1925`、`page_count=120`、`wave_count=1`、`partial=false`。
+- wave-002 人工审核草稿：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/review/initial-human-review-draft-wave-002.json`；包含 A+B 共 156 人，默认 `decision=hold`。partial 草稿仍保留作历史证据，但后续应使用全量草稿。
+- 主库边界：`data/talent.db` 未修改，核验时间戳仍为 `2026-05-14 13:54:21`；本轮未抓详情、未生成详情任务包、未执行详情 apply。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_strategy.py tests/test_talent_library_cli.py -q` -> `87 passed`；`python -m py_compile scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_rank.py scripts/talent_library.py` -> PASS；`git diff --check` -> PASS。
+# AI Infra V2 wave-003 至 wave-012 批量列表搜索执行（2026-05-15）
+> 目标：按用户授权依次执行 `wave-003` 至 `wave-012` 的真实列表搜索；每个完整 wave 执行到 campaign DB apply、list-mode 初筛报告和人工评审草稿为止。若任一 wave 触发登录、验证码、403、429、非 JSON、parse error 或模板异常，只记录断点、原因和过程数据，并暂停后续任务。
+
+## 执行计划
+
+- [x] 预检 campaign root、`search-units.jsonl`、campaign DB 和主库只读边界。
+- [x] 逐个 wave 生成 live gate plan，范围为对应 `search-units.jsonl` 的 unit。
+- [x] 对 `wave-003` 执行 live gate；遇 `http_429` 熔断后只标准化成功页级 raw。
+- [ ] 对每个完整 wave 执行 `run-campaign` dry-run；clean 后 apply 到 campaign DB。
+- [ ] 对每个完整 wave 生成 list-mode shortlist、initial-list-report 和人工评审草稿，默认 `decision=hold`。
+- [x] 若发生熔断，生成 continuation plan，记录断点和页面健康状态，不跑 partial pipeline。
+- [ ] 每个完整 wave 后运行聚焦验证和 `git diff --check`。
+
+## Review
+
+- `wave-003` live gate 已执行，输出 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/raw/search-live-wave-003-run-2026-05-15.json`。
+- 熔断结果：`status=stopped`、`stopReason=http_429`；中断点为 `unit-000098/page-003`，最后成功页为 `unit-000098/page-002`。
+- 已按规则只保留过程数据：标准化成功页级 raw 53 页、1182 条 page contacts。
+- continuation plan 已生成：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-003-continuation-after-429-plan.json`，剩余 23 个 batch、67 个 page task。
+- 中断报告已生成：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/interruption-wave-003-2026-05-15.json`。
+- 已确认未基于 partial 数据继续 pipeline：未生成 `contacts-wave-003.json`、`import-list-wave-003-*`、`initial-list-shortlist-wave-003.*`、`initial-list-report-wave-003.*` 或 `initial-human-review-draft-wave-003.json`。
+- campaign DB 未新增写入，仍为 `candidates=1213`、`source_profiles=1213`、`candidate_details=1213`、`pending_merges=0`、`sync_conflicts=0`；主库 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`。
+
+## 恢复后执行 Review
+
+- 用户确认恢复后，已从 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-003-continuation-after-429-plan.json` 继续执行。
+- `wave-003` continuation completed：23 个 batch、67 个剩余 page task 全部完成；`wave-003` 最终为 120 页、2089 条 page contacts、675 个去重 contacts。
+- `wave-003` dry-run clean：`pre_errors=0`、`pending=0`、`errors=0`；apply 写入 campaign DB，结果 `created=536`、`merged=139`、`pending=0`、`errors=0`。
+- `wave-003` 已生成 `reports/initial-list-shortlist-wave-003.json/md`、`reports/initial-list-report-wave-003.json/md` 和 `review/initial-human-review-draft-wave-003.json`；初筛分布为 `A=55`、`B=120`、`C=235`、`淘汰=265`，评审草稿 175 人，全部默认 `decision=hold`。
+- `wave-003` 后聚焦验证通过：`python -m pytest tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_strategy.py tests/test_talent_library_cli.py -q` -> `87 passed`；`python -m py_compile scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_rank.py scripts/talent_library.py` -> PASS；`git diff --check` -> PASS。
+- 随后启动 `wave-004`，live gate 输出 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/raw/search-live-wave-004-run-2026-05-15.json`，在 `unit-000148/page-002` 触发 `http_429` 熔断；最后成功页为 `unit-000148/page-001`。
+- 已按规则只保留 `wave-004` 过程数据：标准化成功页级 raw 82 页、1441 条 page contacts。
+- `wave-004` continuation plan 已生成：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-004-continuation-after-429-plan.json`，剩余 13 个 batch、38 个 page task。
+- `wave-004` 中断报告已生成：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/interruption-wave-004-2026-05-15.json`。
+- 已确认未基于 `wave-004` partial 数据继续 pipeline：未生成 `contacts-wave-004.json`、`import-list-wave-004-*`、`initial-list-shortlist-wave-004.*`、`initial-list-report-wave-004.*` 或 `initial-human-review-draft-wave-004.json`。
+- 当前 campaign DB 为 `candidates=1749`、`source_profiles=1749`、`candidate_details=1749`、`pending_merges=0`、`sync_conflicts=0`；主库 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`。
+
+## 恢复节奏调整
+
+- 用户确认继续执行，并要求 `wave-004` 完整结束后随机休息 10-15 分钟；后续每个完整 wave 之间也随机休息 10-15 分钟，用于观察是否减少 429 熔断。
+- 执行边界不变：熔断时只记录断点、原因、已获得数据和 continuation plan，不基于 partial 数据跑后续 pipeline，也不自动进入下一 wave。
+
+## 第二次恢复后执行 Review
+
+- 已从 `wave-004` continuation plan 继续执行：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-004-continuation-after-429-plan.json`。
+- `wave-004` continuation completed：13 个 batch、38 个剩余 page task 全部完成；`wave-004` 最终为 120 页、1477 条 page contacts、511 个去重 contacts。
+- `wave-004` dry-run clean：`pre_errors=0`、`pending=0`、`errors=0`；apply 写入 campaign DB，结果 `created=291`、`merged=220`、`pending=0`、`errors=0`。
+- `wave-004` 已生成 `reports/initial-list-shortlist-wave-004.json/md`、`reports/initial-list-report-wave-004.json/md` 和 `review/initial-human-review-draft-wave-004.json`；初筛分布为 `A=66`、`B=82`、`C=168`、`淘汰=195`，评审草稿 148 人，全部默认 `decision=hold`。
+- `wave-004` 后聚焦验证通过：`python -m pytest tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_strategy.py tests/test_talent_library_cli.py -q` -> `87 passed`；`python -m py_compile scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_rank.py scripts/talent_library.py` -> PASS；`git diff --check` -> PASS。
+- `wave-004` 完整结束后已随机休息 871 秒，约 14.5 分钟；休息记录为 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/rest-after-wave-004-2026-05-15.json`。
+- 随后启动 `wave-005`，live gate 输出 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/raw/search-live-wave-005-run-2026-05-15.json`；运行中先出现大量 `http_432`，最终 `stopReason=http_429` 熔断。
+- `wave-005` 第一个异常页为 `unit-000164/page-003`，`httpStatus=432`；最后成功页为 `unit-000164/page-002`；最终 429 出现在 `unit-000198/page-001`。
+- 已按规则只保留 `wave-005` 过程数据：标准化成功页级 raw 11 页、0 条 page contacts。
+- `wave-005` continuation plan 已生成：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-005-continuation-after-429-plan.json`，剩余 37 个 batch、109 个 page task。
+- `wave-005` 中断报告已生成：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/interruption-wave-005-2026-05-15.json`。
+- 已确认未基于 `wave-005` partial 数据继续 pipeline：未生成 `contacts-wave-005.json`、`import-list-wave-005-*`、`initial-list-shortlist-wave-005.*`、`initial-list-report-wave-005.*` 或 `initial-human-review-draft-wave-005.json`。
+- 当前 campaign DB 为 `candidates=2040`、`source_profiles=2040`、`candidate_details=2040`、`pending_merges=0`、`sync_conflicts=0`；主库 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`。
+- 用户观察：今天已达每日请求限额，当前估计约 500 次请求；本日不再继续执行真实搜索，避免基于限流状态反复触发风控。
+- 后续恢复规则：从 `wave-005` continuation plan 继续前，先拆成更小切片，建议每片约 50 个 page task；切片或 wave 间继续随机休息，再观察是否降低 429/432 熔断。
+
+# AI Infra V2 wave-005 换账号后恢复执行（2026-05-15）
+
+> 目标：用户已换账号并手动搜索过一次，恢复 `wave-005` continuation；先校验新模板，再按约 50 个 page task 小切片执行。若触发 429/403/验证码/登录/非 JSON/模板异常，立即停止，只记录断点和过程数据。
+
+## 执行计划
+
+- [x] 只读检查新账号 CDP 页面健康和 `window.__maimaiSearchTemplate`。
+- [x] 修复并验证新模板缺 `min_age/max_age`、含旧 `age` 时的请求体 patch，确保真实请求不发送 `search.age`，并显式写入 `min_age/max_age`。
+- [x] 将 `wave-005` continuation plan 拆分为约 50 个 page task 的小切片。
+- [ ] 顺序执行切片；切片间随机休息，任一切片熔断则停止，不跑 partial pipeline。
+- [ ] 仅当 `wave-005` 全部 120 页补齐后，运行 run-campaign dry-run；clean 后 apply 到 campaign DB。
+- [ ] 生成 `wave-005` list-mode shortlist、initial-list-report 和人工评审草稿，默认 `decision=hold`。
+- [ ] 运行聚焦测试、语法检查和 `git diff --check`，写入 Review。
+
+## Review
+
+- 新账号模板只读检查：页面仍为 `title=人才银行`、`readyState=complete`，无登录、无验证码；`window.__maimaiSearchTemplate` 存在且指向 `/api/ent/v3/search/basic`。
+- 模板漂移：新账号模板 `searchShape` 包含旧 `age` 字段且缺少 `min_age/max_age`；已修复 runner/live gate，显式写入确认过的 `min_age/max_age`，并在年龄范围存在时删除 `search.age`。
+- 修复验证：`python -m pytest tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_search_live_gate.py -q` -> `36 passed`；`python -m py_compile scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_search_live_gate.py` -> PASS；只构造请求体探针确认 `hasAge=false`、`min_age=24`、`max_age=40`。
+- 切片计划：`wave-005` continuation 已拆为 3 片，页数分别为 50、50、9；summary 为 `reports/wave-005-continuation-slices-2026-05-15.json`。
+- slice-001：`raw/search-live-wave-005-slice-001-run-2026-05-15.json` completed，18 个 batch、50 页、8 条 contacts；每页 `httpStatus=200`、`parseError=null`、无登录/验证码、请求体不含 `age` 且包含 `min_age=24/max_age=40`。已标准化 50 页，wave-005 到达 61/120 页。
+- slice-002：休息 686 秒后启动；`raw/search-live-wave-005-slice-002-run-2026-05-15.json` stopped，`stopReason=http_429`。第一异常页 `unit-000186/page-002`，最后成功页 `unit-000186/page-001`。
+- 中断处理：已标准化 429 前 15 个成功页、36 条 contacts；当前 wave-005 为 76/120 页完整，剩余 44 页。
+- 新 continuation plan：`search-live-wave-005-continuation-after-slice-002-429-plan.json`，从 `unit-000186/page-002` 开始，到 `unit-000200/page-003`，共 15 个 batch、44 个 page task。
+- 中断报告：`reports/interruption-wave-005-slice-002-2026-05-15.json`；按规则未执行 slice-003，未生成 `contacts-wave-005.json`，未运行 dry-run/apply/评分或人工评审草稿。
+- campaign DB 未新增写入，仍为 `candidates=2040`、`source_profiles=2040`、`candidate_details=2040`、`pending_merges=0`、`sync_conflicts=0`；主库 `data/talent.db` 未修改，时间戳仍为 `2026-05-14 13:54:21`。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_strategy.py tests/test_talent_library_cli.py -q` -> `111 passed`；`python -m py_compile scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_rank.py scripts/talent_library.py` -> PASS；`git diff --check` -> PASS；无 `maimai_ai_infra_search_live_gate.py` 进程残留。
+- 用户说明 `http_429` 熔断实际为 API 验证码，人工通过后继续执行 `search-live-wave-005-continuation-after-slice-002-429-plan.json`。
+- after-captcha run：`raw/search-live-wave-005-after-captcha-run-2026-05-15.json` completed，15 个 batch、44 页、84 条 contacts；每页 `httpStatus=200`、`parseError=null`、无登录/验证码、请求体不含 `age` 且包含 `min_age=24/max_age=40`。已标准化 44 页，wave-005 达到 120/120 页。
+- wave-005 dry-run clean：`contacts-wave-005.json` 为 48 个去重 contacts，`pre_errors=0`、`pending=0`、`errors=0`；apply 写入 campaign DB，结果 `created=43`、`merged=5`、`pending=0`、`errors=0`。
+- wave-005 已生成 `reports/initial-list-shortlist-wave-005.json/md`、`reports/initial-list-report-wave-005.json/md` 和 `review/initial-human-review-draft-wave-005.json`；初筛分布为 `A=6`、`B=4`、`C=8`、`淘汰=30`，评审草稿 10 人，全部默认 `decision=hold`。
+- wave-005 对账：四次执行来源共 120 页、128 条 page contacts，去重后 48 个联系人全部在 `contacts-wave-005.json` 和 campaign DB 中；campaign DB 当前 `candidates=2083`、`source_profiles=2083`、`candidate_details=2083`、`pending_merges=0`、`sync_conflicts=0`；主库 `data/talent.db` 未修改。
+- 纠正记录：live gate 已补强 API 熔断识别，HTTP 432 立即停止，HTTP 429 且 `block_info.block_type`/`captcha_type` 含 captcha 时记为 `captcha_api`；验证 `python -m pytest tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_runner.py -q` -> `37 passed`。
+
+# AI Infra V2 wave-006 列表搜索到人工评审草稿（2026-05-15）
+
+> 目标：继续执行 wave-006。范围为 `unit-000201..unit-000240`，共 40 个 unit、120 个 page task；按约 50 页切片执行。若触发 403/429/432/API 验证码/登录/页面验证码/非 JSON/模板异常，立即暂停，只记录断点、原因、已获得数据和 continuation plan，不基于 partial 数据跑后续 pipeline。
+
+## 执行计划
+
+- [x] 预检：确认 wave-006 尚未采集，wave-005 已完成，campaign DB 无 pending/conflict，且无 live gate 进程残留。
+- [x] 补强 live gate API 熔断识别：432 和 API captcha 不再继续刷页。
+- [x] 生成 wave-006 full plan 与约 50 页小切片 plan。
+- [x] 只读检查页面健康和 `window.__maimaiSearchTemplate`；通过后按顺序执行切片。
+- [x] 每个 completed 切片核验页级状态和请求体，标准化写入 `raw/search/unit-*/page-*.json`；切片间随机休息 10-15 分钟。
+- [x] 仅当 wave-006 全部 120 页补齐后，运行 run-campaign dry-run；clean 后 apply 到 campaign DB。
+- [x] 生成 wave-006 list-mode shortlist、initial-list-report 和人工评审草稿，默认 `decision=hold`。
+- [x] 运行聚焦测试、语法检查和 `git diff --check`，写入 Review。
+
+## Review
+
+- slice-001：`raw/search-live-wave-006-slice-001-run-2026-05-15.json` completed，17 个 batch、50 页、74 条 contacts；已标准化 50 页。
+- slice-002：`raw/search-live-wave-006-slice-002-run-2026-05-15.json` completed，18 个 batch、50 页、72 条 contacts；每页 `httpStatus=200`、`parseError=null`、无登录/验证码/API block，请求体不含 `age` 且包含 `min_age=24/max_age=40`、`worktimes_min=2/worktimes_max=10`；已标准化 50 页。
+- slice-003 前已随机休息 669 秒，约 11.15 分钟；记录为 `reports/rest-before-wave-006-slice-003-2026-05-15.json`。
+- slice-003：`raw/search-live-wave-006-slice-003-run-2026-05-15.json` stopped，`stopReason=captcha_api`；异常页为 `unit-000236/page-001`，`httpStatus=429`，`block_info.block_type=captcha_yd`，`captcha_type=text_click`。
+- 中断处理：只标准化 429 前 5 个成功页、13 条 contacts；当前 `wave-006` 为 105/120 页、159 条 page contacts。
+- continuation plan：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-006-continuation-after-slice-003-captcha-plan.json`，从 `unit-000236/page-001` 开始，剩余 5 个 batch、15 个 page task。
+- 中断报告：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/interruption-wave-006-slice-003-2026-05-15.json`。
+- 已确认未基于 `wave-006` partial 数据继续 pipeline：未生成 `contacts-wave-006.json`、`import-list-wave-006-*`、`initial-list-shortlist-wave-006.*`、`initial-list-report-wave-006.*` 或 `initial-human-review-draft-wave-006.json`。
+- campaign DB 未新增写入，仍为 `candidates=2083`、`source_profiles=2083`、`candidate_details=2083`、`pending_merges=0`、`sync_conflicts=0`；主库 `data/talent.db` 未修改，时间戳仍为 `2026-05-14 13:54:21`。
+- 验证：无 `maimai_ai_infra_search_live_gate.py` 进程残留；`git diff --check` -> PASS。按熔断规则未运行 full-wave dry-run/apply/评分/人工评审草稿。
+
+## 恢复后执行 Review
+
+- 用户确认继续后，已从 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-006-continuation-after-slice-003-captcha-plan.json` 恢复执行。
+- after-captcha run：`raw/search-live-wave-006-after-captcha-run-2026-05-15.json` completed，5 个 batch、15 页、35 条 contacts；每页 `httpStatus=200`、`parseError=null`、无登录/验证码/API block，请求体不含 `age` 且包含 `min_age=24/max_age=40`、`worktimes_min=2/worktimes_max=10`。
+- 已标准化剩余 15 页，`wave-006` 最终为 120/120 页、194 条 page contacts。
+- `wave-006` dry-run clean：`raw/contacts/contacts-wave-006.json` 为 77 个去重 contacts，`pre_errors=0`、`pending=0`、`errors=0`。
+- `wave-006` apply 写入 campaign DB：`created=70`、`merged=7`、`pending=0`、`errors=0`。
+- `wave-006` 已生成 `reports/initial-list-shortlist-wave-006.json/md`、`reports/initial-list-report-wave-006.json/md` 和 `review/initial-human-review-draft-wave-006.json`；初筛分布为 `A=5`、`B=8`、`C=7`、`淘汰=57`，评审草稿 13 人，全部默认 `decision=hold`。
+- campaign DB 当前 `candidates=2153`、`source_profiles=2153`、`candidate_details=2153`、`pending_merges=0`、`sync_conflicts=0`；主库 `data/talent.db` 未修改，时间戳仍为 `2026-05-14 13:54:21`。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_strategy.py tests/test_talent_library_cli.py -q` -> `112 passed`；`python -m py_compile scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_rank.py scripts/talent_library.py` -> PASS；`git diff --check` -> PASS；无 `maimai_ai_infra_search_live_gate.py` 进程残留。
+
+# AI Infra V2 wave-007 列表搜索预检阻塞（2026-05-16）
+
+> 目标：从 `wave-007` 开始继续列表搜索 pipeline，只生成用户审查报告，不进入详情。预检失败时只记录断点、原因和恢复计划，不启动真实搜索。
+
+## Review
+
+- 预检确认 `wave-007` 有 40 个 unit、120 个 page task，当前 0/120 页，未生成 `contacts-wave-007.json`、shortlist、initial-list-report 或人工评审草稿。
+- 预检阻塞：`http://127.0.0.1:9888/json/list` 连接被拒绝，`stopReason=cdp_unavailable`；未找到可读的现有人才银行 CDP session，因此未启动 live gate、未发真实搜索请求。
+- full plan：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-007-plan.json`。
+- continuation plan：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-007-continuation-after-cdp-unavailable-plan.json`，从 `unit-000241/page-001` 开始，剩余 120 个 page task。
+- 中断报告：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/interruption-wave-007-2026-05-16.json`。
+- 已确认未基于 partial 数据继续 pipeline：未运行 dry-run/apply/评分/人工评审草稿；主库 `data/talent.db` 未修改，预检记录时间戳仍为 `2026-05-14T13:54:21.4543850+08:00`。
+
+# AI Infra V2 wave-008 标准列表搜索到人工评审草稿（2026-05-16）
+
+> 目标：在已有 compressed probe 之后，执行标准 `wave-008` 全量列表搜索，用于后续对比压缩策略是否有效。本轮仍只到人工评审草稿，不生成详情任务包、不抓详情。
+
+## Review
+
+- 预检：`wave-008` 标准页级 raw 为 0/120；CDP `127.0.0.1:9888` 人才银行页健康，`hasLoginPrompt=false`、`hasCaptcha=false`、模板为 `/api/ent/v3/search/basic`，且包含 `min_age/max_age`。
+- 标准计划：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-008-plan.json`，40 个 batch、120 个 page task，范围 `unit-000281..unit-000320`。
+- live gate：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/raw/search-live-wave-008-run-2026-05-16.json` completed，40 个 batch、120 页、top-level contacts=8，无 `stopReason`。
+- 页级 raw：已标准化 120/120 页到 `raw/search/unit-*/page-*.json`，页级 contacts 合计 8，异常页 0。
+- `wave-008` dry-run clean：`raw/contacts/contacts-wave-008.json` 去重后 2 人，`pre_errors=0`、`pending=0`、`errors=0`。
+- `wave-008` apply 写入 campaign DB：`created=1`、`merged=1`、`pending=0`、`errors=0`；主库 `data/talent.db` 未修改。
+- 评分和报告：`reports/initial-list-shortlist-wave-008.json/md`、`reports/initial-list-report-wave-008.json/md` 已生成；初筛分布为 `A=0`、`B=0`、`C=1`、`淘汰=1`。
+- 人工评审草稿：`review/initial-human-review-draft-wave-008.json` 已生成；A/B 共 0 人，默认 `decision=hold`，按规则未生成详情任务包。
+- 压缩对比摘要：`reports/wave-008-compressed-vs-standard-comparison-2026-05-16.json/md`。compressed probe 为 36 成功页、1 个唯一联系人；标准 wave 为 120 成功页、2 个唯一联系人；unique/success-page 分别约 `0.0278` vs `0.0167`。
+- campaign DB 当前 `candidates=2163`、`source_profiles=2163`、`candidate_details=2163`、`pending_merges=0`、`sync_conflicts=0`；无 `maimai_ai_infra_search_live_gate.py --plan` 进程残留。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_strategy.py tests/test_talent_library_cli.py -q` -> `112 passed`；`python -m py_compile scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_rank.py scripts/talent_library.py` -> PASS；`git diff --check` -> PASS。
+
+# AI Infra V2 wave-009 换账号后标准列表搜索到人工评审草稿（2026-05-16）
+
+> 目标：用户切换脉脉账号后，重新检查环境；确认无登录/验证码/模板阻塞后继续执行标准 `wave-009`。本轮仍只到人工评审草稿，不生成详情任务包、不抓详情。
+
+## Review
+
+- 新账号环境预检：CDP `127.0.0.1:9888` 人才银行页健康，`hasLoginPrompt=false`、`hasCaptcha=false`、模板为 `/api/ent/v3/search/basic`；模板里仍有旧 `age` 字段且缺少 `min_age/max_age`，但 live gate 会在应用已确认年龄范围时删除 `age` 并补入 `min_age/max_age`。
+- 初始状态：`wave-009` 标准页级 raw 为 0/120，未生成 `contacts-wave-009.json`、shortlist、initial-list-report 或人工评审草稿；无 live gate 进程残留；主库 `data/talent.db` 未修改，时间戳仍为 `2026-05-14T13:54:21.4543850+08:00`。
+- 标准计划：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-009-plan.json`，40 个 batch、120 个 page task，范围 `unit-000321..unit-000360`。
+- live gate：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/raw/search-live-wave-009-run-2026-05-16.json` completed，40 个 batch、120 页、top-level contacts=0，无 `stopReason`。
+- 页级 raw：已标准化 120/120 页到 `raw/search/unit-*/page-*.json`，页级 contacts 合计 0，异常页 0。
+- `wave-009` dry-run clean：`raw/contacts/contacts-wave-009.json` 去重后 0 人，`pre_errors=0`、`pending=0`、`errors=0`。
+- `wave-009` apply 为 campaign DB no-op：`created=0`、`merged=0`、`pending=0`、`errors=0`；主库 `data/talent.db` 未修改。
+- 评分和报告：`reports/initial-list-shortlist-wave-009.json/md`、`reports/initial-list-report-wave-009.json/md` 已生成；初筛分布为 `A=0`、`B=0`、`C=0`、`淘汰=0`。
+- 人工评审草稿：`review/initial-human-review-draft-wave-009.json` 已生成；A/B 共 0 人，默认 `decision=hold`，按规则未生成详情任务包。
+- campaign DB 当前 `candidates=2163`、`source_profiles=2163`、`candidate_details=2163`、`pending_merges=0`、`sync_conflicts=0`；无 `maimai_ai_infra_search_live_gate.py --plan` 进程残留。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_strategy.py tests/test_talent_library_cli.py -q` -> `112 passed`；`python -m py_compile scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_rank.py scripts/talent_library.py` -> PASS；`git diff --check` -> PASS。
+
+# AI Infra V2 wave-007 状态对账与续跑（2026-05-16）
+
+> 目标：对账 `wave-007` 的预检阻塞记录与实际产物；若 live run 已完成且未进入下游，则补标准化 page raw、run-campaign、初筛报告和人工评审草稿，不进入详情。
+
+## 执行计划
+
+- [x] 对账 `tasks/todo.md`、中断报告与 `raw/search-live-wave-007-run-2026-05-16.json`，确认最新实际断点。
+- [x] 将 `wave-007` live run 成功页标准化回填到 `raw/search/unit-*/page-*.json`。
+- [x] 对 `wave-007` 运行 `run-campaign` dry-run；clean 后 apply 到 campaign DB。
+- [x] 生成 `wave-007` 的 shortlist、initial-list-report 和人工评审草稿，默认 `decision=hold`。
+- [x] 验证 campaign DB、主库边界、关键产物和 `git diff --check`，写入 Review。
+
+## Review
+
+- 状态对账：`reports/interruption-wave-007-2026-05-16.json` 与 `tasks/todo.md` 记录停在 `cdp_unavailable`，但更晚的 `raw/search-live-wave-007-run-2026-05-16.json` 实际为 `status=completed`；该 run 创建时间为 `2026-05-16 10:11:21`，晚于中断报告的 `2026-05-16 09:44:50`，说明预检阻塞记录已过期。
+- live run 实际结果：`wave-007` 共 40 个 batch、120 页全部完成，页级 `httpStatus` 均为 200；原始页联系人共 26 条，去重后 10 个联系人。
+- 标准化回填：已用现有 campaign helper 将 `raw/search-live-wave-007-run-2026-05-16.json` 成功页全部回填为 `raw/search/unit-*/page-*.json`；`wave-007` 当前为 120/120 页标准化完成。
+- dry-run clean：`raw/contacts/contacts-wave-007.json` 为 10 个去重 contacts；`reports/import-list-wave-007-dry-run.md/json` 结果为 `pre_errors=0`、`pending=0`、`errors=0`、`created=9`、`merged=1`。
+- apply 结果：`reports/import-list-wave-007-apply.md/json` 结果为 `created=9`、`merged=1`、`pending=0`、`errors=0`；`state/import-ledger.jsonl` 已写入 `started` 和 `completed` 两条 `wave-007` apply 记录。
+- campaign DB：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/talent.db` 从 `candidates=2153` 增至 `2162`；`source_profiles=2162`、`candidate_details=2162`、`pending_merges=0`、`sync_conflicts=0`。
+- shortlist：`reports/initial-list-shortlist-wave-007.json/md` 已生成；结果 `total_candidates=10`，`A=1`、`B=3`、`C=2`、`淘汰=4`。
+- 初版报告：`reports/initial-list-report-wave-007.json/md` 已生成；funnel 为 `raw_count=26`、`page_count=120`、`wave_count=1`、`partial=false`，coverage 为 `direction_count=10`、`company_count=9`。
+- 人工评审草稿：`review/initial-human-review-draft-wave-007.json` 已生成；包含 A+B 共 4 人，全部默认 `decision=hold`，优先级为 `A->P0`、`B->P1`。
+- 主库边界：`data/talent.db` 未修改，时间戳仍为 `2026-05-14 13:54:21`；本轮未进入详情抓取或详情 apply。
+
+# AI Infra V2 wave-006 之后联系人下降原因分析（2026-05-16）
+
+> 目标：解释为什么从 `wave-006` 开始抓到的联系人明显减少，区分“query 面变窄 / 命中本来少”和“执行链路异常 / 数据丢失”两类原因，并给出证据。
+
+## 执行计划
+
+- [x] 汇总 `wave-001..wave-007` 的 page contacts、去重 contacts、shortlist 和 page-level total/zero-page 分布。
+- [x] 对比 `wave-005..wave-007` 的 live run、plan 和 raw page，确认减少是否来自 query 命中量下降而非标准化/导入丢数。
+- [x] 抽样核对 `wave-006`、`wave-007` 的 query/company/position 组合与返回 totals，判断是否是波次策略本身更窄。
+- [x] 输出结论、证据和后续建议，写入 Review。
+
+## Review
+
+- 严格说联系人断崖不是从 `wave-006` 才开始，而是 `2026-05-15` 的 `wave-005` 就已经进入低命中区：`wave-004 -> wave-005 -> wave-006 -> wave-007` 的去重联系人分别是 `511 -> 48 -> 77 -> 10`；raw contacts 分别是 `1477 -> 128 -> 194 -> 26`。
+- 这不是执行链路丢数。`wave-005/006/007` 最终都补齐了 `120/120` 页；`run-campaign` dry-run/apply 都是 clean；去重倍率稳定，`raw/unique` 分别为 `2.67 / 2.52 / 2.60`，没有出现“重复异常增多把结果吃掉”的迹象。
+- page-level total 直接证明是上游命中池变小，而不是本地标准化或导入丢数：`wave-004` 平均每页 `total=328.01`、中位数 `6`；`wave-005` 掉到 `3.19`、中位数 `0`；`wave-006` 为 `4.85`、中位数 `4`；`wave-007` 进一步掉到 `0.65`、中位数 `0`，最大单页 total 也只有 `4`。
+- 公司池切换是主因。`wave-002..wave-004` 还包含 `阿里巴巴/快手/百度/月之暗面` 这类高密度公司；`wave-005..wave-007` 切到 `DeepSeek/MiniMax/智谱/阶跃星辰/生数科技/爱诗科技`。其中 `wave-007` 的 `生数科技/爱诗科技` 最稀疏：两家公司各 60 页里，正 total 页只有 `18/12`，平均每页 total 只有 `0.8/0.5`。
+- `keyword_pack` 不是主要瓶颈，`company + position` 硬筛才是。`wave-005` 有 `19/20` 对、`wave-006` 有 `20/20` 对、`wave-007` 有 `20/20` 对同一 `company + position` 下的 `inference/training` 三页 totals 完全一致，说明换词包几乎没有扩展结果集；真正限制结果的是 `allcompanies + positions` 这两个筛选。
+- `wave-006` 本身并不比 `wave-005` 更差，反而略有恢复：`unique_contacts 77 > 48`，`avg_total_per_page 4.85 > 3.19`。所以如果要找“为什么从 `wave-006` 开始明显少”，更准确的结论是：`wave-006` 只是延续了 `wave-005` 进入 tier2 长尾公司池后的低命中状态；`wave-007` 因公司池更小再次下降。
+- `wave-007` 另有一个 bookkeeping 问题：`tasks/todo.md` 和中断报告一度停在 `cdp_unavailable`，但实际后来已有 completed live run；不过这个问题只影响状态判断，不影响最终联系人数量。对账后补跑 page raw / import / shortlist，结果仍然是低命中。
+- 后续建议：对 `生数科技/爱诗科技` 这类更小公司，不要继续均匀铺 10 个 technical position * 2 个词包。优先保留已验证有量的 `机器学习平台 / 推理引擎 / 高性能计算`，并考虑放松 `positions` 或改用更宽的 precision title 批次，否则大部分 batch 会继续是全 0 页。
+- 验证：本次统计统一基于 canonical `raw/search/unit-*/page-*.json` 与 wave report/shortlist 产物重算，避免把中断重试页重复计数；`git diff --check` -> PASS。
+
+# AI Infra V2 wave-008 compressed probe（2026-05-16）
+
+> 目标：基于 `wave-005..007` 的低命中分析，先执行一版压缩后的 `wave-008` 探针计划，只看 live result 数据；不写 DB、不进入详情、不替代 canonical `wave-008`，除非结果证明值得扩展。
+
+## 执行计划
+
+- [x] 生成 `search-live-wave-008-compressed-plan.json`，从原始 `wave-008` 的 40 个 unit 压缩到约 12 个 batch。
+- [x] 预检 CDP 和人才银行页面健康；若不可用，只记录阻塞，不发真实搜索。
+- [x] 执行 compressed live gate；遇 429/432/403/API 验证码/登录/非 JSON/模板异常立即停止。
+- [x] 汇总 page total、contacts、去重联系人、命中 position/keyword_pack 分布。
+- [x] 根据结果判断是否继续扩展或转为正式 `wave-008` 导入，写入 Review。
+
+## Review
+
+- 压缩计划：`search-live-wave-008-compressed-plan.json` 共 `12` 个 batch、`36` 个 page task，覆盖 `硅基流动/推理引擎` 与 `字节跳动/机器学习工程师|深度学习工程师|平台开发工程师` 的高信号词包。
+- 首次 live gate：`raw/search-live-wave-008-compressed-run-2026-05-16.json` 在 `unit-000303/page-001` 触发 `captcha_api` 停机；此前已完成 `unit-000283..302` 共 `9` 个 batch、`27` 个成功页，页级 `httpStatus=200`。
+- 用户手动过码后，已生成 continuation plan：`search-live-wave-008-compressed-continuation-after-captcha-plan.json`，只补 `unit-000303/309/310` 剩余 `3` 个 batch、`9` 个 page task。
+- continuation run：`raw/search-live-wave-008-compressed-continuation-run-2026-05-16.json` 为 `status=completed`；剩余 `9` 页全部成功，未再次触发 403/429/432/API 验证码/登录/非 JSON/模板异常。
+- 合并结果汇总见 `reports/search-live-wave-008-compressed-summary-2026-05-16.json/md`：总尝试页 `37`（其中 `429` 阻塞页 `1`），成功页 `36`，`httpStatus=200` 共 `36` 页；`positive_total_pages=6`、`zero_total_pages=30`、`page_total_sum=6`、`avg_total_per_success_page=0.1667`、`median_total=0`、`max_total=1`。
+- 联系人结果：页级 raw contacts 只有 `2` 条，去重后只剩 `1` 人；两条 raw 都来自 `硅基流动 + 推理引擎` 的 `inference/training` 两个 batch，同一联系人重复命中。`字节跳动` 的 `10` 个 batch、`30` 个成功页全部 `total=0`。
+- 结论：这版 compressed probe 不值得扩展，也不转正式 `wave-008` 导入；保持“不写 DB、不进入详情、不替代 canonical wave-008”。如果后续还要探 `wave-008`，更合理的是先做 `page-001 only` 探针，只有当某个 batch 的 `page1 total > 30` 时再补第 2-3 页，否则固定 3 页会继续浪费请求额度。
+
+# AI Infra V2 wave-010 标准列表搜索到人工评审草稿（2026-05-16）
+
+> 目标：继续执行标准 `wave-010`。本轮仍只到人工评审草稿，不生成详情任务包、不抓详情；遇 403/429/432/API 验证码/登录/页面验证码/非 JSON/模板异常立即熔断并记录 continuation。
+
+## 执行计划
+
+- [x] 预检：确认无 live gate 进程残留、主库 `data/talent.db` 不变、`wave-010` 仍未采集，且 CDP 人才银行页健康。
+- [x] 生成 `search-live-wave-010-plan.json`，覆盖 `unit-000361..unit-000400` 共 40 个 batch、120 个 page task。
+- [x] 执行 `wave-010` live gate；若熔断，只标准化成功页并写 continuation/interruption 后停止。
+- [x] 完成后标准化 120 页到 `raw/search/unit-*/page-*.json`。
+- [x] 运行 `run-campaign --wave wave-010` dry-run；clean 后 apply 到 campaign DB。
+- [x] 生成 `initial-list-shortlist-wave-010.*`、`initial-list-report-wave-010.*` 和 `review/initial-human-review-draft-wave-010.json`。
+- [x] 运行聚焦测试、语法检查和 `git diff --check`，确认无 live gate 进程残留且主库未修改。
+
+## Review
+
+- 预检：`wave-010` 为 `unit-000361..unit-000400` 共 40 个 batch、120 个 page task；执行前标准化页为 `0/120`，未生成 contacts/import/shortlist/report/review；无 live gate 进程残留。CDP 人才银行页健康，`hasLoginPrompt=false`、`hasCaptcha=false`、`hasTalentBank=true`，模板为 `POST /api/ent/v3/search/basic` 且包含 `min_age/max_age`。
+- 标准计划：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-010-plan.json`，覆盖 `unit-000361..unit-000400`。
+- live gate：`raw/search-live-wave-010-run-2026-05-16.json` stopped，`stopReason=captcha_api`；失败页为 `unit-000368/page-003`，HTTP `429`，`block_info.block_type=captcha_yd`，`captcha_type=text_click`。
+- 中断前成功页：已标准化 `23/120` 页，包含 `unit-000361..unit-000367` 全部 21 页，以及 `unit-000368/page-001..002`；失败页 `unit-000368/page-003` 未写入 page raw。
+- continuation plan：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-010-continuation-after-captcha-api-plan.json`，从 `unit-000368/page-003` 继续，剩余 `33` 个 batch、`97` 个 page task。
+- 中断报告：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/interruption-wave-010-2026-05-16.json`，包含 `beforeHealth/templateStatus/afterHealth`、失败页响应摘要、raw preview、`block_info` 和 downstream-not-run 证据。
+- 已确认未基于 partial 数据继续 pipeline：未生成 `contacts-wave-010.json`、`import-list-wave-010-*`、`initial-list-shortlist-wave-010.*`、`initial-list-report-wave-010.*` 或 `initial-human-review-draft-wave-010.json`。
+- 轻量验证：continuation plan 可读且 `resume_from=unit-000368/page-003`、剩余页数 `97`；中断报告 `stopReason=captcha_api`；无 live gate 进程残留；`git diff --check` -> PASS；主库 `data/talent.db` 未修改，时间戳仍为 `2026-05-14 13:54:21`。
+- 用户处理验证码后继续执行：`raw/search-live-wave-010-continuation-after-captcha-api-run-2026-05-16.json` completed，33 个 batch、97 页、top-level contacts=306，无 `stopReason`。
+- 页级 raw：已标准化 continuation 全部 97 页；`wave-010` 最终补齐 `120/120` 页，页级 contacts 合计 `306`。
+- `wave-010` dry-run clean：`raw/contacts/contacts-wave-010.json` 去重后 `102` 人，`pre_errors=0`、`pending=0`、`errors=0`。
+- `wave-010` apply 写入 campaign DB：`created=96`、`merged=6`、`pending=0`、`errors=0`；campaign DB 当前 `candidates=2259`、`source_profiles=2259`、`candidate_details=2259`、`pending_merges=0`、`sync_conflicts=0`。
+- 评分和报告：`reports/initial-list-shortlist-wave-010.json/md`、`reports/initial-list-report-wave-010.json/md` 已生成；初筛分布为 `A=4`、`B=5`、`C=9`、`淘汰=84`。
+- 人工评审草稿：`review/initial-human-review-draft-wave-010.json` 已生成；A+B 共 `9` 人，全部默认 `decision=hold`，优先级为 `A->P0`、`B->P1`；未生成详情任务包。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_strategy.py tests/test_talent_library_cli.py -q` -> `112 passed`；`python -m py_compile scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_rank.py scripts/talent_library.py` -> PASS；`git diff --check` -> PASS；无 `maimai_ai_infra_search_live_gate.py --plan` 进程残留；主库 `data/talent.db` 未修改，时间戳仍为 `2026-05-14 13:54:21`。
+
+- 用户要求继续前复核：`wave-010` 产物完整性再次通过，`120/120` 页、`contacts_total=102`、review items `9`、无 detail-wave-010 产物；聚焦测试再次 `112 passed`，语法检查、`git diff --check`、主库边界和 live gate 进程检查均通过。
+
+# AI Infra V2 wave-011 标准列表搜索到人工评审草稿（2026-05-16）
+
+> 目标：在 `wave-010` 验证通过后继续执行标准 `wave-011`。本轮仍只到人工评审草稿，不生成详情任务包、不抓详情；遇 403/429/432/API 验证码/登录/页面验证码/非 JSON/模板异常立即熔断并记录 continuation。
+
+## 执行计划
+
+- [x] 预检：确认无 live gate 进程残留、主库 `data/talent.db` 不变、`wave-011` 尚未采集，且 CDP 人才银行页健康。
+- [x] 生成 `search-live-wave-011-plan.json`，覆盖 `unit-000401..unit-000440` 共 40 个 batch、120 个 page task。
+- [x] 执行 `wave-011` live gate；若熔断，只标准化成功页并写 continuation/interruption 后停止。
+- [x] 完成后标准化 120 页到 `raw/search/unit-*/page-*.json`。
+- [x] 运行 `run-campaign --wave wave-011` dry-run；clean 后 apply 到 campaign DB。
+- [x] 生成 `initial-list-shortlist-wave-011.*`、`initial-list-report-wave-011.*` 和 `review/initial-human-review-draft-wave-011.json`。
+- [x] 运行聚焦测试、语法检查和 `git diff --check`，确认无 live gate 进程残留且主库未修改。
+
+## Review
+
+- 预检：`wave-011` 为 `unit-000401..unit-000440` 共 40 个 batch、120 个 page task；执行前标准化页为 `0/120`，未生成 contacts/import/shortlist/report/review；无 live gate 进程残留。CDP 人才银行页健康，`hasLoginPrompt=false`、`hasCaptcha=false`、`hasTalentBank=true`，模板为 `POST /api/ent/v3/search/basic` 且包含 `min_age/max_age`。
+- 标准计划：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-011-plan.json`，覆盖 `unit-000401..unit-000440`。
+- live gate：`raw/search-live-wave-011-run-2026-05-16.json` stopped，`stopReason=exception`；失败点为 `unit-000403/page-003`，`batch_error=Connection timed out`。页面健康仍为 `hasLoginPrompt=false`、`hasCaptcha=false`、`hasTalentBank=true`。
+- 中断前成功页：已标准化 `8/120` 页，包含 `unit-000401..unit-000402` 全部 6 页，以及 `unit-000403/page-001..002`；失败页 `unit-000403/page-003` 未写入 page raw。
+- continuation plan：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-011-continuation-after-connection-timeout-plan.json`，从 `unit-000403/page-003` 继续，剩余 `38` 个 batch、`112` 个 page task。
+- 中断报告：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/interruption-wave-011-2026-05-16.json`，包含 `beforeHealth/templateStatus/afterHealth`、失败点、最后成功页和 downstream-not-run 证据。
+- 已确认未基于 partial 数据继续 pipeline：未生成 `contacts-wave-011.json`、`import-list-wave-011-*`、`initial-list-shortlist-wave-011.*`、`initial-list-report-wave-011.*` 或 `initial-human-review-draft-wave-011.json`。
+- 轻量验证：continuation plan 可读且 `resume_from=unit-000403/page-003`、剩余页数 `112`；中断报告 `stopReason=exception`、`stopError=Connection timed out`；无 live gate 进程残留；`git diff --check` -> PASS；主库 `data/talent.db` 未修改，时间戳仍为 `2026-05-14 13:54:21`。
+- 用户确认网页侧无验证码后，先跑单页 probe：`raw/search-live-wave-011-probe-after-connection-timeout-run-2026-05-16.json` completed，`unit-000403/page-003` 请求成功，HTTP 200，无验证码，已标准化该页；`wave-011` 进度到 `9/120`。
+- probe 成功后继续执行剩余计划：`raw/search-live-wave-011-continuation-after-probe-success-run-2026-05-16.json` stopped，`stopReason=captcha_api`；失败页为 `unit-000417/page-002`，HTTP `429`，`block_info.block_type=captcha_yd`，`captcha_type=text_click`。
+- 第二次中断前成功页：已标准化新增 `40` 页、`549` 条 page contacts；`wave-011` 当前标准化进度为 `49/120`。
+- 新 continuation plan：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-011-continuation-after-captcha-api-2-plan.json`，从 `unit-000417/page-002` 继续，剩余 `24` 个 batch、`71` 个 page task。
+- 新中断报告：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/interruption-wave-011-after-probe-success-2026-05-16.json`，包含失败页 `httpStatus/responseSummary/responseRawPreview/block_info/captcha_type` 和 downstream-not-run 证据。
+- 轻量验证：当前 `wave-011` 为 `49/120` 页；continuation plan 可读且 `resume_from=unit-000417/page-002`、剩余页数 `71`；未生成 contacts/import/shortlist/report/review；无 live gate 进程残留；`git diff --check` -> PASS；主库 `data/talent.db` 未修改，时间戳仍为 `2026-05-14 13:54:21`。
+- 用户继续后执行 `search-live-wave-011-continuation-after-captcha-api-2-plan.json`：在 `unit-000423/page-002` 再次触发 `captcha_api`，HTTP `429`，`block_info.block_type=captcha_yd`，`captcha_type=text_click`。
+- 第三次中断处理：标准化 429 前新增 `18` 页、`270` 条 page contacts；`wave-011` 进度到 `67/120`；写入 `search-live-wave-011-continuation-after-captcha-api-3-plan.json`，从 `unit-000423/page-002` 继续，剩余 `53` 页；中断报告为 `reports/interruption-wave-011-after-captcha-api-2-2026-05-16.json`。
+- 用户继续后先跑单页 probe：`raw/search-live-wave-011-probe-after-captcha-api-3-run-2026-05-16.json` completed，`unit-000423/page-002` 请求成功，HTTP 200，无验证码，已标准化该页；`wave-011` 进度到 `68/120`。
+- probe 成功后继续执行剩余 `52` 页：`raw/search-live-wave-011-continuation-after-captcha-api-3-probe-success-run-2026-05-16.json` completed，18 个 batch、52 页、top-level contacts=217，无 `stopReason`。
+- 页级 raw：已标准化最后 52 页；`wave-011` 最终补齐 `120/120` 页，页级 contacts 合计 `1036`。
+- `wave-011` dry-run clean：`raw/contacts/contacts-wave-011.json` 去重后 `332` 人，`pre_errors=0`、`pending=0`、`errors=0`。
+- `wave-011` apply 写入 campaign DB：`created=265`、`merged=67`、`pending=0`、`errors=0`；campaign DB 当前 `candidates=2524`、`source_profiles=2524`、`candidate_details=2524`、`pending_merges=0`、`sync_conflicts=0`。
+- 评分和报告：`reports/initial-list-shortlist-wave-011.json/md`、`reports/initial-list-report-wave-011.json/md` 已生成；初筛分布为 `A=4`、`B=17`、`C=42`、`淘汰=269`。
+- 人工评审草稿：`review/initial-human-review-draft-wave-011.json` 已生成；A+B 共 `21` 人，全部默认 `decision=hold`，优先级为 `A->P0`、`B->P1`；未生成详情任务包。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_strategy.py tests/test_talent_library_cli.py -q` -> `112 passed`；`python -m py_compile scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_rank.py scripts/talent_library.py` -> PASS；`git diff --check` -> PASS；无 `maimai_ai_infra_search_live_gate.py --plan` 进程残留；主库 `data/talent.db` 未修改，时间戳仍为 `2026-05-14 13:54:21`。
+
+# AI Infra V2 wave-012 标准列表搜索到人工评审草稿（2026-05-16）
+
+> 目标：继续执行标准 `wave-012`。本轮仍只到人工评审草稿，不生成详情任务包、不抓详情；遇 403/429/432/API 验证码/登录/页面验证码/非 JSON/模板异常立即熔断并记录 continuation。
+
+## 执行计划
+
+- [x] 预检：确认无 live gate 进程残留、主库 `data/talent.db` 不变、`wave-012` 尚未采集，且 CDP 人才银行页健康。
+- [x] 生成 `search-live-wave-012-plan.json`，覆盖 `unit-000441..unit-000450` 共 10 个 batch、30 个 page task。
+- [x] 执行 `wave-012` live gate；若熔断，只标准化成功页并写 continuation/interruption 后停止。
+- [x] 完成后标准化 30 页到 `raw/search/unit-*/page-*.json`。
+- [x] 运行 `run-campaign --wave wave-012` dry-run；clean 后 apply 到 campaign DB。
+- [x] 生成 `initial-list-shortlist-wave-012.*`、`initial-list-report-wave-012.*` 和 `review/initial-human-review-draft-wave-012.json`。
+- [x] 运行聚焦测试、语法检查和 `git diff --check`，确认无 live gate 进程残留且主库未修改。
+
+## Review
+
+- 预检：`wave-012` 为 `unit-000441..unit-000450` 共 10 个 batch、30 个 page task；执行前标准化页为 `0/30`，未生成 contacts/import/shortlist/report/review；无 live gate 进程残留。CDP 人才银行页健康，`hasLoginPrompt=false`、`hasCaptcha=false`、`hasTalentBank=true`，模板为 `POST /api/ent/v3/search/basic` 且包含 `min_age/max_age`。
+- 标准计划：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/search-live-wave-012-plan.json`，覆盖 `unit-000441..unit-000450`。
+- live gate：`raw/search-live-wave-012-run-2026-05-16.json` completed，10 个 batch、30 页、top-level contacts=455，无 `stopReason`。
+- 页级 raw：已标准化 `30/30` 页到 `raw/search/unit-*/page-*.json`，页级 contacts 合计 `455`，异常页 `0`。
+- `wave-012` dry-run clean：`raw/contacts/contacts-wave-012.json` 去重后 `178` 人，`pre_errors=0`、`pending=0`、`errors=0`。
+- `wave-012` apply 写入 campaign DB：`created=124`、`merged=54`、`pending=0`、`errors=0`；campaign DB 当前 `candidates=2648`、`source_profiles=2648`、`candidate_details=2648`、`pending_merges=0`、`sync_conflicts=0`。
+- 评分和报告：`reports/initial-list-shortlist-wave-012.json/md`、`reports/initial-list-report-wave-012.json/md` 已生成；初筛分布为 `A=2`、`B=9`、`C=21`、`淘汰=146`。
+- 人工评审草稿：`review/initial-human-review-draft-wave-012.json` 已生成；A+B 共 `11` 人，全部默认 `decision=hold`，优先级为 `A->P0`、`B->P1`；未生成详情任务包。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_runner.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_strategy.py tests/test_talent_library_cli.py -q` -> `112 passed`；`python -m py_compile scripts/maimai_ai_infra_search_live_gate.py scripts/maimai_ai_infra_search_runner.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_rank.py scripts/talent_library.py` -> PASS；`git diff --check` -> PASS；无 `maimai_ai_infra_search_live_gate.py --plan` 进程残留；主库 `data/talent.db` 未修改，时间戳仍为 `2026-05-14 13:54:21`。
+
+# AI Infra V2 A/B 详情直连抓取计划设计（2026-05-16）
+
+> 目标：设计 A/B 档联系人详情抓取计划，切成四个任务包，并尝试以搜索 live gate 类似方式在已打开人才银行页直接调用详情接口，省掉本地发布任务包和人工 popup 导入步骤。
+
+## 执行计划
+
+- [x] 只读审计 12 个 wave 的人工评审草稿，确认 A/B 原始行、去重目标数、缺 `platform_id`/`trackable_token` 情况。
+- [x] 设计四包切分口径和每包目标规模。
+- [x] 设计 direct detail live gate 的输入、输出、熔断、continuation 和 import/apply 边界。
+- [x] 落盘实施计划到 `docs/superpowers/plans/2026-05-16-maimai-ai-infra-direct-detail-live-gate.md`。
+- [ ] 等待用户确认是否开始实现工具链；本阶段不发真实详情请求、不写 campaign DB、不改主库。
+
+## Review
+
+- 只读审计结果：A/B 原始评审行 `811`，按 `candidate_id` 去重后 `596`；其中 A 档 `235`、B 档 `361`；重复 A/B 行 `215`。
+- campaign DB 解析结果：`missing_source=0`、`missing_platform=0`、`missing_token=0`。
+- 四包设计：`detail-ab-pack-001..004` 各 `149` 人；A/B 分布分别为 `59/90`、`59/90`、`59/90`、`58/91`。
+- 计划边界：后续实现前仍不得触发真实详情 API；执行时先做 page health check，再做单人 probe，整包完成后才允许 `detail-wave dry-run/apply` 到 campaign DB。
+
+# AI Infra V2 A/B 详情直连抓取工具链实现（2026-05-16）
+
+> 目标：在当前 `feat/maimai-ai-infra-v2-campaign` 分支实现详情直连抓取工具链；作为 campaign 子任务，不新开分支。真实详情数据最终只允许写入 campaign DB，不写 `data/talent.db`。
+
+## 执行计划
+
+- [x] 实现 A/B 详情目标四包生成器和测试。
+- [x] 实现 direct detail live gate 和测试。
+- [x] 补 detailed ranking 的 candidate scope CLI 和测试。
+- [x] 实现最终详情报告生成器和测试。
+- [x] 生成真实四包计划并跑离线验证；真实详情 probe 前暂停确认。
+
+## Review
+
+- 当前边界：本阶段先实现工具链和离线测试，不触发真实详情 API，不写 campaign DB，不写主库。
+- Task 1 完成：新增只读 A/B 详情目标四包生成器；DB 读取使用 SQLite `mode=ro` 且路径 URI 安全转义；缺 DB、缺 review、缺 `platform_id`、缺 `trackable_token` 均 blocked 且不写 runnable pack。
+- Task 1 验证：`python -m pytest tests/test_maimai_ai_infra_detail_plan.py tests/test_maimai_detail_targets.py -q` -> `16 passed`；`python -m py_compile scripts/maimai_ai_infra_detail_plan.py` -> PASS；`git diff --check -- scripts/maimai_ai_infra_detail_plan.py tests/test_maimai_ai_infra_detail_plan.py` -> PASS。
+- Task 2 完成：新增 direct detail live gate；支持健康检查、顺序页面上下文 GET 详情接口、成功 job 原子落盘、capture 重建、known fuse 中断报告和 continuation plan。`completed_limited/stopped` capture 会标记 partial，并被 detail dry-run/apply 阻断，避免把单人 probe 当整包 apply。
+- Task 3 完成：`maimai_ai_infra_rank` 支持 `--mode list|detailed` 与 `--candidate-ids-file`；candidate ids 文件兼容 `{"candidate_ids":[]}` 和 detail target manifest `{"contacts":[...]}`；scoped detailed ranking 不混入 C/淘汰或其他 wave 候选人。
+- Task 4 完成：新增最终详情报告生成器，读取 A/B targets、detail-wave apply result 和 detailed rank JSON，输出 coverage、pack apply 状态、A/B/C/淘汰分布、Top candidates 和主库未写说明。
+- Task 5 完成：已离线生成真实四包计划到 campaign root；`status=ready input_rows=811 unique_targets=596 missing=0 packs=149,149,149,149`，manifest 显示总目标 `596`，`detail-ab-pack-001..004` 各 `149` 人。
+- 综合验证：`python -m pytest tests/test_maimai_ai_infra_detail_plan.py tests/test_maimai_ai_infra_detail_live_gate.py tests/test_maimai_ai_infra_detail_report.py tests/test_maimai_detail_targets.py tests/test_maimai_detail_import.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_strategy.py -q` -> `95 passed`；`python -m py_compile scripts/maimai_ai_infra_detail_plan.py scripts/maimai_ai_infra_detail_live_gate.py scripts/maimai_ai_infra_detail_report.py scripts/maimai_detail_targets.py scripts/maimai_detail_import.py scripts/maimai_ai_infra_pipeline.py scripts/maimai_ai_infra_rank.py` -> PASS；相关 `git diff --check` -> PASS。
+- 安全边界复核：本轮没有运行 health check 或真实详情请求；无 detail/search live gate Python 进程残留；主库 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`。
+- 真实 probe：用户确认后执行 `detail-ab-pack-001 --max-jobs 1`，返回 `status=completed_limited`、`completed_jobs=1`、`stopReason=null`；生成 capture `raw/detail-live-detail-ab-pack-001-probe-2026-05-16.json` 和 job raw `raw/detail-live/detail-ab-pack-001/job-000001-235988813.json`。
+- probe 核验：job `status=done`、errors `0`，辅助接口 `projects/job_preference/contact_btn` 均 HTTP 200 且无 parse error；无 interruption report；无 live gate Python 进程残留；主库 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`。
+- probe 后保护性校验：partial capture 的 `detail-wave dry-run` 被识别为 `dry_run_dirty`，`capture_blockers=[partial_detail_capture]`，没有 `detail_apply` ledger；只读查询确认 candidate 573 仍未写入 `maimai_detail_capture`。
+- Pack 001 full run：用户继续后执行 `detail-ab-pack-001` 全量抓取，复用已完成第 1 个 job，从剩余目标继续；最终 `status=completed`、`completed_jobs=149/149`、`failed_jobs=0`、`stopReason=null`，无 interruption report。
+- Pack 001 dry-run：`python -m scripts.maimai_ai_infra_pipeline detail-wave dry-run --campaign-root data/campaigns/ai-infra-v2-2026-05-15-dry-run --wave detail-ab-pack-001 --capture-file data/campaigns/ai-infra-v2-2026-05-15-dry-run/raw/detail-live-detail-ab-pack-001-run-2026-05-17.json` -> `dry_run_clean`；matched `149`、unmatched `0`、failed_jobs `0`、apply_blockers `0`、capture_blockers `0`。
+- Pack 001 当前尚未 apply；无 `detail_apply` ledger，无 detail/search live gate Python 进程残留；主库 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`。
+- Pack 001 apply：用户确认后执行 `detail-wave apply` 到 campaign DB，结果 `apply_completed`；`matched=149`、`written=149`、`verified_candidate_ids=149`、`unmatched=0`、`failed_jobs=0`、`apply_blockers=0`、`capture_blockers=0`。
+- Pack 001 apply 核验：`state/import-ledger.jsonl` 已写入 `detail_apply started/completed` 两条记录；campaign DB 只读查询 `maimai_detail_capture` 行数为 `149`，candidate `573` 已有 detail capture；无 detail/search live gate Python 进程残留。
+- 主库边界：apply 后 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`；写入只发生在 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/talent.db`。
+
+# AI Infra V2 A/B 详情 Pack 002 执行（2026-05-17）
+
+> 目标：在 Pack 001 已完成并 apply 后，继续执行 `detail-ab-pack-002`。保持同一安全边界：只连接已打开的人才银行页，不自动导航/刷新/点击业务页面；详情数据只写 campaign DB，不写 `data/talent.db`。
+
+## 执行计划
+
+- [x] 预检：确认 Pack 002 尚未抓取、无 detail/search live gate 进程残留，并记录 `data/talent.db` 与 campaign DB 时间戳。
+- [x] 运行 Pack 002 page health check，要求 `hasLoginPrompt=false`、`hasCaptcha=false`、`hasTalentBank=true`。
+- [x] 执行 `detail-ab-pack-002` 全量详情抓取；如遇熔断，只保留已成功 job raw、capture、continuation plan 和 interruption report。
+- [x] 若全量抓取完成，运行 Pack 002 `detail-wave dry-run`，只在 `dry_run_clean` 后继续。
+- [x] 若 dry-run clean，apply 到 campaign DB，并核验 ledger、detail capture 行数和主库未修改。
+- [x] 运行必要验证，确认无 live gate 进程残留，回填 Review。
+
+## Review
+
+- 预检：`detail-ab-pack-002.json` 目标数为 `149`；执行前无 Pack 002 job raw/capture/report 残留，无 detail/search live gate 进程残留。主库 `data/talent.db` 时间戳为 `2026-05-14 13:54:21`，campaign DB 时间戳为 `2026-05-17 00:33:26`。
+- 页面健康：`detail-ab-pack-002` health check 返回 `status=health_ok`、`hasLoginPrompt=false`、`hasCaptcha=false`、`hasTalentBank=true`，未发详情接口请求。
+- Pack 002 full run：执行 `raw/detail-live-detail-ab-pack-002-run-2026-05-17.json`，结果 `status=completed`、`completed_jobs=149/149`、`stopReason=null`；job raw 目录 `raw/detail-live/detail-ab-pack-002/` 下 `job-*.json` 共 `149` 个；无 Pack 002 interruption report。
+- Pack 002 dry-run：`reports/detail-wave-detail-ab-pack-002-dry-run.json/md` 已生成；`matched=149`、`unmatched=0`、`failed_jobs=0`、`apply_blockers=[]`、`capture_blockers=[]`。
+- Pack 002 apply：`reports/detail-wave-detail-ab-pack-002-apply.json/md` 已生成；`matched=149`、`written=149`、`verified_candidate_ids=149`、`unmatched=0`、`failed_jobs=0`、`apply_blockers=[]`、`capture_blockers=[]`。
+- Ledger 与 DB 核验：`state/import-ledger.jsonl` 已写入 `detail_apply started/completed` 两条 Pack 002 记录；campaign DB `maimai_detail_capture` 行数从 `149` 增至 `298`，`candidate_details=2648`。
+- 主库边界：apply 后 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`；写入只发生在 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/talent.db`，该库时间戳更新为 `2026-05-17 01:19:50`。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_detail_live_gate.py tests/test_maimai_detail_import.py tests/test_maimai_ai_infra_pipeline.py -q` -> `49 passed`；`python -m py_compile scripts/maimai_ai_infra_detail_live_gate.py scripts/maimai_detail_import.py scripts/maimai_ai_infra_pipeline.py` -> PASS；`git diff --check` -> PASS；无 detail/search live gate Python 进程残留。
+
+# AI Infra V2 A/B 外联执行包与 P0/P1 抽检（2026-05-17）
+
+> 目标：基于已生成的 `final-outreach-priority-ab-packs-001-004.json`，生成可直接外联使用的轻量 CSV/Markdown，并对 P0/P1 前 30 做字段完整性、硬风险、证据和方向标签抽检。保持边界：只读 reports JSON；不触发 live gate；不读写主库。
+
+## 执行计划
+
+- [x] 新增外联执行包导出测试，覆盖 CSV 字段、Markdown 队列、P0/P1 抽检样本和字段完整性问题。
+- [x] 新增导出脚本，支持从 outreach priority JSON 生成 execution CSV/MD 与 audit JSON/MD。
+- [x] 用真实 A/B 交付结果生成外联执行包和 P0/P1 抽检报告。
+- [x] 核验导出行数、P0/P1 抽检数量、关键字段缺失、硬风险和主库/live gate 边界。
+- [x] 运行聚焦测试、语法检查、`git diff --check`，回填 Review。
+
+## Review
+
+- 新增 `scripts/maimai_ai_infra_outreach_export.py`：从 `final-outreach-priority` 只读生成外联执行 CSV/MD，并生成 P0/P1 TopN 抽检 JSON/MD；默认抽检 P0/P1 各 30 人。
+- 新增 `tests/test_maimai_ai_infra_outreach_export.py`：先红灯验证模块缺失，再覆盖 CSV 字段、队列顺序、抽检样本、缺 profile URL 和缺关键证据问题。
+- 真实外联执行包已生成：
+  - `data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/outreach-execution-queue-ab-packs-001-004.csv`
+  - `data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/outreach-execution-queue-ab-packs-001-004.md`
+  - `data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/outreach-quality-audit-p0-p1-top30-ab-packs-001-004.json`
+  - `data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/outreach-quality-audit-p0-p1-top30-ab-packs-001-004.md`
+- 导出核验：CSV `595` 行；优先级分布 `P0=150`、`P1=300`、`P2=145`；字段包含 `priority/rank/candidate_id/name/platform_id/company/title/city/work_years/score/grade/recommendation_label/directions/key_evidence/risk_summary/suggested_outreach_angle/profile_url`。
+- 抽检核验：P0 前 `30`、P1 前 `30`；`issue_counts={}`；无重复 `candidate_id`；抽检项均为 `ready`。
+- 安全边界：无 detail/search live gate Python 进程残留；主库 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`；本步骤只读 reports JSON。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_outreach_export.py tests/test_maimai_ai_infra_delivery_report.py -q` -> `2 passed`；`python -m py_compile scripts/maimai_ai_infra_outreach_export.py scripts/maimai_ai_infra_delivery_report.py` -> PASS；`git diff --check` -> PASS；`python -m pytest tests scripts -q` -> `632 passed, 1 warning`（既有 `scripts/test_boss.py` event loop deprecation）。
+
+# AI Infra V2 工程收尾与文档状态同步（2026-05-17）
+
+> 目标：在交付报告和外联执行包完成后，同步 V2 设计文档里的已实现 CLI 映射、Task 7/8 状态和本轮停止扩池结论，准备进入提交/合并收尾。保持边界：只改文档和任务记录，不触发 live gate，不读写主库。
+
+## 执行计划
+
+- [x] 审当前 diff、产物追踪状态和 V2 文档待勾选项。
+- [x] 更新 V2 设计文档：补 direct detail、final delivery、outreach export CLI 映射；勾选 Task 7；新增本轮 A/B 交付状态 Task 8。
+- [x] 运行文档/语法/差异检查，确认主库和 live gate 边界。
+- [x] 汇总可提交范围与下一步合并建议。
+
+## Review
+
+- 已更新 `docs/design-discussions/2026-05-14-maimai-ai-infra-talent-search-plan-v2.md`：补充 A/B 详情四包、direct detail live gate、scoped detailed rank、最终详情覆盖报告、交付版最终寻访报告、外联执行包导出等 CLI 映射。
+- Task 7 已同步为完成：`--mode detailed`、`final-search-report`、强推荐/推荐/观察/不推荐、下一轮建议、详情推翻降级测试、外联优先级和外联执行包均已勾选。
+- 新增 Task 8 本轮 A/B 交付状态：详情目标 `596`，四包全部 apply；交付推荐 `强推荐=358`、`推荐=160`、`观察=77`、`不推荐=1`；外联 `P0=150`、`P1=300`、`P2=145`；最终强推荐+推荐 `518`，结论为停止扩池、转入外联消化。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_outreach_export.py tests/test_maimai_ai_infra_delivery_report.py tests/test_maimai_ai_infra_detail_report.py tests/test_maimai_ai_infra_detail_plan.py tests/test_maimai_ai_infra_detail_live_gate.py -q` -> `29 passed`；`python -m py_compile scripts/maimai_ai_infra_outreach_export.py scripts/maimai_ai_infra_delivery_report.py scripts/maimai_ai_infra_detail_report.py scripts/maimai_ai_infra_detail_plan.py scripts/maimai_ai_infra_detail_live_gate.py scripts/maimai_ai_infra_rank.py` -> PASS；`git diff --check` -> PASS。
+- 边界：无 detail/search live gate Python 进程残留；主库 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`。
+- 可提交范围建议：将当前 branch 上 AI Infra V2 工具链、测试、计划文档和任务记录作为一个 feature commit；`data/campaigns/` 已在 `.gitignore`，真实候选人报告产物不会进入 git。
+
+# AI Infra V2 A/B 交付版最终寻访报告（2026-05-17）
+
+> 目标：在四个 A/B 详情包全部完成并生成 detailed rank 后，补齐交付版 `final-search-report` 和外联优先级队列。保持边界：只读 campaign DB、detail targets、rank/report 产物；不写 `data/talent.db`；不触发 live gate。
+
+## 执行计划
+
+- [x] 补充 delivery report 聚合测试，覆盖 funnel、推荐标签映射、P0/P1/P2 队列、方向/公司覆盖和误判缺口。
+- [x] 新增交付版报告脚本，生成 `final-search-report-ab-packs-001-004.json/md` 与 `final-outreach-priority-ab-packs-001-004.json/md`。
+- [x] 使用真实 campaign 数据生成交付产物，并核验候选人数、队列互斥、rank/target 一致性。
+- [x] 复核主库边界和 live gate 进程状态。
+- [x] 运行聚焦测试、语法检查和 `git diff --check`。
+
+## Review
+
+- 新增 `scripts/maimai_ai_infra_delivery_report.py`：只读 campaign DB（SQLite `mode=ro`）和现有 rank/target/apply 报告，生成交付版最终寻访报告与外联优先级队列。
+- 新增 `tests/test_maimai_ai_infra_delivery_report.py`：先红灯验证新模块缺失，再覆盖 funnel、强推荐/推荐/观察/不推荐映射、P0/P1/P2 队列、方向/公司覆盖、详情推翻样本和输出落盘。
+- 真实产物已生成：
+  - `data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/final-search-report-ab-packs-001-004.json`
+  - `data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/final-search-report-ab-packs-001-004.md`
+  - `data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/final-outreach-priority-ab-packs-001-004.json`
+  - `data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/final-outreach-priority-ab-packs-001-004.md`
+- 交付口径：详情目标 `596`、详情完成 `596`、缺失 `0`；强推荐 `358`、推荐 `160`、观察 `77`、不推荐 `1`；外联队列 `P0=150`、`P1=300`、`P2=145`。
+- 一致性核验：`candidate_cards=596`；rank IDs、target IDs、card IDs 完全一致；P0/P1/P2 队列总数 `595` 且互斥，不与 excluded 重叠；excluded `1` 人来自 `excluded_education`。
+- 覆盖摘要：方向覆盖 Top 为训练框架 `288`、推理引擎 `280`、框架平台 `246`、算子/异构 `130`、智算平台 `72`；公司 Top 覆盖包含字节跳动 `229`、百度 `98`、快手 `64`、阿里巴巴 `44`。
+- 安全边界：无 detail/search live gate Python 进程残留；主库 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`；报告阶段未读取或写入主库。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_delivery_report.py tests/test_maimai_ai_infra_detail_report.py tests/test_maimai_ai_infra_strategy.py -q` -> `31 passed`；`python -m py_compile scripts/maimai_ai_infra_delivery_report.py scripts/maimai_ai_infra_detail_report.py scripts/maimai_ai_infra_rank.py` -> PASS；`git diff --check` -> PASS；`python -m pytest tests scripts -q` -> `631 passed, 1 warning`（既有 `scripts/test_boss.py` event loop deprecation）。
+
+# AI Infra V2 A/B 最终详情排名与报告（2026-05-17）
+
+> 目标：在四个 A/B 详情包全部 apply 后，基于 campaign DB 生成 scoped detailed ranking 和最终详情报告。保持边界：只读 campaign DB 和 detail target/report 产物，不写 `data/talent.db`。
+
+## 执行计划
+
+- [x] 预检：确认 A/B target manifest 为 `596` 人，四个 pack apply 均 `matched=149`、`written=149`、无 blockers。
+- [x] 生成 scoped detailed ranking：只覆盖 `detail-targets-ab-all.json` 中的 A/B 目标，不混入 C/淘汰或其他候选人。
+- [x] 核验 rank JSON：候选人数 `596`，所有条目 `score_mode=detailed`，candidate id 集合等于 A/B manifest。
+- [x] 生成 final detail report JSON/MD。
+- [x] 核验 report coverage：target `596`、completed detail `596`、missing `0`、四个 pack apply status 齐全。
+- [x] 运行聚焦测试、语法检查和 `git diff --check`，确认主库未修改，回填 Review。
+
+## Review
+
+- 输入预检：`raw/detail-targets/detail-targets-ab-all.json` 包含 `596` 个 A/B 目标；四个 apply 报告均为 `matched=149`、`written=149`、`verified_candidate_ids=149`、`unmatched=0`、`failed_jobs=0`、无 `apply_blockers/capture_blockers`。
+- scoped detailed ranking：已生成 `reports/final-detail-rank-ab-packs-001-004.json/md`；rank JSON `ranked=596`，candidate id 集合与 A/B manifest 完全一致，`outside_count=0`、`missing_count=0`，所有条目 `score_mode=detailed`。
+- final detail report：已生成 `reports/final-detail-report-ab-packs-001-004.json/md`；CLI 返回 `status=ready targets=596 completed=596 missing=0 recommended=595`。
+- report coverage：`target_count=596`、`completed_detail_count=596`、`missing_detail_count=0`；四个 pack 状态均为 `apply_status=applied`、`completed_detail_count=149`；最终分布为 `A=447`、`B=148`、`C=0`、`淘汰=1`，最终推荐 `595`。
+- DB 核验：主库 `data/talent.db` 仍为 `candidates=3119`、`source_profiles=3119`、`candidate_details=3119`、`pending_merges=0`、`sync_conflicts=0`，时间戳仍为 `2026-05-14 13:54:21`；campaign DB 为 `candidates=2648`、`source_profiles=2648`、`candidate_details=2648`、`maimai_detail_capture=596`。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_detail_report.py tests/test_maimai_ai_infra_strategy.py -q` -> `30 passed`；`python -m py_compile scripts/maimai_ai_infra_detail_report.py scripts/maimai_ai_infra_rank.py` -> PASS；`git diff --check` -> PASS；无 detail/search live gate Python 进程残留。
+
+# AI Infra V2 A/B 详情 Pack 003 执行（2026-05-17）
+
+> 目标：在用户确认继续后，执行 `detail-ab-pack-003`。保持安全边界：只连接已打开的人才银行页，不自动导航/刷新/点击业务页面；详情数据只写 campaign DB，不写 `data/talent.db`。
+
+## 执行计划
+
+- [x] 预检：确认 Pack 003 尚未抓取、无 detail/search live gate 进程残留，并记录 `data/talent.db` 与 campaign DB 时间戳。
+- [x] 运行 Pack 003 page health check，要求 `hasLoginPrompt=false`、`hasCaptcha=false`、`hasTalentBank=true`。
+- [x] 执行 `detail-ab-pack-003` 全量详情抓取；如遇熔断，只保留已成功 job raw、capture、continuation plan 和 interruption report。
+- [x] 若全量抓取完成，运行 Pack 003 `detail-wave dry-run`，只在 `dry_run_clean` 后继续。
+- [x] 若 dry-run clean，apply 到 campaign DB，并核验 ledger、detail capture 行数和主库未修改。
+- [x] 运行必要验证，确认无 live gate 进程残留，回填 Review。
+
+## Review
+
+- 预检：`detail-ab-pack-003.json` 目标数为 `149`；执行前无 Pack 003 job raw/capture/report 残留，无 detail/search live gate 进程残留。主库 `data/talent.db` 时间戳为 `2026-05-14 13:54:21`，campaign DB 时间戳为 `2026-05-17 01:19:50`；campaign DB `maimai_detail_capture` 行数为 `298`。
+- 页面健康：`detail-ab-pack-003` health check 返回 `status=health_ok`、`hasLoginPrompt=false`、`hasCaptcha=false`、`hasTalentBank=true`，未发详情接口请求。
+- Pack 003 full run 中断：执行 `raw/detail-live-detail-ab-pack-003-run-2026-05-17.json`，在第 10 个目标停机，结果 `status=stopped`、`completed_jobs=9/149`、`stopReason=exception`；job raw 目录 `raw/detail-live/detail-ab-pack-003/` 下 `job-*.json` 共 `9` 个。
+- 中断原因：`reports/interruption-detail-detail-ab-pack-003-2026-05-17.json` 显示 `stopError=Connection timed out`，失败点 `failedIndex=9`、`failedCandidateId=973`、`failedPlatformId=231560414`；失败前后页面健康均为 `hasLoginPrompt=false`、`hasCaptcha=false`、`hasTalentBank=true`。
+- continuation：已生成 `raw/detail-targets/detail-live-detail-ab-pack-003-continuation-after-exception-plan.json`，`resume_from.index=9`，剩余 `140` 人；已成功的 `9` 个 job raw 保留为恢复点。
+- 下游边界：Pack 003 为 partial capture，未运行 `detail-wave dry-run`、未 apply、未生成 final report；campaign DB `maimai_detail_capture` 仍为 `298`，没有新增 Pack 003 写入。
+- 安全核验：无 detail/search live gate Python 进程残留；`git diff --check` -> PASS；主库 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`，campaign DB 时间戳仍为 `2026-05-17 01:19:50`。
+- 用户确认：该中断判断为网络不稳定导致的 timeout，不是业务风控熔断；允许从 continuation 重试超时点。
+- Pack 003 continuation：复用原 pack plan 和同一 capture out，从已有 `9` 个 job raw 后继续；最终 `status=completed`、`completed_jobs=149/149`、`stopReason=null`。
+- Pack 003 dry-run：`reports/detail-wave-detail-ab-pack-003-dry-run.json/md` 已生成；`matched=149`、`unmatched=0`、`failed_jobs=0`、`apply_blockers=[]`、`capture_blockers=[]`。
+- Pack 003 apply：`reports/detail-wave-detail-ab-pack-003-apply.json/md` 已生成；`matched=149`、`written=149`、`verified_candidate_ids=149`、`unmatched=0`、`failed_jobs=0`、`apply_blockers=[]`、`capture_blockers=[]`。
+- Ledger 与 DB 核验：`state/import-ledger.jsonl` 已写入 `detail_apply started/completed` 两条 Pack 003 记录；campaign DB `maimai_detail_capture` 行数从 `298` 增至 `447`，`candidate_details=2648`。
+- 主库边界：apply 后 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`；写入只发生在 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/talent.db`，该库时间戳更新为 `2026-05-17 02:01:51`。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_detail_live_gate.py tests/test_maimai_detail_import.py tests/test_maimai_ai_infra_pipeline.py -q` -> `49 passed`；`python -m py_compile scripts/maimai_ai_infra_detail_live_gate.py scripts/maimai_detail_import.py scripts/maimai_ai_infra_pipeline.py` -> PASS；`git diff --check` -> PASS；无 detail/search live gate Python 进程残留。
+
+# AI Infra V2 A/B 详情 Pack 004 执行（2026-05-17）
+
+> 目标：执行最后一个 A/B 详情任务包 `detail-ab-pack-004`。保持安全边界：只连接已打开的人才银行页，不自动导航/刷新/点击业务页面；详情数据只写 campaign DB，不写 `data/talent.db`。用户已确认纯网络 timeout 可从恢复点重试。
+
+## 执行计划
+
+- [x] 预检：确认 Pack 004 尚未抓取、无 detail/search live gate 进程残留，并记录 `data/talent.db` 与 campaign DB 时间戳。
+- [x] 运行 Pack 004 page health check，要求 `hasLoginPrompt=false`、`hasCaptcha=false`、`hasTalentBank=true`。
+- [x] 执行 `detail-ab-pack-004` 全量详情抓取；如遇熔断，只保留已成功 job raw、capture、continuation plan 和 interruption report；如仅为 timeout，按用户授权从恢复点重试。
+- [x] 若全量抓取完成，运行 Pack 004 `detail-wave dry-run`，只在 `dry_run_clean` 后继续。
+- [x] 若 dry-run clean，apply 到 campaign DB，并核验 ledger、detail capture 行数和主库未修改。
+- [x] 运行必要验证，确认无 live gate 进程残留，回填 Review。
+
+## Review
+
+- Pack 004 第一次中断：执行到 `completed_jobs=46/149` 后停机，`stopReason=exception`；失败点 `failedIndex=46`、`failedCandidateId=147`、`failedPlatformId=235441789`，错误为页面 `fetch` 抛 `TypeError: Failed to fetch`。失败前后页面健康均为 `hasLoginPrompt=false`、`hasCaptcha=false`、`hasTalentBank=true`，无 HTTP 风控状态码；已生成 continuation，从 index `46` 继续。
+- Pack 004 continuation：从 index `46` 继续后成功完成；最终 capture `raw/detail-live-detail-ab-pack-004-run-2026-05-17.json` 为 `status=completed`、`completed_jobs=149/149`、`stopReason=null`、`partial=false`，job raw 共 `149` 个。
+- Pack 004 dry-run：`reports/detail-wave-detail-ab-pack-004-dry-run.json/md` 已生成；`matched=149`、`unmatched=0`、`failed_jobs=0`、`apply_blockers=[]`、`capture_blockers=[]`。
+- Pack 004 apply：`reports/detail-wave-detail-ab-pack-004-apply.json/md` 已生成；`matched=149`、`written=149`、`verified_candidate_ids=149`、`unmatched=0`、`failed_jobs=0`、`apply_blockers=[]`、`capture_blockers=[]`。
+- Ledger 与 DB 核验：`state/import-ledger.jsonl` 已写入 `detail_apply started/completed` 两条 Pack 004 记录；campaign DB `maimai_detail_capture` 行数从 `447` 增至 `596`，覆盖四包 A/B 目标总数，`candidate_details=2648`。
+- 主库边界：apply 后 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`；写入只发生在 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/talent.db`，该库时间戳更新为 `2026-05-17 02:42:13`。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_detail_live_gate.py tests/test_maimai_detail_import.py tests/test_maimai_ai_infra_pipeline.py -q` -> `49 passed`；`python -m py_compile scripts/maimai_ai_infra_detail_live_gate.py scripts/maimai_detail_import.py scripts/maimai_ai_infra_pipeline.py` -> PASS；`git diff --check` -> PASS；无 detail/search live gate Python 进程残留。

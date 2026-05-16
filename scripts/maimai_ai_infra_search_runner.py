@@ -151,9 +151,11 @@ def confirmed_search_filters_from_batch(batch: dict[str, Any]) -> dict[str, Any]
 
 
 def _apply_confirmed_search_filters(search: dict[str, Any], batch: dict[str, Any]) -> None:
-    for field_name, value in confirmed_search_filters_from_batch(batch).items():
-        if field_name in search:
-            search[field_name] = value
+    filters = confirmed_search_filters_from_batch(batch)
+    if "min_age" in filters or "max_age" in filters:
+        search.pop("age", None)
+    for field_name, value in filters.items():
+        search[field_name] = value
 
 
 def patch_search_body(template: dict[str, Any], batch: dict[str, Any], page: int) -> dict[str, Any]:

@@ -86,6 +86,36 @@ def _write_no_work_capture(path: Path) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
+def _write_partial_direct_capture(path: Path) -> None:
+    payload = {
+        "metadata": {
+            "export_type": "maimai_ai_infra_direct_detail_live_gate",
+            "detail_mode": "direct_page_fetch",
+            "status": "completed_limited",
+            "partial": True,
+            "total_contacts": 2,
+            "completed_jobs": 1,
+        },
+        "detailJobs": [
+            {
+                "id": "166812124",
+                "status": "done",
+                "detail": {
+                    "basic": {
+                        "id": "166812124",
+                        "name": "范青",
+                        "company": "OpenAI",
+                        "position": "AI PM",
+                        "exp": [{"company": "OpenAI", "position": "AI PM", "v": "2022-01至今"}],
+                        "edu": [{"school": "Fudan", "major": "CS"}],
+                    }
+                },
+            }
+        ],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
 def test_dry_run_matches_exact_platform_id_without_modifying_db(tmp_path: Path):
     db_path = tmp_path / "talent.db"
     db = TalentDB(db_path)
@@ -143,6 +173,59 @@ def test_dry_run_flags_no_work_detail_as_apply_blocker(tmp_path: Path):
     assert result["matched"] == 1
     assert result["apply_blockers"][0]["blockers"] == ["missing_work_experience"]
     assert "Apply blockers" in report_path.read_text(encoding="utf-8-sig")
+
+
+def test_dry_run_blocks_partial_direct_capture(tmp_path: Path):
+    db_path = tmp_path / "talent.db"
+    db = TalentDB(db_path)
+    db.ingest(
+        {
+            "name": "Alice",
+            "current_company": "OldCo",
+            "current_title": "PM",
+            "platform_id": "166812124",
+        },
+        platform="maimai",
+    )
+    db.close()
+
+    capture_path = tmp_path / "partial-capture.json"
+    report_path = tmp_path / "dry-run.md"
+    _write_partial_direct_capture(capture_path)
+
+    result = dry_run_capture(capture_path, db_path, report_path)
+
+    assert result["matched"] == 1
+    assert result["capture_blockers"][0]["reason"] == "partial_detail_capture"
+    assert "Capture blockers" in report_path.read_text(encoding="utf-8-sig")
+
+
+def test_apply_rejects_partial_direct_capture(tmp_path: Path):
+    db_path = tmp_path / "talent.db"
+    db = TalentDB(db_path)
+    candidate_id = db.ingest(
+        {
+            "name": "Alice",
+            "current_company": "OldCo",
+            "current_title": "PM",
+            "platform_id": "166812124",
+        },
+        platform="maimai",
+    )
+    db.close()
+
+    capture_path = tmp_path / "partial-capture.json"
+    _write_partial_direct_capture(capture_path)
+
+    with pytest.raises(RuntimeError, match="partial or incomplete"):
+        apply_capture(capture_path, db_path, confirm=CONFIRM_TEXT)
+
+    db = TalentDB(db_path)
+    try:
+        assert db.get(candidate_id).data_level != "detailed"
+        assert db.get_detail(candidate_id) is None
+    finally:
+        db.close()
 
 
 def test_apply_writes_only_matched_details_with_confirmation(tmp_path: Path):

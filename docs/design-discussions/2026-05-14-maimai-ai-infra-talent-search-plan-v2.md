@@ -635,6 +635,12 @@ python scripts/maimai_detail_import.py apply --capture-file data/campaigns/ai-in
 | 从人工审核生成详情任务包 | `python scripts/maimai_detail_targets.py from-review --review <campaign_root>/review/initial-human-review.json --db <campaign_root>/talent.db --out <campaign_root>/raw/detail-targets-wave1.json` | 只接受 `detail_now/hold/reject`，重复、非法或不存在的 candidate id 会报错。 |
 | 详情 wave dry-run | `python scripts/maimai_ai_infra_pipeline.py detail-wave dry-run --campaign-root <campaign_root> --wave wave-001 --capture-file <capture.json> --db <campaign_root>/talent.db` | 复用详情导入 dry-run，只有 `failed_jobs=0` 且 `unmatched=0` 才记录 `dry_run_clean`。 |
 | 详情 wave apply | `python scripts/maimai_ai_infra_pipeline.py detail-wave apply --campaign-root <campaign_root> --wave wave-001 --capture-file <capture.json> --db <campaign_root>/talent.db --confirm "确认写入脉脉详情"` | 检查 `import-ledger.jsonl` 防重复写入；未确认或已 apply 的 wave 会被阻止。 |
+| A/B 详情四包生成 | `python -m scripts.maimai_ai_infra_detail_plan --campaign-root <campaign_root> --db <campaign_root>/talent.db --out-dir <campaign_root>/raw/detail-targets` | 从人工评审 A/B 档生成 `detail-ab-pack-001..004`，只读 campaign DB，不写主库。 |
+| direct detail live gate | `python -m scripts.maimai_ai_infra_detail_live_gate --plan <campaign_root>/raw/detail-targets/detail-ab-pack-001.json --capture-out <campaign_root>/raw/detail-live-detail-ab-pack-001-run.json` | 只连接已打开的人才银行页；支持 health check、单人 probe、continuation 和 partial capture 阻断。 |
+| scoped detailed rank | `python -m scripts.maimai_ai_infra_rank --db <campaign_root>/talent.db --mode detailed --candidate-ids-file <campaign_root>/raw/detail-targets/detail-targets-ab-all.json --out-json <campaign_root>/reports/final-detail-rank.json --out-md <campaign_root>/reports/final-detail-rank.md` | 只对详情目标集合重排，避免混入其他 wave 或主库候选人。 |
+| 最终详情覆盖报告 | `python -m scripts.maimai_ai_infra_detail_report --campaign-root <campaign_root> --targets <targets.json> --rank-json <rank.json> --out-json <report.json> --out-md <report.md>` | 汇总四包 apply 状态、详情覆盖、A/B/C/淘汰分布和主库边界。 |
+| 交付版最终寻访报告 | `python -m scripts.maimai_ai_infra_delivery_report --campaign-root <campaign_root> --targets <targets.json> --rank-json <rank.json> --out-report-json <final-search-report.json> --out-report-md <final-search-report.md> --out-outreach-json <outreach.json> --out-outreach-md <outreach.md>` | 输出强推荐/推荐/观察/不推荐、方向/公司覆盖、误判、缺口和外联优先级。 |
+| 外联执行包导出 | `python -m scripts.maimai_ai_infra_outreach_export --outreach-json <outreach.json> --out-csv <execution.csv> --out-md <execution.md> --out-audit-json <audit.json> --out-audit-md <audit.md>` | 将 P0/P1/P2 队列导出为外联 CSV/MD，并抽检 P0/P1 字段完整性。 |
 
 ## 工程落地任务
 
@@ -721,12 +727,28 @@ python scripts/maimai_detail_import.py apply --capture-file data/campaigns/ai-in
 **Files:**
 - Modify: `scripts/maimai_ai_infra_rank.py`
 - Modify: `scripts/maimai_ai_infra_pipeline.py`
+- Create: `scripts/maimai_ai_infra_detail_report.py`
+- Create: `scripts/maimai_ai_infra_delivery_report.py`
+- Create: `scripts/maimai_ai_infra_outreach_export.py`
 - Test: `tests/test_maimai_ai_infra_pipeline.py`
+- Test: `tests/test_maimai_ai_infra_detail_report.py`
+- Test: `tests/test_maimai_ai_infra_delivery_report.py`
+- Test: `tests/test_maimai_ai_infra_outreach_export.py`
 
-- [ ] 增加 `--mode detailed`，使用工作/项目/教育详情评分。
-- [ ] 输出 `final-search-report.md/json`。
-- [ ] 报告包含强推荐、推荐、观察、不推荐，以及下一轮搜索建议。
-- [ ] 测试：详情推翻列表判断时，候选人能从推荐池降级并记录原因。
+- [x] 增加 `--mode detailed`，使用工作/项目/教育详情评分。
+- [x] 输出 `final-search-report.md/json`。
+- [x] 报告包含强推荐、推荐、观察、不推荐，以及下一轮搜索建议。
+- [x] 测试：详情推翻列表判断时，候选人能从推荐池降级并记录原因。
+- [x] 输出 `final-outreach-priority.md/json` 和外联执行 CSV/Markdown。
+- [x] 测试：P0/P1/P2 队列互斥，外联 CSV 字段完整，P0/P1 抽检能记录缺失字段和硬风险。
+
+### Task 8: 本轮 A/B 交付状态
+
+- [x] A/B 详情目标 `596` 人，四个 pack 均 dry-run clean 并 apply 到 campaign DB。
+- [x] scoped detailed rank 覆盖 `596` 人，candidate id 集合与 A/B manifest 完全一致。
+- [x] 交付版最终寻访报告已生成：强推荐 `358`，推荐 `160`，观察 `77`，不推荐 `1`。
+- [x] 外联执行队列已生成：`P0=150`、`P1=300`、`P2=145`；P0/P1 前 30 抽检均为 ready。
+- [x] 最终强推荐+推荐达到 `518`，超过 500 后停止扩池，转入外联消化和工程收尾。
 
 ## 验收命令
 

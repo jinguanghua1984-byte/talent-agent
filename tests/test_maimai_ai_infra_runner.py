@@ -120,7 +120,26 @@ def test_patch_search_body_applies_explicit_confirmed_filters_only():
     assert patched["search"]["max_age"] == "40"
     assert patched["search"]["schools"] == "浙大,清华大学"
     assert patched["search"]["major"] == "软件工程"
-    assert patched["search"]["age"] == ""
+    assert "age" not in patched["search"]
+
+
+def test_patch_search_body_adds_confirmed_age_range_when_template_uses_legacy_age():
+    template = _template_body()
+    template["search"].pop("min_age")
+    template["search"].pop("max_age")
+    batch = {
+        **_batch(),
+        "search_filters": {
+            "min_age": "24",
+            "max_age": "40",
+        },
+    }
+
+    patched = patch_search_body(template, batch, page=1)
+
+    assert patched["search"]["min_age"] == "24"
+    assert patched["search"]["max_age"] == "40"
+    assert "age" not in patched["search"]
 
 
 def test_patch_search_body_rejects_unconfirmed_filter_fields():

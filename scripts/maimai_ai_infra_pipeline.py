@@ -375,6 +375,7 @@ def _detail_result_is_clean(result: dict[str, Any]) -> bool:
         and result.get("failed_jobs", 0) == 0
         and result.get("unmatched", 0) == 0
         and len(matches) == result.get("matched", 0)
+        and not result.get("capture_blockers")
         and not result.get("apply_blockers")
         and all((item.get("new_work") or 0) > 0 and not item.get("apply_blockers") for item in matches)
     )
@@ -383,6 +384,8 @@ def _detail_result_is_clean(result: dict[str, Any]) -> bool:
 def _detail_dry_run_status(result: dict[str, Any]) -> str:
     if _detail_result_is_clean(result):
         return "dry_run_clean"
+    if result.get("capture_blockers"):
+        return "dry_run_dirty"
     if result.get("matched", 0) == 0 and result.get("failed_jobs", 0) == 0 and result.get("unmatched", 0) == 0:
         return "dry_run_empty"
     return "dry_run_dirty"
@@ -407,6 +410,8 @@ def _detail_state_extra(
         extra["written"] = result.get("written", 0)
     if result.get("apply_blockers"):
         extra["apply_blockers"] = result.get("apply_blockers")
+    if result.get("capture_blockers"):
+        extra["capture_blockers"] = result.get("capture_blockers")
     return extra
 
 

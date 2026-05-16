@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import scripts.maimai_ai_infra_search_live_gate as live_gate
 from scripts.maimai_ai_infra_search_live_gate import (
     CdpSession,
+    api_block_reason,
     extract_contacts,
     find_talent_target,
     is_blocking_health,
@@ -60,6 +61,16 @@ def test_summarize_response_marks_non_json_and_counts_list_items():
 
     assert non_json["parseError"] == "invalid json"
     assert non_json["data"]["isObject"] is False
+
+
+def test_api_block_reason_flags_432_and_api_captcha():
+    assert api_block_reason(432, {"error_code": 30000}) == "http_432"
+    assert api_block_reason(
+        429,
+        {"block_info": {"block_type": "captcha_yd", "captcha_type": "text_click"}},
+    ) == "captcha_api"
+    assert api_block_reason(429, {"error": "Request too frequently."}) == "http_429"
+    assert api_block_reason(200, {"data": {"list": []}}) is None
 
 
 def test_cdp_session_suppresses_origin_header(monkeypatch):
@@ -133,6 +144,8 @@ def test_live_gate_search_expression_applies_confirmed_filters_only():
     assert '"min_age": "16"' in expression
     assert '"max_age": "40"' in expression
     assert '"query_relation": 1' in expression
+    assert "delete target.age" in expression
+    assert "target[key] = value" in expression
 
     try:
         search_expression("AI infra", 1, 30, {"age": "32"})

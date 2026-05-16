@@ -48,6 +48,39 @@ def _detail_text(detail: CandidateDetail | None) -> str:
     ])
 
 
+def _maimai_list_school_text(detail: CandidateDetail | None) -> str:
+    if detail is None or not isinstance(detail.raw_data, dict):
+        return ""
+    maimai_list = detail.raw_data.get("maimai_list")
+    if not isinstance(maimai_list, dict):
+        return ""
+
+    parts: list[Any] = [
+        maimai_list.get("school"),
+        maimai_list.get("schools"),
+        maimai_list.get("edu"),
+        maimai_list.get("degree"),
+        maimai_list.get("sdegree"),
+    ]
+    for item in maimai_list.get("edu") or []:
+        if not isinstance(item, dict):
+            continue
+        hover = item.get("hover")
+        if isinstance(hover, dict):
+            parts.extend([
+                hover.get("tags"),
+                hover.get("qs_rank"),
+                hover.get("uni_rank"),
+            ])
+        parts.extend([
+            item.get("school"),
+            item.get("school_level"),
+            item.get("sdegree"),
+            item.get("degree"),
+        ])
+    return _text_join(parts)
+
+
 def _candidate_text(candidate: Candidate, detail: CandidateDetail | None) -> str:
     return _text_join([
         candidate.name,
@@ -129,8 +162,16 @@ _NEGATED_LIST_CONTINUATION_AT_END_RE = re.compile(r"(?:985|211)\s*(?:不是|非)
 _NEGATOR_LEFT_BOUNDARIES = set("（([{、/，,；;。和或及与且并又也既")
 
 
-def _education_text(candidate: Candidate, detail: CandidateDetail | None) -> str:
-    return _text_join([candidate.education, _detail_text(detail)])
+def _education_text(
+    candidate: Candidate,
+    detail: CandidateDetail | None,
+    include_detail_text: bool = True,
+) -> str:
+    return _text_join([
+        candidate.education,
+        _detail_text(detail) if include_detail_text else "",
+        _maimai_list_school_text(detail),
+    ])
 
 
 def _contains_term(text: str, term: str) -> bool:
@@ -225,13 +266,23 @@ def _positive_school_label_from_strategy(
     return None
 
 
-def _is_priority_school(strategy: dict[str, Any], candidate: Candidate, detail: CandidateDetail | None) -> bool:
-    education_text = _education_text(candidate, detail)
+def _is_priority_school(
+    strategy: dict[str, Any],
+    candidate: Candidate,
+    detail: CandidateDetail | None,
+    include_detail_text: bool = True,
+) -> bool:
+    education_text = _education_text(candidate, detail, include_detail_text=include_detail_text)
     return _positive_school_label_from_strategy(strategy, education_text) is not None
 
 
-def _education_score(strategy: dict[str, Any], candidate: Candidate, detail: CandidateDetail | None) -> tuple[int, str]:
-    education_text = _education_text(candidate, detail)
+def _education_score(
+    strategy: dict[str, Any],
+    candidate: Candidate,
+    detail: CandidateDetail | None,
+    include_detail_text: bool = True,
+) -> tuple[int, str]:
+    education_text = _education_text(candidate, detail, include_detail_text=include_detail_text)
     label = _positive_school_label_from_strategy(strategy, education_text)
     if label == "C9":
         return 10, "C9"
@@ -287,6 +338,8 @@ def score_candidate(
         raise ValueError("mode must be either 'list' or 'detailed'")
 
     source_detail = detail if mode == "detailed" else None
+    education_detail = detail if detail is not None else source_detail
+    include_detail_education_text = mode == "detailed"
     text = _candidate_text(candidate, source_detail)
     title = candidate.current_title or ""
     risk_flags: list[str] = []
@@ -295,7 +348,11 @@ def score_candidate(
     if any(term and term.lower() in title.lower() for term in strategy.get("exclude_titles", [])):
         risk_flags.append("excluded_title")
 
-    education_text = _education_text(candidate, source_detail)
+    education_text = _education_text(
+        candidate,
+        education_detail,
+        include_detail_text=include_detail_education_text,
+    )
     excluded_education_terms = set(strategy.get("exclude_education", [])) | _EXCLUDED_EDUCATION_TERMS
     if any(_contains_term(education_text, term) for term in excluded_education_terms):
         risk_flags.append("excluded_education")
@@ -308,11 +365,21 @@ def score_candidate(
     title_points, title_level = _title_score(title)
     keywords = [term for term in _tech_keywords(strategy) if term and term.lower() in text.lower()]
     tech_points = min(25, len(keywords) * 5)
-    education_points, education_level = _education_score(strategy, candidate, source_detail)
+    education_points, education_level = _education_score(
+        strategy,
+        candidate,
+        education_detail,
+        include_detail_text=include_detail_education_text,
+    )
     years_points = _years_score(candidate)
     score = company_points + title_points + tech_points + education_points + years_points
 
-    if not _is_priority_school(strategy, candidate, source_detail):
+    if not _is_priority_school(
+        strategy,
+        candidate,
+        education_detail,
+        include_detail_text=include_detail_education_text,
+    ):
         risk_flags.append("school_not_priority")
     if candidate.age is not None and candidate.age > 40:
         risk_flags.append("age_over_40")
@@ -373,34 +440,74 @@ def score_candidate(
     }
 
 
+def _dedupe_candidate_ids(values: list[Any]) -> list[int]:
+    candidate_ids: list[int] = []
+    seen: set[int] = set()
+    for value in values:
+        if value is None:
+            continue
+        try:
+            candidate_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if candidate_id in seen:
+            continue
+        seen.add(candidate_id)
+        candidate_ids.append(candidate_id)
+    return candidate_ids
+
+
+def _load_candidate_ids_file(path: str | Path) -> list[int]:
+    data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    if isinstance(data, dict) and isinstance(data.get("candidate_ids"), list):
+        return _dedupe_candidate_ids(data["candidate_ids"])
+    if isinstance(data, dict) and isinstance(data.get("contacts"), list):
+        return _dedupe_candidate_ids([
+            contact.get("candidate_id")
+            for contact in data["contacts"]
+            if isinstance(contact, dict)
+        ])
+    raise ValueError("candidate ids file must contain candidate_ids or contacts")
+
+
 def rank_candidates(
     db_path: str | Path,
     strategy: dict[str, Any],
     limit: int = 5000,
     mode: str = "list",
+    candidate_ids: list[int] | None = None,
 ) -> dict[str, Any]:
     db = TalentDB(db_path)
     try:
-        page = db.search(
-            CandidateFilter(platforms=["maimai"]),
-            SortSpec(field="updated_at", direction="desc"),
-            page=1,
-            page_size=limit,
-        )
+        if candidate_ids is None:
+            page = db.search(
+                CandidateFilter(platforms=["maimai"]),
+                SortSpec(field="updated_at", direction="desc"),
+                page=1,
+                page_size=limit,
+            )
+            candidates = page.items
+        else:
+            candidates = []
+            for candidate_id in _dedupe_candidate_ids(candidate_ids):
+                candidate = db.get(candidate_id)
+                if candidate is not None:
+                    candidates.append(candidate)
         scores = [
             score_candidate(
                 candidate,
                 strategy,
-                db.get_detail(candidate.id) if mode == "detailed" else None,
+                db.get_detail(candidate.id),
                 mode=mode,
             )
-            for candidate in page.items
+            for candidate in candidates
         ]
     finally:
         db.close()
 
     grade_order = {"A": 0, "B": 1, "C": 2, "淘汰": 3}
     scores.sort(key=lambda item: (grade_order.get(item["grade"], 99), -item["score"], item["candidate_id"]))
+    scores = scores[:limit]
     grades: dict[str, list[dict[str, Any]]] = {"A": [], "B": [], "C": [], "淘汰": []}
     for item in scores:
         grades.setdefault(item["grade"], []).append(item)
@@ -409,6 +516,7 @@ def rank_candidates(
         "total_candidates": len(scores),
         "summary": {grade: len(items) for grade, items in grades.items()},
         "grades": grades,
+        "ranked": scores,
     }
 
 
@@ -444,10 +552,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-json", required=True)
     parser.add_argument("--out-md", required=True)
     parser.add_argument("--limit", type=int, default=5000)
+    parser.add_argument("--mode", choices=["list", "detailed"], default="list")
+    parser.add_argument("--candidate-ids-file")
     args = parser.parse_args(argv)
 
     strategy = load_strategy(args.config)
-    result = rank_candidates(args.db, strategy, args.limit)
+    candidate_ids = _load_candidate_ids_file(args.candidate_ids_file) if args.candidate_ids_file else None
+    result = rank_candidates(args.db, strategy, args.limit, mode=args.mode, candidate_ids=candidate_ids)
     out_json = Path(args.out_json)
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8-sig")

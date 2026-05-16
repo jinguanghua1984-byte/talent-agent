@@ -25,7 +25,7 @@ from scripts.maimai_ai_infra_search_runner import (  # noqa: E402
 )
 
 
-SEARCH_BLOCK_STATUSES = {403, 429}
+SEARCH_BLOCK_STATUSES = {403, 429, 432}
 ALLOWED_SEARCH_PATHS = {"/api/ent/v3/search/basic"}
 
 
@@ -112,6 +112,20 @@ def extract_contacts(parsed: Any) -> list[dict[str, Any]]:
     return []
 
 
+def api_block_reason(http_status: int | None, parsed: Any) -> str | None:
+    if not isinstance(parsed, dict):
+        return f"http_{http_status}" if http_status in SEARCH_BLOCK_STATUSES else None
+    block_info = parsed.get("block_info")
+    if isinstance(block_info, dict):
+        block_type = str(block_info.get("block_type") or "").lower()
+        captcha_type = str(block_info.get("captcha_type") or "").lower()
+        if "captcha" in block_type or captcha_type:
+            return "captcha_api"
+    if http_status in SEARCH_BLOCK_STATUSES:
+        return f"http_{http_status}"
+    return None
+
+
 def summarize_response(
     http_status: int | None,
     content_type: str | None,
@@ -165,7 +179,52 @@ def health_expression() -> str:
 def template_status_expression() -> str:
     return """
 (() => {
-  const tpl = window.__maimaiSearchTemplate || null;
+  function normalizeCapturedSearchRecord(record) {
+    if (!record || typeof record !== "object") {
+      return null;
+    }
+    let body = record.body || null;
+    if (!body && record.requestBody) {
+      try {
+        body = JSON.parse(record.requestBody);
+      } catch (err) {
+        body = null;
+      }
+    }
+    return {
+      url: record.url || "",
+      method: record.method || "POST",
+      headers: record.headers || record.requestHeaders || {},
+      headerNames: record.headerNames || Object.keys(record.headers || record.requestHeaders || {}).sort(),
+      body,
+      contactCount: 0,
+      pageMeta: null
+    };
+  }
+  function isSearchTemplate(template) {
+    let path = "";
+    try {
+      path = new URL(template && template.url || "", location.origin).pathname;
+    } catch (err) {
+      return false;
+    }
+    return String(template && template.method || "").toUpperCase() === "POST" &&
+      path === "/api/ent/v3/search/basic";
+  }
+  function latestCapturedSearchTemplate() {
+    const requests = Array.isArray(window.__maimaiData && window.__maimaiData.requests)
+      ? window.__maimaiData.requests
+      : [];
+    for (let index = requests.length - 1; index >= 0; index -= 1) {
+      const template = normalizeCapturedSearchRecord(requests[index]);
+      if (template && isSearchTemplate(template)) {
+        return template;
+      }
+    }
+    return null;
+  }
+  const existingTpl = window.__maimaiSearchTemplate || null;
+  const tpl = isSearchTemplate(existingTpl) ? existingTpl : latestCapturedSearchTemplate();
   const body = tpl && tpl.body && typeof tpl.body === "object" ? tpl.body : null;
   const search = body && body.search && typeof body.search === "object" ? body.search : null;
   const hasOwn = (target, key) => Boolean(target && Object.prototype.hasOwnProperty.call(target, key));
@@ -200,7 +259,43 @@ def search_expression(
     filters_json = _json_for_js(normalize_confirmed_search_filters(search_filters or {}))
     return f"""
 (async () => {{
-  const tpl = window.__maimaiSearchTemplate || null;
+  function normalizeCapturedSearchRecord(record) {{
+    if (!record || typeof record !== "object") {{
+      return null;
+    }}
+    let body = record.body || null;
+    if (!body && record.requestBody) {{
+      try {{
+        body = JSON.parse(record.requestBody);
+      }} catch (err) {{
+        body = null;
+      }}
+    }}
+    return {{
+      url: record.url || "",
+      method: record.method || "POST",
+      headers: record.headers || record.requestHeaders || {{}},
+      requestHeaders: record.requestHeaders || record.headers || {{}},
+      headerNames: record.headerNames || Object.keys(record.headers || record.requestHeaders || {{}}).sort(),
+      body
+    }};
+  }}
+
+  function latestCapturedSearchTemplate() {{
+    const requests = Array.isArray(window.__maimaiData && window.__maimaiData.requests)
+      ? window.__maimaiData.requests
+      : [];
+    for (let index = requests.length - 1; index >= 0; index -= 1) {{
+      const template = normalizeCapturedSearchRecord(requests[index]);
+      if (template && isCompatibleSearchTemplate(template)) {{
+        return template;
+      }}
+    }}
+    return null;
+  }}
+
+  const existingTpl = window.__maimaiSearchTemplate || null;
+  const tpl = isCompatibleSearchTemplate(existingTpl) ? existingTpl : latestCapturedSearchTemplate();
   if (!tpl || !tpl.body) {{
     return {{ status: "error", error: "missing_search_template" }};
   }}
@@ -289,10 +384,12 @@ def search_expression(
     const target = body && body.search && typeof body.search === "object"
       ? body.search
       : body;
+    if (Object.prototype.hasOwnProperty.call(filters || {{}}, "min_age") ||
+        Object.prototype.hasOwnProperty.call(filters || {{}}, "max_age")) {{
+      delete target.age;
+    }}
     for (const [key, value] of Object.entries(filters || {{}})) {{
-      if (Object.prototype.hasOwnProperty.call(target, key)) {{
-        target[key] = value;
-      }}
+      target[key] = value;
     }}
     return body;
   }}
@@ -418,7 +515,7 @@ def run_gate(
             "writeDb": False,
             "apply": False,
             "detailFetch": False,
-            "abortOn": ["logout", "captcha", "403", "429", "non_json", "incompatible_request_shape"],
+            "abortOn": ["logout", "captcha", "api_captcha", "403", "429", "432", "non_json", "incompatible_request_shape"],
             "delaySeconds": delay_seconds,
         },
         "pageTarget": {
@@ -512,8 +609,9 @@ def run_gate(
                             "responseRawPreview": response.get("rawPreview") or "",
                         })
 
-                    if response.get("httpStatus") in SEARCH_BLOCK_STATUSES:
-                        batch_result["error"] = f"http_{response.get('httpStatus')}"
+                    block_reason = api_block_reason(response.get("httpStatus"), parsed)
+                    if block_reason:
+                        batch_result["error"] = block_reason
                         page_result["ok"] = False
                         page_result["error"] = batch_result["error"]
                         result["status"] = "stopped"
