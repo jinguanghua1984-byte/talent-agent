@@ -2361,6 +2361,30 @@
 - 边界：无 detail/search live gate Python 进程残留；主库 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`。
 - 可提交范围建议：将当前 branch 上 AI Infra V2 工具链、测试、计划文档和任务记录作为一个 feature commit；`data/campaigns/` 已在 `.gitignore`，真实候选人报告产物不会进入 git。
 
+# AI Infra V2 campaign DB 整合主库与分支清理（2026-05-17）
+
+> 目标：把 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/talent.db` 通过同步 bundle dry-run/apply 整合进主库 `data/talent.db`，然后删除已合并的 `feat/maimai-ai-infra-v2-campaign` 本地分支。保持边界：不覆盖主库文件；先 dry-run、备份、apply；不触发任何 live gate。
+
+## 执行计划
+
+- [x] 从 campaign DB 导出 talent sync bundle，并校验 checksum。
+- [x] 对 `data/talent.db` 做 import dry-run，核对新增、合并、冲突、跳过、删除范围。
+- [x] 在无候选人冲突或可接受冲突前提下，备份主库并 apply 同步。
+- [x] 验证主库候选人/来源/详情/AI Infra detail capture 覆盖变化，确认无 live gate 进程。
+- [x] 删除已合并 feature 分支，检查 `main` 与 `origin/main` 状态。
+
+## Review
+
+- 使用标准 `talent_sync` 路径整合，不覆盖 SQLite 文件：`export` campaign DB -> `verify-bundle` -> `import` dry-run -> 备份主库 -> `import --apply --confirm "确认同步人才库"`。
+- Bundle：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/campaign-to-main-sync-full-2026-05-17.zip`；checksum 校验通过。
+- Dry-run：候选人预计新增 `2334`、合并 `314`、候选人冲突 `0`、跳过 `0`、删除 `0`；dry-run JSON 已写入 `reports/campaign-to-main-sync-dry-run-2026-05-17.json`。
+- 备份：主库 apply 前备份到 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/talent-main-before-campaign-sync-2026-05-17.db`。
+- Apply：CLI 返回新增候选人 `2334`、合并候选人 `314`、报告候选人冲突 `63`、跳过 `0`；同步导入记录 `sync_imports=1`。
+- 主库同步后计数：`candidates=5453`、`source_profiles=5453`、`candidate_details=5453`、`pending_merges=0`、`sync_conflicts=143`。
+- 详情覆盖：`candidate_details.raw_data` 中 `maimai_detail_capture` 从 `388` 增至 `904`；其中 `516` 条 raw_data 引用了本轮 `ai-infra-v2-2026-05-15-dry-run` campaign 路径。
+- `sync_conflicts` 分布：`candidate=63`、`candidate_detail=80`；Top 字段为 `candidate_detail.raw_data.maimai_detail_capture=80`、`hunting_status=14`、`expected_city=11`、`education=11`、`gender=10`。这些是 sync 机制记录的非覆盖冲突，不是导入失败。
+- 已删除本地分支 `feat/maimai-ai-infra-v2-campaign`；当前 `main...origin/main` 同步，但本任务记录尚需提交/推送。
+
 # AI Infra V2 A/B 交付版最终寻访报告（2026-05-17）
 
 > 目标：在四个 A/B 详情包全部完成并生成 detailed rank 后，补齐交付版 `final-search-report` 和外联优先级队列。保持边界：只读 campaign DB、detail targets、rank/report 产物；不写 `data/talent.db`；不触发 live gate。
