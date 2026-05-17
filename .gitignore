@@ -32,12 +32,14 @@ data/screens/*.json
 data/search-strategies/instances/*.md
 data/output/*.md
 data/output/*.json
+data/output/*.zip
 data/output/raw/
 data/rules/preferences.json
 data/token-tracker/*.jsonl
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/backups/
 *.pyc
 __pycache__/
 

@@ -2486,3 +2486,49 @@
 - Ledger 与 DB 核验：`state/import-ledger.jsonl` 已写入 `detail_apply started/completed` 两条 Pack 004 记录；campaign DB `maimai_detail_capture` 行数从 `447` 增至 `596`，覆盖四包 A/B 目标总数，`candidate_details=2648`。
 - 主库边界：apply 后 `data/talent.db` 时间戳仍为 `2026-05-14 13:54:21`；写入只发生在 `data/campaigns/ai-infra-v2-2026-05-15-dry-run/talent.db`，该库时间戳更新为 `2026-05-17 02:42:13`。
 - 验证：`python -m pytest tests/test_maimai_ai_infra_detail_live_gate.py tests/test_maimai_detail_import.py tests/test_maimai_ai_infra_pipeline.py -q` -> `49 passed`；`python -m py_compile scripts/maimai_ai_infra_detail_live_gate.py scripts/maimai_detail_import.py scripts/maimai_ai_infra_pipeline.py` -> PASS；`git diff --check` -> PASS；无 detail/search live gate Python 进程残留。
+
+# 人才库同步包导出（2026-05-17）
+
+> 目标：按 `talent-library` 多端 bundle 同步契约，从 `data/talent.db` 导出可传输的 zip 同步包，并校验 bundle 完整性。
+
+## 执行计划
+
+- [x] 读取 `talent-library` workflow、数据契约和同步手册，确认导出入口与默认参数。
+- [x] 确认主库 `data/talent.db` 存在。
+- [x] 执行 `python scripts/talent_sync.py export --db data/talent.db --out data/output/talent-sync-full.zip`。
+- [x] 执行 `python scripts/talent_sync.py verify-bundle --bundle data/output/talent-sync-full.zip`。
+- [x] 回填导出文件路径、文件大小和校验结果。
+
+## Review
+
+- 导出前状态：`python scripts/talent_sync.py status --db data/talent.db` -> `node_id=f10862a8-f87f-498e-83c6-fd168448da08`、候选人 `5453`、导入记录 `1`。
+- 导出结果：`python scripts/talent_sync.py export --db data/talent.db --out data/output/talent-sync-full.zip` -> `导出完成`，模式 `full`，候选人 `5453`。
+- 文件位置：`data/output/talent-sync-full.zip`；初版大小 `14077261` 字节，后续导入验证发现 JSONL Unicode 行分隔符问题，已修复并重新导出。
+- 当前正式包：大小 `14077270` 字节，更新时间 `2026-05-17 12:56:10`；旧包已留存到 `data/backups/talent-sync-full-before-jsonl-fix-20260517-125022.zip`。
+- 完整性校验：`python scripts/talent_sync.py verify-bundle --bundle data/output/talent-sync-full.zip` -> `bundle 校验通过`。
+
+# 人才库同步包导入验证与备份（2026-05-17）
+
+> 目标：验证 `data/output/talent-sync-full.zip` 可以正常导入，同时先备份主库；主库只做 dry-run，真实 apply 只在备份副本上执行。
+
+## 执行计划
+
+- [x] 确认同步包存在，并确认 `scripts/talent_sync.py import` 的 dry-run/apply 参数。
+- [x] 备份当前主库 `data/talent.db` 到 `data/backups/`。
+- [x] 复制一份导入测试库，避免在主库上做真实写入。
+- [x] 执行 `verify-bundle` 校验同步包完整性。
+- [x] 对主库执行 dry-run import，确认导入预览可生成。
+- [x] 对测试库执行 apply import，确认真实导入流程可完成。
+- [x] 核对主库未执行 apply，并回填结果。
+
+## Review
+
+- 初次验证：旧包 `verify-bundle` 通过，但主库 dry-run 报 `JSONDecodeError: Unterminated string`，定位到 `data/candidate_details.jsonl` 第 1525 条含合法 `U+2028` 行分隔符，被 `_read_jsonl().splitlines()` 误拆。
+- 修复：`scripts/talent_sync.py` 的 JSONL 读取改为只按 `\n` 分隔；导出端将 `U+2028/U+2029` 写成 JSON 转义序列；新增回归测试 `test_import_bundle_handles_unicode_line_separator_inside_json_string`。
+- 新包：重新执行 `python scripts/talent_sync.py export --db data/talent.db --out data/output/talent-sync-full.zip` -> `导出完成`，候选人 `5453`，当前文件大小 `14077270` 字节。
+- 备份：最终主库备份为 `data/backups/talent-db-backup-final-20260517-125819.db`；导入测试库为 `data/backups/talent-db-import-test-final-20260517-125819.db`。
+- 新包完整性：`python scripts/talent_sync.py verify-bundle --bundle data/output/talent-sync-full.zip` -> `bundle 校验通过`；逐文件 JSONL 解析通过，且 `literal_unicode_separators=[]`。
+- 主库 dry-run：`python scripts/talent_sync.py import --db data/talent.db --bundle data/output/talent-sync-full.zip` -> `新建候选人=0，合并候选人=5453，冲突候选人=0，跳过候选人=0`。
+- 测试库 apply：`python scripts/talent_sync.py import --db data/backups/talent-db-import-test-final-20260517-125819.db --bundle data/output/talent-sync-full.zip --apply --confirm "确认同步人才库"` -> `新建候选人=0，合并候选人=5453，冲突候选人=0，跳过候选人=0`。
+- 主库核对：`python scripts/talent_sync.py status --db data/talent.db` -> 候选人 `5453`、导入记录 `1`；测试库导入记录为 `2`，说明真实 apply 发生在测试库而非主库。
+- 验证：`python -m pytest tests/test_talent_sync.py -q` -> `37 passed`；`python -m py_compile scripts/talent_sync.py` -> PASS；`git diff --check` -> PASS。

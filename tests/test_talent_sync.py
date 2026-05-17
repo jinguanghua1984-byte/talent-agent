@@ -86,6 +86,41 @@ def test_export_full_bundle_contains_manifest_and_core_rows(tmp_path: Path):
     )
 
 
+def test_import_bundle_handles_unicode_line_separator_inside_json_string(
+    tmp_path: Path,
+):
+    source_db = tmp_path / "source.db"
+    target_db = tmp_path / "target.db"
+    bundle_path = tmp_path / "bundle.zip"
+    db = TalentDB(source_db)
+    try:
+        db.ingest(
+            {
+                "name": "Alice",
+                "platform_id": "maimai-1",
+                "work_experience": [
+                    {
+                        "company": "Acme",
+                        "description": "first line\\n\u2028second line",
+                    }
+                ],
+            },
+            platform="maimai",
+        )
+    finally:
+        db.close()
+    export_bundle(source_db, bundle_path, mode="full")
+    with zipfile.ZipFile(bundle_path) as bundle:
+        detail_payload = bundle.read("data/candidate_details.jsonl").decode("utf-8")
+
+    result = import_bundle(bundle_path, target_db, apply=False)
+
+    assert "\u2028" not in detail_payload
+    assert "\\u2028" in detail_payload
+    assert result["created"]["candidates"] == 1
+    assert not target_db.exists()
+
+
 def test_export_can_include_wechat_timeline_attachments(tmp_path: Path):
     db_path = tmp_path / "source.db"
     timeline_dir = tmp_path / "data" / "wechat-timelines"

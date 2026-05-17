@@ -211,8 +211,15 @@ def import_bundle(
 
 
 def _jsonl_bytes(rows: list[dict[str, Any]]) -> bytes:
-    content = "".join(f"{canonical_json(row)}\n" for row in rows)
+    content = "".join(f"{_jsonl_record(row)}\n" for row in rows)
     return content.encode("utf-8")
+
+
+def _jsonl_record(row: dict[str, Any]) -> str:
+    return canonical_json(row).replace("\u2028", "\\u2028").replace(
+        "\u2029",
+        "\\u2029",
+    )
 
 
 def _wechat_timeline_attachment_payloads(
@@ -524,7 +531,7 @@ def _read_bundle_payloads(
 
 def _read_jsonl(text: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for line_number, line in enumerate(text.splitlines(), start=1):
+    for line_number, line in enumerate(text.split("\n"), start=1):
         if not line.strip():
             continue
         value = json.loads(line)

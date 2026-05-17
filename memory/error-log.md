@@ -1,6 +1,7 @@
 | 日期 | 错误 | 根因 | 修复 |
 | --- | --- | --- | --- |
 | 2026-05-15 | 换账号后脉脉搜索模板包含旧 `age` 字段且缺少 `min_age/max_age` | 新账号手动搜索拦截到的 `window.__maimaiSearchTemplate` 与前一账号模板字段形态不同；如果沿用“只改模板已有字段”，会无法写入已确认年龄范围并可能把未确认 `search.age` 带入真实请求 | runner/live gate 对已确认 `search_filters` 显式写入字段，即使模板缺字段也补入；当存在 `min_age/max_age` 时删除模板里的 `age`，并补测试和只构造请求体探针 |
+| 2026-05-17 | `talent_sync.py verify-bundle` 通过但 `import` dry-run 报 `JSONDecodeError: Unterminated string` | bundle 内 JSON 字符串含合法 `U+2028` 行分隔符；导入端用 `splitlines()` 读取 JSONL，把单条记录误拆成多行；导出端也未转义 `U+2028/U+2029` | JSONL 读取只按 `\n` 分隔，导出端将 `U+2028/U+2029` 写成 JSON 转义序列，补回归测试并重新导出同步包 |
 | 2026-05-15 | PowerShell here-string 运行期脚本把中文 JSON key `淘汰` 写成 `??` | Windows PowerShell 源文本编码与 Python stdin 解码不一致，内联脚本中的中文字面量在进入 Python 前被替换，导致 wave-003 运行产物 summary key 异常 | 运行期脚本中的中文结构化 key 使用 Unicode escape，或改用已存在的 UTF-8 文件脚本；写完产物后检查 JSON key，不让 `??` 进入报告 |
 | 2026-05-13 | Claude Code 使用 GPT 5.5 启动时报 `mcp__gemini__analyze_image` schema 400 | 用户级 `mcpServers.gemini` 加载的 `mcp-server-gemini@4.2.2` 在 `analyze_image.inputSchema` 顶层使用 `oneOf`，GPT 5.5/OpenAI tool schema 子集拒绝顶层组合关键字；用户随后明确不需要该 MCP | 从 `C:\Users\Administrator\.claude.json` 删除全局 `mcpServers.gemini` 注册，并清理临时本地补丁副本；验证活跃 MCP server 中无 Gemini |
 | 2026-05-13 | Edge CDP `/json/new?url` 返回 405 | Edge 148 的 DevTools HTTP endpoint 要求用 `PUT /json/new?...` 创建新 target，`GET` 会被拒绝 | 本地 CDP helper 对 `/json/new` 和 `/json/activate/<id>` 统一使用 `PUT`，页面内容仍通过 WebSocket `Runtime.evaluate` 读取 |
