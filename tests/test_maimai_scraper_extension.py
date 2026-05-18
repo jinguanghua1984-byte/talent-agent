@@ -691,6 +691,17 @@ def test_background_rejects_duplicate_pager_and_detail_batch_starts():
     assert "人选列表采集正在运行，请先停止当前任务" in pager_start_block
 
 
+def test_start_pager_keeps_existing_contact_count_in_scope():
+    background = read_extension_file("background.js")
+    pager_start_block = background.split('if (msg.type === "startPager")', 1)[1].split('if (msg.type === "stopPager")', 1)[0]
+
+    assert "var existingContactCount = 0" in pager_start_block
+    assert "existingContactCount = existingContacts.length" in pager_start_block
+    assert "total_contacts: existingContactCount" in pager_start_block
+    after_append_block = pager_start_block.split("PagerDB.append(existingContacts)", 1)[1]
+    assert "existingContacts.length" not in after_append_block
+
+
 def test_popup_is_launcher_not_long_running_console():
     popup_html = read_extension_file("popup.html")
     popup_js = read_extension_file("popup.js")

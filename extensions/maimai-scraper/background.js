@@ -1619,6 +1619,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   if (msg.type === "startPager") {
     var tabId = null;
     var responded = false;
+    var existingContactCount = 0;
 
     function safeRespond(data) {
       if (!responded) { responded = true; sendResponse(data); }
@@ -1651,6 +1652,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
             });
           });
         }).then(function (existingContacts) {
+          existingContactCount = existingContacts.length;
           return PagerDB.append(existingContacts);
         }).then(function () {
           function sendPageRequest(page) {
@@ -1679,7 +1681,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
               current_page: 1,
               total_pages: pagerState.totalPages || 0,
               total_from_api: pagerState.totalFromApi || 0,
-              total_contacts: existingContacts.length || 0,
+              total_contacts: existingContactCount,
               started_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
               finished_at: null,

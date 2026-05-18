@@ -1,17 +1,35 @@
+# 人选列表抓取初始化失败修复（2026-05-18）
+
+> 目标：修复 `startPager` 初始化阶段 `existingContacts is not defined`，保证列表抓取仍走现有 `content.js -> inject.js` 真实请求链路，不改业务页面请求位置。
+
+## 计划
+
+- [x] 复核报错与 `startPager` Promise 链，确认 `existingContacts` 只在上一层 `.then()` 参数里可见。
+- [x] 把 `existingContacts.length` 提前落到外层变量，避免后续 `.then()` 里越界引用。
+- [x] 运行聚焦测试、语法检查和回归测试，确认初始化恢复正常。
+
+## Review
+
+- 已完成并验证。`startPager` 现在把联系人数量提前写入外层 `existingContactCount`，后续状态写入不再引用越界变量。
+- 该修复保留了原有 `content.js -> inject.js` 列表请求链路，不改真实请求发起位置。
+- 验证：`node --check extensions/maimai-scraper/background.js` PASS；新增回归测试 `1 passed`；扩展相关回归 `52 passed`；全量 `python -m pytest tests scripts -q` -> `645 passed, 1 warning`；`git diff --check` PASS（仅 Git CRLF/LF 提示）。
+
 # Workbench 打开侧边栏修复（2026-05-18）
 
 > 目标：修复“打开工作台”进入新标签页而不是 Chrome Side Panel 的问题；保持不自动导航/刷新/点击业务页面。
 
 ## 计划
 
-- [ ] 复核 `openWorkbenchPage()` 调用路径和 Side Panel fallback 条件，定位为什么进入 `chrome.tabs.create`。
-- [ ] 补静态契约测试：打开工作台必须传递 `windowId` 给 `chrome.sidePanel.open`，且不能在 Side Panel 可用时自动 fallback 新标签。
-- [ ] 修改 popup/background opener：popup 传当前窗口上下文；background 同步调用 `chrome.sidePanel.open({ windowId })`，失败返回错误而不是开新标签。
-- [ ] 运行聚焦测试、扩展语法检查和必要回归，更新 Review。
+- [x] 复核 `openWorkbenchPage()` 调用路径和 Side Panel fallback 条件，定位为什么进入 `chrome.tabs.create`。
+- [x] 补静态契约测试：打开工作台必须传递 `windowId` 给 `chrome.sidePanel.open`，且不能在 Side Panel 可用时自动 fallback 新标签。
+- [x] 修改 popup/background opener：popup 传当前窗口上下文；background 同步调用 `chrome.sidePanel.open({ windowId })`，失败返回错误而不是开新标签。
+- [x] 运行聚焦测试、扩展语法检查和必要回归，更新 Review。
 
 ## Review
 
-- 待执行。
+- 已完成并验证。`popup.js` 传当前窗口 `windowId`，`background.js` 直接以 `chrome.sidePanel.open({ windowId })` 打开，不再自动回退 `chrome.tabs.create`。
+- 新增契约测试锁定工作台打开方式，防止 Side Panel 正确可用时再退回新标签。
+- 该修复已在独立 commit `8709a70` 中落地。
 
 # 浏览器扩展工作台 V2.0 实施计划（2026-05-18）
 
