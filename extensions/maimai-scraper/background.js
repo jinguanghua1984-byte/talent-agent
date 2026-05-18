@@ -11,6 +11,7 @@ var __detailBatchRunToken = 0;
 var __detailBatchRunning = false;
 var __detailBatchRecovery = null;
 var __diagnosticTraceWrite = Promise.resolve();
+var __workbenchStateWrite = Promise.resolve();
 
 function tagDetailBatchRecord(record, runToken) {
   return Object.assign({}, record || {}, { run_token: runToken });
@@ -427,6 +428,297 @@ function clearDiagnosticTraceStorage() {
     });
   });
   return __diagnosticTraceWrite;
+}
+
+var DEFAULT_WORKBENCH_STATE = {
+  schema_version: 1,
+  active_view: "capture",
+  active_maimai_tab_id: null,
+  last_opened_at: null,
+  capture: {
+    total_requests: 0,
+    total_contacts: 0,
+    total_details: 0,
+    last_capture_at: null,
+  },
+  pager: {
+    status: "idle",
+    mode: "all",
+    max_pages: 3,
+    current_page: 0,
+    total_pages: 0,
+    total_from_api: 0,
+    total_contacts: 0,
+    started_at: null,
+    updated_at: null,
+    finished_at: null,
+    last_error: null,
+  },
+  detail: {
+    state: null,
+    jobs: 0,
+    done: 0,
+    failed: 0,
+    skipped: 0,
+    imported_contacts: 0,
+    last_error: null,
+  },
+  export: {
+    last_export_type: null,
+    last_export_at: null,
+    last_download_id: null,
+  },
+};
+
+function copyJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function mergePlainObject(base, patch) {
+  var result = Object.assign({}, base || {});
+  Object.keys(patch || {}).forEach(function (key) {
+    var value = patch[key];
+    if (value === undefined) return;
+    if (
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      result[key] &&
+      typeof result[key] === "object" &&
+      !Array.isArray(result[key])
+    ) {
+      result[key] = mergePlainObject(result[key], value);
+    } else {
+      result[key] = value;
+    }
+  });
+  return result;
+}
+
+function normalizeWorkbenchState(state) {
+  return mergePlainObject(copyJson(DEFAULT_WORKBENCH_STATE), state || {});
+}
+
+function loadWorkbenchStorage() {
+  return new Promise(function (resolve) {
+    chrome.storage.local.get({
+      workbenchState: copyJson(DEFAULT_WORKBENCH_STATE),
+      pagerLogs: [],
+      detailBatchLogs: [],
+    }, function (r) {
+      resolve({
+        workbenchState: normalizeWorkbenchState(r.workbenchState),
+        pagerLogs: r.pagerLogs || [],
+        detailBatchLogs: r.detailBatchLogs || [],
+      });
+    });
+  });
+}
+
+function saveWorkbenchStatePatch(patch) {
+  __workbenchStateWrite = __workbenchStateWrite.catch(function () {}).then(function () {
+    return loadWorkbenchStorage().then(function (stored) {
+      var state = normalizeWorkbenchState(mergePlainObject(stored.workbenchState, patch || {}));
+      return new Promise(function (resolve) {
+        chrome.storage.local.set({ workbenchState: state }, function () {
+          resolve(state);
+        });
+      });
+    });
+  });
+  return __workbenchStateWrite;
+}
+
+function resetWorkbenchStateAndPagerLogs() {
+  __workbenchStateWrite = __workbenchStateWrite.catch(function () {}).then(function () {
+    return new Promise(function (resolve) {
+      chrome.storage.local.set({
+        workbenchState: copyJson(DEFAULT_WORKBENCH_STATE),
+        pagerLogs: [],
+      }, function () {
+        resolve(copyJson(DEFAULT_WORKBENCH_STATE));
+      });
+    });
+  });
+  return __workbenchStateWrite;
+}
+
+function appendPagerLog(level, message, meta) {
+  return new Promise(function (resolve) {
+    chrome.storage.local.get({ pagerLogs: [] }, function (r) {
+      var logs = r.pagerLogs || [];
+      logs.push({
+        ts: new Date().toISOString(),
+        level: level || "info",
+        message: message || "",
+        meta: meta || null,
+      });
+      chrome.storage.local.set({ pagerLogs: logs.slice(-120) }, function () {
+        resolve(logs.slice(-120));
+      });
+    });
+  });
+}
+
+function clearPagerLogs() {
+  return new Promise(function (resolve) {
+    chrome.storage.local.set({ pagerLogs: [] }, function () {
+      resolve([]);
+    });
+  });
+}
+
+function pagerLogMessageForEvent(event) {
+  if (!event || !event.type) return "列表采集状态更新";
+  if (event.type === "pager_progress") {
+    return "第 " + event.currentPage + "/" + event.totalPages + " 页完成，新增 " + (event.contactsInPage || 0) + " 条，累计 " + (event.totalContacts || 0) + " 条";
+  }
+  if (event.type === "pager_complete") {
+    return "列表采集完成，共保存 " + (event.totalContacts || 0) + " 条人选";
+  }
+  if (event.type === "pager_cancelled") {
+    return "列表采集已停止，已保存 " + (event.totalContacts || 0) + " 条人选";
+  }
+  if (event.type === "pager_error") {
+    return "第 " + event.page + " 页请求失败：" + (event.reason || "未知错误");
+  }
+  if (event.type === "pager_paused") {
+    return "第 " + event.page + " 页请求暂停：" + (event.reason || "未知原因");
+  }
+  return "列表采集状态更新";
+}
+
+function updateWorkbenchPagerStateFromEvent(event, mode, maxPages) {
+  event = event || {};
+  var nowIso = new Date().toISOString();
+  var status = "running";
+  var finishedAt = null;
+  var lastError = null;
+  if (event.type === "pager_complete") {
+    status = "completed";
+    finishedAt = nowIso;
+  } else if (event.type === "pager_cancelled") {
+    status = "stopped";
+    finishedAt = nowIso;
+  } else if (event.type === "pager_error") {
+    status = "failed";
+    lastError = event.reason || "pager_error";
+  } else if (event.type === "pager_paused") {
+    status = "paused";
+    lastError = event.reason || "pager_paused";
+  }
+  return saveWorkbenchStatePatch({
+    pager: {
+      status: status,
+      mode: mode || undefined,
+      max_pages: maxPages || undefined,
+      current_page: event.currentPage || event.page || 0,
+      total_pages: event.totalPages || 0,
+      total_from_api: event.totalFromApi || 0,
+      total_contacts: event.totalContacts || 0,
+      updated_at: nowIso,
+      finished_at: finishedAt,
+      last_error: lastError,
+    },
+  }).then(function () {
+    return appendPagerLog(status === "failed" ? "error" : "info", pagerLogMessageForEvent(event), event);
+  });
+}
+
+function updateWorkbenchFromSummary(summary) {
+  summary = summary || {};
+  var detail = summary.detail || {};
+  var counts = detail.counts || {};
+  return saveWorkbenchStatePatch({
+    capture: {
+      total_requests: summary.totalRequests || 0,
+      total_contacts: summary.totalContacts || 0,
+      total_details: summary.totalDetails || 0,
+    },
+    detail: {
+      state: detail.state || null,
+      jobs: detail.totalJobs || detail.jobs || 0,
+      done: counts.done || 0,
+      failed: counts.failed || 0,
+      skipped: counts.skipped || 0,
+      imported_contacts: detail.contacts || 0,
+      last_error: detail.state && detail.state.error ? detail.state.error : null,
+    },
+  });
+}
+
+function buildWorkbenchSnapshot() {
+  return Promise.all([
+    buildScraperSummary(),
+    loadWorkbenchStorage(),
+  ]).then(function (parts) {
+    var summary = parts[0] || {};
+    var stored = parts[1] || {};
+    return updateWorkbenchFromSummary(summary).then(function (state) {
+      return {
+        ok: true,
+        workbenchState: state || stored.workbenchState,
+        summary: summary,
+        pagerLogs: stored.pagerLogs || [],
+        detailLogs: stored.detailBatchLogs || [],
+      };
+    });
+  });
+}
+
+function recordExportResult(exportType, downloadId) {
+  return saveWorkbenchStatePatch({
+    export: {
+      last_export_type: exportType || null,
+      last_export_at: new Date().toISOString(),
+      last_download_id: downloadId || null,
+    },
+  });
+}
+
+function hasWorkbenchDocument() {
+  var manifest = chrome.runtime.getManifest ? chrome.runtime.getManifest() : {};
+  var resources = manifest.web_accessible_resources || [];
+  if (manifest.side_panel && manifest.side_panel.default_path === "workbench.html") return true;
+  return resources.some(function (group) {
+    return (group.resources || []).indexOf("workbench.html") !== -1;
+  });
+}
+
+function openWorkbenchPage(sendResponse) {
+  if (!hasWorkbenchDocument()) {
+    sendResponse({ ok: false, error: "workbench_not_available" });
+    return;
+  }
+
+  function openTabFallback(reason) {
+    appendPagerLog("info", "side_panel_unavailable_fallback_tab", { reason: reason || null }).then(function () {
+      chrome.tabs.create({ url: chrome.runtime.getURL("workbench.html") }, function (tab) {
+        sendResponse({ ok: true, opened: "tab", tabId: tab && tab.id });
+      });
+    });
+  }
+
+  saveWorkbenchStatePatch({ last_opened_at: new Date().toISOString() }).then(function () {
+    if (chrome.sidePanel && chrome.sidePanel.open) {
+      try {
+        var opened = chrome.sidePanel.open({});
+        if (opened && opened.then) {
+          opened.then(function () {
+            sendResponse({ ok: true, opened: "sidePanel" });
+          }).catch(function (err) {
+            openTabFallback(err && err.message);
+          });
+        } else {
+          sendResponse({ ok: true, opened: "sidePanel" });
+        }
+      } catch (err) {
+        openTabFallback(err.message);
+      }
+    } else {
+      openTabFallback("sidePanel API unavailable");
+    }
+  });
 }
 
 function saveDetailBatchState(state, runToken) {
@@ -931,6 +1223,47 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   }
 
   // 清除数据
+  if (msg.type === "openWorkbench") {
+    openWorkbenchPage(sendResponse);
+    return true;
+  }
+
+  if (msg.type === "getWorkbenchSnapshot") {
+    recoverExpiredBatchPauseIfNeeded().then(function () {
+      return buildWorkbenchSnapshot();
+    }).then(function (snapshot) {
+      sendResponse(snapshot);
+    }).catch(function (err) {
+      sendResponse({ ok: false, error: err.message });
+    });
+    return true;
+  }
+
+  if (msg.type === "setWorkbenchView") {
+    saveWorkbenchStatePatch({ active_view: msg.view || "capture" }).then(function (state) {
+      sendResponse({ ok: true, workbenchState: state });
+    }).catch(function (err) {
+      sendResponse({ ok: false, error: err.message });
+    });
+    return true;
+  }
+
+  if (msg.type === "clearPagerLogs") {
+    clearPagerLogs().then(function () {
+      sendResponse({ ok: true });
+    });
+    return true;
+  }
+
+  if (msg.type === "recordExportResult") {
+    recordExportResult(msg.exportType, msg.downloadId).then(function (state) {
+      sendResponse({ ok: true, workbenchState: state });
+    }).catch(function (err) {
+      sendResponse({ ok: false, error: err.message });
+    });
+    return true;
+  }
+
   if (msg.type === "getScraperSummary") {
     recoverExpiredBatchPauseIfNeeded().then(function () {
       return buildScraperSummary();
@@ -993,7 +1326,9 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
           detailBatchTabId: null,
           domScrapeResult: null,
         }, function () {
-          sendResponse({ ok: true });
+          resetWorkbenchStateAndPagerLogs().then(function () {
+            sendResponse({ ok: true });
+          });
         });
       });
     return true;
