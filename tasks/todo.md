@@ -1,3 +1,19 @@
+# 工作台提示与日志浅色化（2026-05-18）
+
+> 目标：把详情页默认采集说明改成浅色文本提示样式，并统一详情日志、列表日志和请求预览为浅色背景。
+
+## 计划
+
+- [x] 补静态契约测试，锁定默认详情提示不再使用深色日志块，日志和请求预览不再使用深色背景。
+- [x] 修改 `workbench.html/css`，将 `detail-batch-log` 改为浅色提示条，并统一 `.log-list`、`.capture-preview` 的浅色表面。
+- [x] 运行语法检查、扩展回归、全量测试和 diff 检查，回填 Review。
+
+## Review
+
+- 已完成并验证。默认详情提示从深色代码块改成浅色提示条，保留文案但换成普通文本提示样式。
+- 列表日志、详情日志和请求预览统一为浅色表面；`capture-preview` 也不再是深色块。
+- 验证：新增聚焦测试 `1 passed`；扩展相关回归 `58 passed`；`python -m pytest tests scripts -q` -> `651 passed, 1 warning`；`node --check extensions/maimai-scraper/workbench.js` PASS；`git diff --check` PASS（仅 Git CRLF/LF 提示）。
+
 # 工作台 UI 主题优化（2026-05-18）
 
 > 目标：按 `frontend-design` 的工具型视觉方向优化工作台；清空入口放到全局右上角，图标不再使用垃圾桶；分页状态改中文；整体视觉统一成克制的操作台风格。

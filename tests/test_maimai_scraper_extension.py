@@ -705,6 +705,21 @@ def test_workbench_uses_industrial_utilitarian_theme_tokens():
     assert "var(--line)" in workbench_css
 
 
+def test_workbench_detail_hint_and_logs_use_light_surfaces():
+    workbench_html = read_extension_file("workbench.html")
+    workbench_css = read_extension_file("workbench.css")
+
+    assert '<pre class="detail-log" id="detail-batch-log">' not in workbench_html
+    assert 'class="detail-hint" id="detail-batch-log"' in workbench_html
+    assert ".detail-hint" in workbench_css
+    assert ".capture-preview" in workbench_css
+    assert ".log-list" in workbench_css
+    assert "background: var(--surface-raised)" in workbench_css
+    assert "border: 1px solid var(--line)" in workbench_css
+    for dark_token in ["#111827", "#162033", "#1e1e1e", "#dbe4ee", "#d4d4d4"]:
+        assert dark_token not in workbench_css
+
+
 def test_background_exposes_workbench_state_snapshot_and_logs():
     background = read_extension_file("background.js")
 
