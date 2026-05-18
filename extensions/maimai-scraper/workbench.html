@@ -9,9 +9,8 @@
     <header class="topbar">
       <div>
         <h1>脉脉人选数据采集</h1>
-        <p id="status-line">正在读取状态...</p>
+        <p id="status-line" class="status-message" hidden></p>
       </div>
-      <span class="badge" id="status-badge">--</span>
     </header>
 
     <section class="stats" id="popup-summary">
@@ -23,7 +22,7 @@
     <nav class="tabs" aria-label="工作台视图">
       <button class="tab active" data-view="capture">列表采集</button>
       <button class="tab" data-view="detail">批量详情</button>
-      <button class="tab" data-view="export">导出诊断</button>
+      <button class="tab" data-view="export">请求拦截</button>
     </nav>
 
     <section class="view active" id="view-capture">
@@ -42,7 +41,7 @@
           </label>
         </div>
         <div class="template-box">
-          <div id="pager-template-info">模板状态：等待捕获</div>
+          <div id="pager-template-info" class="template-error" hidden></div>
           <div id="pager-meta-info"></div>
         </div>
         <div class="btn-row">
@@ -92,11 +91,16 @@
 
     <section class="view" id="view-export">
       <div class="panel">
+        <div class="console-header">
+          <h2>请求拦截</h2>
+          <button id="btn-clear-all" class="icon-button danger" type="button" aria-label="清除全部数据" title="清除全部数据">
+            <span class="trash-icon" aria-hidden="true"></span>
+          </button>
+        </div>
         <div class="btn-row">
           <button id="btn-refresh">刷新摘要</button>
           <button id="btn-export-capture">导出被动拦截 JSON</button>
           <button id="btn-export-full">导出完整 JSON</button>
-          <button id="btn-clear-all">清除全部数据</button>
         </div>
         <pre class="capture-preview" id="capture-preview">等待数据...</pre>
       </div>

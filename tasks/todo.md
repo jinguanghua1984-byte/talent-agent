@@ -1,3 +1,24 @@
+# 工作台页面优化（2026-05-18）
+
+> 目标：减少重复统计和无效提示，移除业务页悬浮窗，把请求拦截控制台整理成更清晰的工作台视图，并修正自定义页数抓取的进度总数。
+
+## 计划
+
+- [x] 补静态契约测试，覆盖标题重复统计、悬浮窗移除、模板等待文案、清空图标按钮、请求拦截命名和自定义页数进度。
+- [x] 修改 `workbench.html/js/css` 的布局与提示逻辑，保留异常提示但移除重复状态展示。
+- [x] 修改 `content.js` 去掉悬浮窗 UI，仅保留页面消息桥接能力。
+- [x] 修改 `background.js` 自定义抓取启动状态，让工作台初始进度使用目标页数。
+- [x] 运行语法检查、聚焦测试、扩展回归和 diff 检查，回填 Review。
+
+## Review
+
+- 已完成并验证。工作台标题下不再显示“请求 · 人选 · 详情”纯文本行，绿色状态 badge 已移除，统计只保留卡片。
+- 业务页悬浮窗代码已从 `content.js` 移除，内容脚本只保留页面消息桥接、模板缓存、列表分页请求桥和详情请求桥。
+- “模板状态：等待捕获”默认文案已移除；启动失败中的模板/捕获异常仍会显示在错误提示里。
+- “清除全部数据”改为右上角图标按钮，保留 `aria-label/title`；“导出诊断”标签改为“请求拦截”。
+- 自定义前 N 页抓取启动态改用 `pagerTargetPages(...)`，前 3 页会从 `1/3` 继续到 `2/3`、`3/3`，不再先显示 API 总页数。
+- 验证：扩展 JS `node --check` 全部 PASS；聚焦红绿测试 `6 passed`；`python -m pytest tests/test_maimai_scraper_extension.py tests/test_maimai_trace_diff.py -q` -> `55 passed`；`python -m pytest tests scripts -q` -> `648 passed, 1 warning`；`git diff --check` PASS（仅 Git CRLF/LF 提示）。
+
 # 人选列表抓取初始化失败修复（2026-05-18）
 
 > 目标：修复 `startPager` 初始化阶段 `existingContacts is not defined`，保证列表抓取仍走现有 `content.js -> inject.js` 真实请求链路，不改业务页面请求位置。

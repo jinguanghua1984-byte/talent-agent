@@ -38,18 +38,38 @@
     return (ts ? "[" + ts + "] " : "") + message;
   }
 
-  function setBadge(text) {
-    $("status-badge").textContent = text || "--";
+  function setStatusMessage(message) {
+    var target = $("status-line");
+    if (!target) return;
+    target.textContent = message || "";
+    target.hidden = !message;
+  }
+
+  function setPagerTemplateError(message) {
+    var target = $("pager-template-info");
+    if (!target) return;
+    target.textContent = message || "";
+    target.hidden = !message;
+  }
+
+  function isTemplateCaptureError(message) {
+    message = message || "";
+    return message.indexOf("未捕获搜索模板") !== -1
+      || message.indexOf("模板") !== -1
+      || message.indexOf("捕获") !== -1;
   }
 
   function showActionResult(resp, fallbackMessage) {
     var hasDownloadId = resp && typeof resp.downloadId !== "undefined";
     if (!resp || !(resp.ok || hasDownloadId || resp.empty === true)) {
       var message = resp && resp.error ? resp.error : fallbackMessage;
-      $("status-line").textContent = message;
-      setBadge("错误");
+      setStatusMessage(message);
+      if (isTemplateCaptureError(message)) {
+        setPagerTemplateError(message);
+      }
       return false;
     }
+    setStatusMessage("");
     return true;
   }
 
@@ -126,8 +146,6 @@
     $("req-count").textContent = totalRequests;
     $("contact-count").textContent = totalContacts;
     $("detail-count").textContent = totalDetails;
-    setBadge(totalDetails > 0 ? totalDetails + " 详情" : totalContacts > 0 ? totalContacts + " 人选" : "等待捕获");
-    $("status-line").textContent = "请求 " + totalRequests + " · 人选 " + totalContacts + " · 详情 " + totalDetails;
   }
 
   function renderCapturePreview() {
@@ -151,6 +169,11 @@
     $("pager-progress-text").textContent = pager.status === "idle"
       ? "等待开始"
       : "状态：" + pager.status + "，页进度 " + current + "/" + total + "，人选 " + (pager.total_contacts || 0);
+    if (pager.last_error && isTemplateCaptureError(pager.last_error)) {
+      setPagerTemplateError(pager.last_error);
+    } else if (!pager.last_error) {
+      setPagerTemplateError("");
+    }
     $("pager-mode").value = pager.mode || "all";
     $("pager-max-pages").value = pager.max_pages || 3;
     updatePagerPagesVisibility();
@@ -217,9 +240,10 @@
   function loadSnapshot() {
     return sendMessage({ type: "getWorkbenchSnapshot" }).then(function (resp) {
       if (!resp || !resp.ok) {
-        $("status-line").textContent = resp && resp.error ? resp.error : "无法读取工作台状态";
+        setStatusMessage(resp && resp.error ? resp.error : "无法读取工作台状态");
         return;
       }
+      setStatusMessage("");
       state = resp.workbenchState || {};
       summary = resp.summary || {};
       pagerLogs = resp.pagerLogs || [];
@@ -234,7 +258,7 @@
     var payload = Object.assign({}, message, { filename: filename });
     return sendMessage(payload).then(function (resp) {
       if (!showActionResult(resp, "导出失败")) return null;
-      setBadge(resp.empty ? "无数据" : "已导出");
+      if (resp.empty) setStatusMessage("没有可导出的数据");
       return loadSnapshot();
     });
   }
@@ -259,7 +283,10 @@
         mode: $("pager-mode").value,
         maxPages: parseInt($("pager-max-pages").value, 10) || 3,
       }).then(function (resp) {
-        if (showActionResult(resp, "启动列表采集失败")) return loadSnapshot();
+        if (showActionResult(resp, "启动列表采集失败")) {
+          setPagerTemplateError("");
+          return loadSnapshot();
+        }
         return null;
       }).then(function () {
         setButtonBusy(button, false);
@@ -285,9 +312,9 @@
             return null;
           });
         } catch (err) {
-          $("detail-batch-log").textContent = "JSON 解析失败：" + err.message;
-          $("status-line").textContent = "JSON 解析失败：" + err.message;
-          setBadge("错误");
+          var message = "JSON 解析失败：" + err.message;
+          $("detail-batch-log").textContent = message;
+          setStatusMessage(message);
         }
       };
       reader.readAsText(file, "utf-8");
@@ -321,7 +348,10 @@
     $("btn-clear-all").addEventListener("click", function () {
       if (!confirm("确认清除所有捕获数据？")) return;
       sendMessage({ type: "clearAll" }).then(function (resp) {
-        if (showActionResult(resp, "清除数据失败")) return loadSnapshot();
+        if (showActionResult(resp, "清除数据失败")) {
+          setPagerTemplateError("");
+          return loadSnapshot();
+        }
         return null;
       });
     });

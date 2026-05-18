@@ -413,21 +413,29 @@ def test_popup_capture_tab_has_split_exports_and_pager_logs():
     assert "exportPagerJson" in background
 
 
-def test_content_mounts_floating_scraper_widget():
+def test_content_keeps_page_bridge_without_floating_widget():
     content = read_extension_file("content.js")
 
-    assert "mountFloatingScraperWidget" in content
-    assert "maimai-scraper-floating-host" in content
-    assert "getScraperSummary" in content
-    assert "openMainPage" in content
-    assert "setInterval(refresh, 2000)" in content
-    for label in [
-        "联系人",
-        "详情",
-        "执行中",
+    for forbidden in [
+        "mountFloatingScraperWidget",
+        "maimai-scraper-floating-host",
+        "floatingScraperRefresh",
+        "shouldRefreshFloatingScraperWidget",
+        "getScraperSummary",
+        "openMainPage",
+        "setInterval(refresh, 2000)",
         "导出 JSON",
     ]:
-        assert label in content
+        assert forbidden not in content
+    for required in [
+        "__MAIMAI_PAGER_FETCH__",
+        "__MAIMAI_DETAIL_FETCH__",
+        "__MAIMAI_TEMPLATE_UPDATED__",
+        "getFullTemplate",
+        "getTemplateStatus",
+        "safeSendMessage",
+    ]:
+        assert required in content
 
 
 def test_detail_batch_persists_batch_pause_window():
@@ -463,13 +471,11 @@ def test_batch_pause_progress_uses_cumulative_completed_count_after_resume():
     detail_batch = read_extension_file("detail_batch.js")
     background = read_extension_file("background.js")
     workbench_js = read_extension_file("workbench.js")
-    content = read_extension_file("content.js")
 
     assert "completedForBatchPause" in detail_batch
     assert "state.batch_pause_completed = completedForBatchPause" in detail_batch
     assert "Math.max(batchCompleted, counted)" in background
     assert "Math.max(detailState.batch_pause_completed || 0, completed)" in workbench_js
-    assert "Math.max(state.batch_pause_completed || 0, completedJobs)" in content
 
 
 def test_background_explains_batch_pause_and_rate_limit_logs():
@@ -486,7 +492,7 @@ def test_background_explains_batch_pause_and_rate_limit_logs():
     assert "429" in inject
 
 
-def test_popup_and_floating_widget_show_batch_pause_as_resting():
+def test_popup_and_workbench_show_batch_pause_as_resting_without_floating_widget():
     popup = read_extension_file("popup.js")
     workbench = read_extension_file("workbench.js")
     content = read_extension_file("content.js")
@@ -495,8 +501,8 @@ def test_popup_and_floating_widget_show_batch_pause_as_resting():
     assert "批间休息中" not in popup
     assert "batch_pause_until" in workbench
     assert "批间休息中" in workbench
-    assert "batch_pause_until" in content
-    assert "批间休息中" in content
+    assert "batch_pause_until" not in content
+    assert "批间休息中" not in content
 
 
 def test_search_template_tracks_headers_and_nested_pagination():
@@ -617,6 +623,48 @@ def test_workbench_files_define_restoreable_ui_contract():
         assert marker in workbench_js
     assert ".workbench-shell" in workbench_css
     assert ".log-list" in workbench_css
+
+
+def test_workbench_uses_request_intercept_console_without_duplicate_header_counts():
+    workbench_html = read_extension_file("workbench.html")
+    workbench_js = read_extension_file("workbench.js")
+    workbench_css = read_extension_file("workbench.css")
+
+    assert 'id="status-badge"' not in workbench_html
+    assert "正在读取状态" not in workbench_html
+    assert '$("status-line").textContent = "请求 "' not in workbench_js
+    assert "请求 \" + totalRequests + \" · 人选" not in workbench_js
+    assert ">导出诊断<" not in workbench_html
+    assert ">请求拦截<" in workbench_html
+    assert "console-header" in workbench_html
+    assert ".console-header" in workbench_css
+    assert ".icon-button" in workbench_css
+
+    clear_button = workbench_html.split('id="btn-clear-all"', 1)[1].split("</button>", 1)[0]
+    assert 'aria-label="清除全部数据"' in clear_button
+    assert 'title="清除全部数据"' in clear_button
+    assert "trash-icon" in clear_button
+    assert ">清除全部数据<" not in workbench_html
+
+
+def test_workbench_hides_template_waiting_text_but_keeps_template_errors():
+    workbench_html = read_extension_file("workbench.html")
+    workbench_js = read_extension_file("workbench.js")
+
+    assert "模板状态：等待捕获" not in workbench_html
+    assert "pager-template-info" in workbench_html
+    assert "setPagerTemplateError" in workbench_js
+    assert "未捕获搜索模板" in workbench_js
+
+
+def test_start_pager_initial_progress_uses_target_pages_for_custom_mode():
+    background = read_extension_file("background.js")
+    start_block = background.split('if (msg.type === "startPager")', 1)[1].split('if (msg.type === "stopPager")', 1)[0]
+
+    assert "function pagerTargetPages" in background
+    assert "var targetPages = pagerTargetPages(pagerState.totalPages, msg.mode || \"all\", msg.maxPages || 3)" in start_block
+    assert "total_pages: targetPages" in start_block
+    assert "total_pages: pagerState.totalPages || 0" not in start_block
 
 
 def test_background_exposes_workbench_state_snapshot_and_logs():
@@ -774,4 +822,4 @@ def test_open_main_page_delegates_to_workbench():
     open_main_block = background.split('if (msg.type === "openMainPage")', 1)[1].split('if (msg.type === "clearAll")', 1)[0]
     assert "openWorkbenchPage" in open_main_block
     assert "popup.html" not in open_main_block
-    assert 'safeSendMessage({ type: "openMainPage" })' in content
+    assert 'safeSendMessage({ type: "openMainPage" })' not in content

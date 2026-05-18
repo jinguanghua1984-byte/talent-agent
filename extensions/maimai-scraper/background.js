@@ -627,6 +627,13 @@ function updateWorkbenchPagerStateFromEvent(event, mode, maxPages) {
   });
 }
 
+function pagerTargetPages(totalPages, mode, maxPages) {
+  var total = Math.max(1, Number(totalPages) || 1);
+  if (mode === "all") return total;
+  var requested = Math.max(1, Number(maxPages) || 1);
+  return Math.min(requested, total);
+}
+
 function updateWorkbenchFromSummary(summary) {
   summary = summary || {};
   var detail = summary.detail || {};
@@ -1668,6 +1675,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
           }
 
           var pagerState = AutoPager.create(template, pageMeta, sendPageRequest);
+          var targetPages = pagerTargetPages(pagerState.totalPages, msg.mode || "all", msg.maxPages || 3);
 
           __activePager = pagerState;
           __pagerTabId = tabId;
@@ -1679,7 +1687,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
               mode: msg.mode || "all",
               max_pages: msg.maxPages || 3,
               current_page: 1,
-              total_pages: pagerState.totalPages || 0,
+              total_pages: targetPages,
               total_from_api: pagerState.totalFromApi || 0,
               total_contacts: existingContactCount,
               started_at: new Date().toISOString(),
@@ -1703,7 +1711,8 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
 
           safeRespond({
             ok: true,
-            totalPages: pagerState.totalPages,
+            totalPages: targetPages,
+            availableTotalPages: pagerState.totalPages,
             pageMeta: pageMeta,
             headerNames: template.headerNames || [],
           });
