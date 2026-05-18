@@ -3,7 +3,7 @@
   "name": "脉脉人选数据采集",
   "version": "2.4",
   "description": "脉脉人选数据采集工具 — 被动拦截 + 人选列表逐页采集 + 批量详情 + 数据导出",
-  "permissions": ["storage", "scripting", "downloads"],
+  "permissions": ["storage", "scripting", "downloads", "sidePanel"],
   "host_permissions": [
     "*://maimai.cn/*",
     "*://*.maimai.cn/*",
@@ -16,6 +16,9 @@
   "action": {
     "default_popup": "popup.html",
     "default_title": "脉脉人选数据采集"
+  },
+  "side_panel": {
+    "default_path": "workbench.html"
   },
   "web_accessible_resources": [
     {
