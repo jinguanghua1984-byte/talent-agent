@@ -1,3 +1,22 @@
+# 工作台 UI 主题优化（2026-05-18）
+
+> 目标：按 `frontend-design` 的工具型视觉方向优化工作台；清空入口放到全局右上角，图标不再使用垃圾桶；分页状态改中文；整体视觉统一成克制的操作台风格。
+
+## 计划
+
+- [x] 调研 `frontend-design` skill 的主题能力，确认它提供的是视觉方向而非固定主题包。
+- [x] 补静态契约测试，覆盖全局清空图标位置、非垃圾桶图标、中文分页状态、工具台主题变量。
+- [x] 调整 `workbench.html/css/js`，实现全局右上角清空按钮、中文状态映射和统一视觉风格。
+- [x] 运行语法检查、扩展回归、全量测试和 diff 检查，回填 Review。
+
+## Review
+
+- `frontend-design` skill 没有固定“内置主题包”，提供的是视觉方向示例：brutally minimal、maximalist chaos、retro-futuristic、organic/natural、luxury/refined、playful/toy-like、editorial/magazine、brutalist/raw、art deco/geometric、soft/pastel、industrial/utilitarian 等。
+- 本次按高频操作工具选择 `industrial/utilitarian`：轻网格背景、明确边界、白色操作面板、蓝色主操作、绿色详情进度、深色日志区和 CSS theme tokens。
+- 清空入口已移到工作台全局右上角，换成统一蓝色橡皮擦式 `clear-icon`，不再使用垃圾桶图标，也不再放在“请求拦截”面板内。
+- 人选列表抓取进度状态通过 `pagerStatusLabel()` 显示中文：待开始、抓取中、暂停中、停止中、已完成、已停止、失败。
+- 验证：新增聚焦测试 `3 passed`；扩展 JS `node --check` 全部 PASS；`python -m pytest tests/test_maimai_scraper_extension.py tests/test_maimai_trace_diff.py -q` -> `57 passed`；`python -m pytest tests scripts -q` -> `650 passed, 1 warning`；`git diff --check` PASS（仅 Git CRLF/LF 提示）。
+
 # 工作台页面优化（2026-05-18）
 
 > 目标：减少重复统计和无效提示，移除业务页悬浮窗，把请求拦截控制台整理成更清晰的工作台视图，并修正自定义页数抓取的进度总数。

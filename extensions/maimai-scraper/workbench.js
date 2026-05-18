@@ -110,6 +110,19 @@
     return ["running", "paused", "stopping"].indexOf(status) !== -1 || Boolean(detailState.batch_pause_until);
   }
 
+  function pagerStatusLabel(status) {
+    var labels = {
+      idle: "待开始",
+      running: "抓取中",
+      paused: "暂停中",
+      stopping: "停止中",
+      completed: "已完成",
+      stopped: "已停止",
+      failed: "失败",
+    };
+    return labels[status || "idle"] || "状态更新";
+  }
+
   function updateControlStates() {
     var pager = state && state.pager ? state.pager : {};
     var pagerActive = isPagerActiveStatus(pager.status);
@@ -168,7 +181,7 @@
     $("pager-progress-fill").style.width = pct + "%";
     $("pager-progress-text").textContent = pager.status === "idle"
       ? "等待开始"
-      : "状态：" + pager.status + "，页进度 " + current + "/" + total + "，人选 " + (pager.total_contacts || 0);
+      : "状态：" + pagerStatusLabel(pager.status) + "，页进度 " + current + "/" + total + "，人选 " + (pager.total_contacts || 0);
     if (pager.last_error && isTemplateCaptureError(pager.last_error)) {
       setPagerTemplateError(pager.last_error);
     } else if (!pager.last_error) {

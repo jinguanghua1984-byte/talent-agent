@@ -636,15 +636,23 @@ def test_workbench_uses_request_intercept_console_without_duplicate_header_count
     assert "请求 \" + totalRequests + \" · 人选" not in workbench_js
     assert ">导出诊断<" not in workbench_html
     assert ">请求拦截<" in workbench_html
-    assert "console-header" in workbench_html
-    assert ".console-header" in workbench_css
+    assert "topbar-actions" in workbench_html
+    assert ".topbar-actions" in workbench_css
     assert ".icon-button" in workbench_css
 
-    clear_button = workbench_html.split('id="btn-clear-all"', 1)[1].split("</button>", 1)[0]
+    header_block = workbench_html.split('<header class="topbar">', 1)[1].split("</header>", 1)[0]
+    export_block = workbench_html.split('id="view-export"', 1)[1].split("</section>", 1)[0]
+    assert 'id="btn-clear-all"' in header_block
+    assert 'id="btn-clear-all"' not in export_block
+    clear_button = header_block.split('id="btn-clear-all"', 1)[1].split("</button>", 1)[0]
     assert 'aria-label="清除全部数据"' in clear_button
     assert 'title="清除全部数据"' in clear_button
-    assert "trash-icon" in clear_button
+    assert "clear-icon" in clear_button
+    assert "trash-icon" not in workbench_html
+    assert "danger" not in clear_button
     assert ">清除全部数据<" not in workbench_html
+    assert ".clear-icon" in workbench_css
+    assert ".trash-icon" not in workbench_css
 
 
 def test_workbench_hides_template_waiting_text_but_keeps_template_errors():
@@ -665,6 +673,36 @@ def test_start_pager_initial_progress_uses_target_pages_for_custom_mode():
     assert "var targetPages = pagerTargetPages(pagerState.totalPages, msg.mode || \"all\", msg.maxPages || 3)" in start_block
     assert "total_pages: targetPages" in start_block
     assert "total_pages: pagerState.totalPages || 0" not in start_block
+
+
+def test_workbench_pager_status_labels_are_localized_and_not_raw_status_codes():
+    workbench_js = read_extension_file("workbench.js")
+
+    assert "function pagerStatusLabel" in workbench_js
+    for status_text in ["待开始", "抓取中", "暂停中", "停止中", "已完成", "已停止", "失败"]:
+        assert status_text in workbench_js
+    assert '"状态：" + pager.status' not in workbench_js
+    assert "pagerStatusLabel(pager.status)" in workbench_js
+
+
+def test_workbench_uses_industrial_utilitarian_theme_tokens():
+    workbench_css = read_extension_file("workbench.css")
+    workbench_html = read_extension_file("workbench.html")
+
+    assert 'data-theme="industrial-utilitarian"' in workbench_html
+    for token in [
+        "--surface",
+        "--surface-raised",
+        "--ink",
+        "--muted",
+        "--line",
+        "--accent",
+        "--success",
+        "--warning",
+    ]:
+        assert token in workbench_css
+    assert "var(--accent)" in workbench_css
+    assert "var(--line)" in workbench_css
 
 
 def test_background_exposes_workbench_state_snapshot_and_logs():

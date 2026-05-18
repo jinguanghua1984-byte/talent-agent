@@ -5,11 +5,20 @@
 <link rel="stylesheet" href="workbench.css">
 </head>
 <body>
-  <main class="workbench-shell" id="workbench-root">
+  <main class="workbench-shell" id="workbench-root" data-theme="industrial-utilitarian">
     <header class="topbar">
-      <div>
+      <div class="topbar-copy">
         <h1>脉脉人选数据采集</h1>
         <p id="status-line" class="status-message" hidden></p>
+      </div>
+      <div class="topbar-actions">
+        <button id="btn-clear-all" class="icon-button" type="button" aria-label="清除全部数据" title="清除全部数据">
+          <svg class="clear-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 14.5 13.5 5a2.1 2.1 0 0 1 3 0l2.5 2.5a2.1 2.1 0 0 1 0 3L10 19.5H4v-5Z"></path>
+            <path d="m8.5 10 5.5 5.5"></path>
+            <path d="M14 20h6"></path>
+          </svg>
+        </button>
       </div>
     </header>
 
@@ -91,11 +100,8 @@
 
     <section class="view" id="view-export">
       <div class="panel">
-        <div class="console-header">
+        <div class="section-title">
           <h2>请求拦截</h2>
-          <button id="btn-clear-all" class="icon-button danger" type="button" aria-label="清除全部数据" title="清除全部数据">
-            <span class="trash-icon" aria-hidden="true"></span>
-          </button>
         </div>
         <div class="btn-row">
           <button id="btn-refresh">刷新摘要</button>
