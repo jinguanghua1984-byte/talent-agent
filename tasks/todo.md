@@ -1,3 +1,27 @@
+# 浏览器扩展 Popup/常驻工作台 V2.0 设计验证（2026-05-18）
+
+> 目标：先验证现有列表查询和详情请求链路的技术契约，再设计一个不依赖短生命周期 popup 的 V2.0 工作台方案。当前阶段只做验证与设计，不实现。
+
+## 计划
+
+- [x] 读取扩展现状、历史 lessons 和安全边界。
+- [x] 验证人选列表逐页查询链路：background -> content -> MAIN world `__MAIMAI_PAGER_FETCH__`。
+- [x] 验证人选详情链路：background -> content -> MAIN world `__MAIMAI_DETAIL_FETCH__`。
+- [x] 验证 V2.0 状态持久化和常驻 UI 不会改变上述请求发起位置。
+- [x] 输出 V2.0 设计草案，等待确认后再写正式 spec。
+
+## Review
+
+- 现有列表链路：`popup.js startPager` -> `background.js startPager/getFullTemplate/pagerFetch` -> `content.js __MAIMAI_PAGER_FETCH__` -> `inject.js origFetch.call(window, tpl.url, ...)`；真实分页请求仍在页面 MAIN world。
+- 现有详情链路：`popup.js startDetailBatch` -> `background.js sendDetailFetch` -> `content.js __MAIMAI_DETAIL_FETCH__` -> `inject.js fetchDetailEndpoint(...)`；详情接口仍由页面 MAIN world 发起。
+- 本地契约检查：10 个关键 message/fetch marker 全部存在。
+- 语法检查：`node --check` 覆盖 `background.js`、`content.js`、`inject.js`、`autopager.js`、`detail_batch.js`、`popup.js`，全部通过。
+- 扩展契约测试：`python -m pytest tests/test_maimai_scraper_extension.py tests/test_maimai_trace_diff.py -q` -> `42 passed`。
+- 本地浏览器版本：Chrome `148.0.7778.168`，Edge `148.0.3967.70`；满足 Chrome side panel API 的 Chrome 114+ / MV3+ 要求。
+- 未执行真实脉脉搜索、详情请求、导航、刷新或 CDP 操作；本次验证只证明 V2.0 可在不移动真实请求执行点的前提下改造 UI 与状态层。
+- 正式设计文档：`docs/superpowers/specs/2026-05-18-maimai-scraper-workbench-v2-design.md`。
+- Spec 自检：占位词扫描无命中；请求执行不变量、side panel fallback、状态恢复、测试计划和验收标准已覆盖；`git diff --check` 通过。
+
 # AI Infra 冷启动寻访 V2 计划重制（2026-05-14）
 
 > 目标：基于初版人工搜索计划、Phase 0 技术边界、5/13 半自动闭环和 5/14 搜索 API 校准结果，重新制定一份不依赖既有人才库数据的 V2 实施计划。
