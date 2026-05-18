@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="workbench.css">
+</head>
+<body>
+  <main class="workbench-shell" id="workbench-root">
+    <header class="topbar">
+      <div>
+        <h1>脉脉人选数据采集</h1>
+        <p id="status-line">正在读取状态...</p>
+      </div>
+      <span class="badge" id="status-badge">--</span>
+    </header>
+
+    <section class="stats" id="popup-summary">
+      <span>请求 <b id="req-count">0</b></span>
+      <span>人选 <b id="contact-count">0</b></span>
+      <span>详情 <b id="detail-count">0</b></span>
+    </section>
+
+    <nav class="tabs" aria-label="工作台视图">
+      <button class="tab active" data-view="capture">列表采集</button>
+      <button class="tab" data-view="detail">批量详情</button>
+      <button class="tab" data-view="export">导出诊断</button>
+    </nav>
+
+    <section class="view active" id="view-capture">
+      <div class="panel">
+        <div class="form-row">
+          <label>
+            <span>人选列表逐页采集</span>
+            <select id="pager-mode">
+              <option value="all">全部页面</option>
+              <option value="custom">前 N 页</option>
+            </select>
+          </label>
+          <label id="pager-pages-group" hidden>
+            <span>页数</span>
+            <input type="number" id="pager-max-pages" value="3" min="1" max="100">
+          </label>
+        </div>
+        <div class="template-box">
+          <div id="pager-template-info">模板状态：等待捕获</div>
+          <div id="pager-meta-info"></div>
+        </div>
+        <div class="btn-row">
+          <button id="btn-start-pager" class="primary">开始抓取</button>
+          <button id="btn-stop-pager">停止</button>
+          <button id="btn-export-pager">导出人选列表 JSON</button>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="pager-progress-fill"></div>
+        </div>
+        <div class="progress-text" id="pager-progress-text">等待开始</div>
+      </div>
+      <section class="log-panel">
+        <h2>列表执行日志</h2>
+        <div class="log-list" id="pager-log-list"></div>
+      </section>
+    </section>
+
+    <section class="view" id="view-detail">
+      <div class="panel">
+        <section class="stats detail-stats">
+          <span>任务 <b id="detail-jobs-count">0</b></span>
+          <span>完成 <b id="detail-done-count">0</b></span>
+          <span>失败 <b id="detail-failed-count">0</b></span>
+          <span>跳过 <b id="detail-skipped-count">0</b></span>
+        </section>
+        <label class="file-field">
+          <span>导入人选列表 JSON</span>
+          <input type="file" id="detail-import-file" accept="application/json,.json">
+        </label>
+        <div class="btn-row">
+          <button id="btn-start-detail-batch" class="primary">开始人选详情采集</button>
+          <button id="btn-stop-detail-batch">终止</button>
+          <button id="btn-export-detail-batch">导出完整 JSON</button>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill detail-progress-fill" id="detail-progress-fill"></div>
+        </div>
+        <div class="progress-text" id="detail-progress-text">等待导入人选列表</div>
+        <pre class="detail-log" id="detail-batch-log">默认低速顺序采集；遇到验证、权限或限流异常会暂停。</pre>
+      </div>
+      <section class="log-panel">
+        <h2>详情执行日志</h2>
+        <div class="log-list" id="detail-log-list"></div>
+      </section>
+    </section>
+
+    <section class="view" id="view-export">
+      <div class="panel">
+        <div class="btn-row">
+          <button id="btn-refresh">刷新摘要</button>
+          <button id="btn-export-capture">导出被动拦截 JSON</button>
+          <button id="btn-export-full">导出完整 JSON</button>
+          <button id="btn-clear-all">清除全部数据</button>
+        </div>
+        <pre class="capture-preview" id="capture-preview">等待数据...</pre>
+      </div>
+    </section>
+  </main>
+  <script src="workbench.js"></script>
+</body>
+</html>
