@@ -509,3 +509,152 @@ def test_detail_batch_logs_each_job_success_and_failure():
     assert "async function emit" in detail_batch
     assert "return onEvent(event)" in detail_batch
     assert "await emit(onEvent" in detail_batch
+
+
+def test_manifest_declares_side_panel_workbench():
+    manifest = json.loads(read_extension_file("manifest.json"))
+
+    assert "sidePanel" in manifest["permissions"]
+    assert manifest["side_panel"]["default_path"] == "workbench.html"
+    assert manifest["action"]["default_popup"] == "popup.html"
+
+
+def test_workbench_files_define_restoreable_ui_contract():
+    workbench_html = read_extension_file("workbench.html")
+    workbench_js = read_extension_file("workbench.js")
+    workbench_css = read_extension_file("workbench.css")
+
+    assert 'id="workbench-root"' in workbench_html
+    assert "workbench.css" in workbench_html
+    assert "workbench.js" in workbench_html
+    for marker in [
+        "btn-start-pager",
+        "btn-stop-pager",
+        "btn-export-pager",
+        "detail-import-file",
+        "btn-start-detail-batch",
+        "btn-stop-detail-batch",
+        "btn-export-detail-batch",
+        "btn-export-capture",
+        "btn-clear-all",
+        "pager-log-list",
+        "detail-log-list",
+    ]:
+        assert marker in workbench_html
+    for marker in [
+        'type: "getWorkbenchSnapshot"',
+        'type: "setWorkbenchView"',
+        'type: "startPager"',
+        'type: "stopPager"',
+        'type: "exportPagerJson"',
+        'type: "importDetailContacts"',
+        'type: "startDetailBatch"',
+        'type: "stopDetailBatch"',
+        'type: "exportFullJson"',
+        "chrome.storage.onChanged.addListener",
+        "renderPagerLogs",
+        "renderDetailLogs",
+    ]:
+        assert marker in workbench_js
+    assert ".workbench-shell" in workbench_css
+    assert ".log-list" in workbench_css
+
+
+def test_background_exposes_workbench_state_snapshot_and_logs():
+    background = read_extension_file("background.js")
+
+    for marker in [
+        "DEFAULT_WORKBENCH_STATE",
+        "workbenchState",
+        "pagerLogs",
+        "getWorkbenchSnapshot",
+        "setWorkbenchView",
+        "appendPagerLog",
+        "clearPagerLogs",
+        "recordExportResult",
+        "updateWorkbenchPagerStateFromEvent",
+        "buildWorkbenchSnapshot",
+        "openWorkbench",
+        "chrome.sidePanel.open",
+        "workbench.html",
+    ]:
+        assert marker in background
+
+    pager_block = background.split("AutoPager.run", 1)[1].split("safeRespond", 1)[0]
+    assert "updateWorkbenchPagerStateFromEvent(event" in pager_block
+    assert "chrome.runtime.sendMessage(event)" in pager_block
+
+
+def test_popup_is_launcher_not_long_running_console():
+    popup_html = read_extension_file("popup.html")
+    popup_js = read_extension_file("popup.js")
+
+    assert "btn-open-workbench" in popup_html
+    assert "打开工作台" in popup_html
+    assert "popup-summary" in popup_html
+    assert 'type: "openWorkbench"' in popup_js
+    assert 'type: "getScraperSummary"' in popup_js
+    assert 'type: "exportFullJson"' in popup_js
+    assert "pagerExecutionLogs" not in popup_js
+    assert "setInterval(refreshPagerInfo" not in popup_js
+    assert "capture-log-list" not in popup_html
+    assert "detail-log-list" not in popup_html
+
+
+def assert_manifest_keeps_main_world_inject_script():
+    manifest = json.loads(read_extension_file("manifest.json"))
+
+    def is_main_world_maimai_inject_script(script):
+        matches = script.get("matches", [])
+        return (
+            "inject.js" in script.get("js", [])
+            and script.get("world") == "MAIN"
+            and (
+                "*://*.maimai.cn/*" in matches
+                or "*://maimai.cn/*" in matches
+            )
+        )
+
+    assert any(
+        is_main_world_maimai_inject_script(script)
+        for script in manifest["content_scripts"]
+    )
+
+
+def assert_no_direct_maimai_business_fetch_calls(text):
+    compact = text.replace(" ", "")
+    for forbidden in [
+        'fetch("/api/',
+        "fetch('/api/",
+        'fetch("https://maimai.cn/api',
+        "fetch('https://maimai.cn/api",
+        'fetch("https://www.maimai.cn/api',
+        "fetch('https://www.maimai.cn/api",
+        'fetch("https://maimai.cn/ent/',
+        "fetch('https://maimai.cn/ent/",
+        'fetch("https://www.maimai.cn/ent/',
+        "fetch('https://www.maimai.cn/ent/",
+    ]:
+        assert forbidden not in compact
+
+
+def test_workbench_and_popup_do_not_directly_fetch_maimai_business_urls():
+    assert_manifest_keeps_main_world_inject_script()
+    for name in ["workbench.js", "popup.js"]:
+        assert_no_direct_maimai_business_fetch_calls(read_extension_file(name))
+
+    assert_no_direct_maimai_business_fetch_calls(read_extension_file("background.js"))
+    assert "__MAIMAI_PAGER_FETCH__" in read_extension_file("content.js")
+    assert "origFetch.call(window, tpl.url" in read_extension_file("inject.js")
+    assert "__MAIMAI_DETAIL_FETCH__" in read_extension_file("content.js")
+    assert "fetchDetailEndpoint(\"basic\", urls.basic)" in read_extension_file("inject.js")
+
+
+def test_open_main_page_delegates_to_workbench():
+    background = read_extension_file("background.js")
+    content = read_extension_file("content.js")
+
+    open_main_block = background.split('if (msg.type === "openMainPage")', 1)[1].split('if (msg.type === "clearAll")', 1)[0]
+    assert "openWorkbenchPage" in open_main_block
+    assert "popup.html" not in open_main_block
+    assert 'safeSendMessage({ type: "openMainPage" })' in content
