@@ -66,11 +66,18 @@ def test_inject_handles_detail_fetch_and_required_endpoints():
 
 def test_popup_contains_detail_tab_and_start_button():
     popup_html = read_extension_file("popup.html")
+    workbench_html = read_extension_file("workbench.html")
 
     assert "脉脉人选数据采集" in popup_html
-    assert 'data-tab="capture">人选列表采集' in popup_html
-    assert 'data-tab="detail"' in popup_html
-    assert "btn-start-detail-batch" in popup_html
+    assert "popup-summary" in popup_html
+    assert "btn-open-workbench" in popup_html
+    assert "btn-start-detail-batch" in workbench_html
+    assert "detail-log-list" in workbench_html
+    assert "btn-start-pager" in workbench_html
+    assert "pager-log-list" in workbench_html
+    assert 'data-tab="capture"' not in popup_html
+    assert 'data-tab="detail"' not in popup_html
+    assert "btn-start-detail-batch" not in popup_html
     assert "主动搜索" not in popup_html
     assert "DOM 抓取" not in popup_html
 
@@ -202,6 +209,7 @@ def test_popup_hides_local_detail_plan_loader():
     manifest = json.loads(read_extension_file("manifest.json"))
     popup_html = read_extension_file("popup.html")
     popup_js = read_extension_file("popup.js")
+    workbench_js = read_extension_file("workbench.js")
 
     assert "http://127.0.0.1/*" in manifest["host_permissions"]
     assert "http://localhost/*" in manifest["host_permissions"]
@@ -211,18 +219,19 @@ def test_popup_hides_local_detail_plan_loader():
     assert "detail-local-plan-status" not in popup_html
     assert "function loadLocalDetailPlan" not in popup_js
     assert "fetch(localPlanUrl" not in popup_js
-    assert '{ type: "startDetailBatch"' in popup_js
+    assert 'type: "startDetailBatch"' in workbench_js
 
 
 def test_detail_import_accepts_recommendation_shapes():
     background = read_extension_file("background.js")
-    popup = read_extension_file("popup.js")
+    workbench_js = read_extension_file("workbench.js")
 
     for key in ["top10", "candidates", "matches", "results", "items"]:
         assert key in background
     assert "parseMaimaiProfileUrl" in background
     assert "normalizeImportContacts" in background
-    assert '{ type: "importDetailContacts", contacts: parsed }' in popup
+    assert 'type: "importDetailContacts"' in workbench_js
+    assert "contacts: JSON.parse(reader.result)" in workbench_js
 
 
 def test_detail_db_supports_targeted_reset_methods():
@@ -265,7 +274,8 @@ def test_background_exposes_summary_and_open_main_page_messages():
 
     assert "getScraperSummary" in background
     assert "openMainPage" in background
-    assert "chrome.action.openPopup" in background
+    assert "openWorkbenchPage" in background
+    assert "chrome.sidePanel.open" in background
     assert "chrome.tabs.create" in background
 
 
@@ -328,45 +338,59 @@ def test_background_reset_detail_batch_clears_persisted_state():
 def test_popup_detail_tab_hides_extra_controls_and_keeps_realtime_logs():
     popup_html = read_extension_file("popup.html")
     popup_js = read_extension_file("popup.js")
+    workbench_html = read_extension_file("workbench.html")
+    workbench_js = read_extension_file("workbench.js")
 
     assert "btn-reset-detail-batch" not in popup_html
     assert "btn-pause-detail-batch" not in popup_html
     assert "btn-resume-detail-batch" not in popup_html
     assert "btn-refresh-detail-batch" not in popup_html
-    assert "开始人选详情采集" in popup_html
-    assert ">终止<" in popup_html
-    assert "detail-log-list" in popup_html
+    assert "开始人选详情采集" in workbench_html
+    assert ">终止<" in workbench_html
+    assert "detail-log-list" in workbench_html
+    assert "btn-start-detail-batch" in workbench_html
+    assert "detail-log-list" not in popup_html
+    assert "btn-start-detail-batch" not in popup_html
     assert "resetDetailBatch" not in popup_js
-    assert "renderDetailBatchLogs" in popup_js
+    assert "startDetailBatch" not in popup_js
+    assert "renderDetailLogs" in workbench_js
+    assert "detailLogs.slice(-80).reverse()" in workbench_js
+    assert 'type: "startDetailBatch"' in workbench_js
+    assert 'type: "stopDetailBatch"' in workbench_js
+    assert 'type: "getWorkbenchSnapshot"' in workbench_js
+    assert "chrome.storage.onChanged.addListener" in workbench_js
     assert "getScraperSummary" in popup_js
-    assert "summary.detail.totalJobs || summary.detail.jobs || 0" in popup_js
-    assert "summary.totalDetails" in popup_js
-    assert "summary.detail.state.status" in popup_js
-    assert "input.total_jobs" in popup_js
-    assert "detailStatusLabel" in popup_js
-    assert "状态：" in popup_js
-    assert "function isDetailBadgeActive()" in popup_js
-    assert "function setCaptureBadge(text)" in popup_js
+    assert 'type: "openWorkbench"' in popup_js
+    assert 'type: "exportFullJson"' in popup_js
 
 
 def test_popup_capture_tab_has_split_exports_and_pager_logs():
     popup_html = read_extension_file("popup.html")
     popup_js = read_extension_file("popup.js")
+    workbench_html = read_extension_file("workbench.html")
+    workbench_js = read_extension_file("workbench.js")
     background = read_extension_file("background.js")
 
     assert "btn-refresh" in popup_html
-    assert "btn-export-capture" in popup_html
-    assert "导出被动拦截 JSON" in popup_html
-    assert "btn-export-pager" in popup_html
-    assert "导出人选列表 JSON" in popup_html
-    assert "capture-log-list" in popup_html
-    assert "请求执行日志" in popup_html
-    assert "人选列表逐页采集" in popup_html
+    assert "btn-open-workbench" in popup_html
+    assert "btn-export-full" in popup_html
+    assert "btn-export-capture" in workbench_html
+    assert "导出被动拦截 JSON" in workbench_html
+    assert "btn-export-pager" in workbench_html
+    assert "导出人选列表 JSON" in workbench_html
+    assert "pager-log-list" in workbench_html
+    assert "列表执行日志" in workbench_html
+    assert "人选列表逐页采集" in workbench_html
+    assert "capture-log-list" not in popup_html
+    assert "btn-export-pager" not in popup_html
     assert '{ type: "getScraperSummary" }' in popup_js
-    assert '{ type: "exportCaptureJson", filename: filename }' in popup_js
-    assert '{ type: "exportPagerJson", filename: filename }' in popup_js
-    assert "appendPagerLog" in popup_js
-    assert "pager_progress" in popup_js
+    assert '{ type: "exportFullJson", filename: filename }' in popup_js
+    assert 'type: "exportCaptureJson"' in workbench_js
+    assert 'type: "exportPagerJson"' in workbench_js
+    assert "renderPagerLogs" in workbench_js
+    assert "pagerLogs.slice(-80).reverse()" in workbench_js
+    assert "appendPagerLog" not in popup_js
+    assert "pager_progress" not in popup_js
     assert "exportCaptureJson" in background
     assert "exportPagerJson" in background
 
@@ -420,13 +444,13 @@ def test_background_recovers_expired_batch_pause_from_persisted_jobs():
 def test_batch_pause_progress_uses_cumulative_completed_count_after_resume():
     detail_batch = read_extension_file("detail_batch.js")
     background = read_extension_file("background.js")
-    popup = read_extension_file("popup.js")
+    workbench_js = read_extension_file("workbench.js")
     content = read_extension_file("content.js")
 
     assert "completedForBatchPause" in detail_batch
     assert "state.batch_pause_completed = completedForBatchPause" in detail_batch
     assert "Math.max(batchCompleted, counted)" in background
-    assert "Math.max(state.batch_pause_completed || 0, completed)" in popup
+    assert "Math.max(detailState.batch_pause_completed || 0, completed)" in workbench_js
     assert "Math.max(state.batch_pause_completed || 0, completedJobs)" in content
 
 
@@ -446,16 +470,22 @@ def test_background_explains_batch_pause_and_rate_limit_logs():
 
 def test_popup_and_floating_widget_show_batch_pause_as_resting():
     popup = read_extension_file("popup.js")
+    workbench = read_extension_file("workbench.js")
     content = read_extension_file("content.js")
 
-    assert "batch_pause_until" in popup
-    assert "批间休息中" in popup
+    assert "batch_pause_until" not in popup
+    assert "批间休息中" not in popup
+    assert "batch_pause_until" in workbench
+    assert "批间休息中" in workbench
     assert "batch_pause_until" in content
     assert "批间休息中" in content
 
 
 def test_search_template_tracks_headers_and_nested_pagination():
     inject = read_extension_file("inject.js")
+    workbench_html = read_extension_file("workbench.html")
+    workbench_js = read_extension_file("workbench.js")
+    background = read_extension_file("background.js")
     popup = read_extension_file("popup.js")
 
     for marker in [
@@ -467,8 +497,14 @@ def test_search_template_tracks_headers_and_nested_pagination():
         "total_match",
     ]:
         assert marker in inject
-    assert "请求头" in popup
-    assert "headerList.join" in popup
+    assert "pager-template-info" in workbench_html
+    assert "pager-meta-info" in workbench_html
+    assert 'type: "startPager"' in workbench_js
+    assert "renderPagerLogs" in workbench_js
+    assert "headerNames" in background
+    assert "pageMeta" in background
+    assert "请求头" not in popup
+    assert "headerList.join" not in popup
 
 
 def test_active_search_patches_nested_search_query_fields():
@@ -496,16 +532,21 @@ def test_detail_batch_logs_each_job_success_and_failure():
     background = read_extension_file("background.js")
     popup = read_extension_file("popup.js")
     popup_html = read_extension_file("popup.html")
+    workbench_js = read_extension_file("workbench.js")
+    workbench_html = read_extension_file("workbench.html")
 
     assert "detail_batch_job_succeeded" in detail_batch
     assert "detail_batch_job_failed" in detail_batch
     assert "详情抓取成功" in background
     assert "详情抓取失败" in background
     assert "endpointStatusText" in background
-    assert "logs.slice(-50).reverse()" in popup
-    assert "执行日志" in popup_html
-    detail_message_block = popup.split('if (msg.type && msg.type.indexOf("detail_batch_") === 0)', 1)[1].split("});", 1)[0]
-    assert "refreshDetailBatchStatus()" in detail_message_block
+    assert "renderDetailLogs" in workbench_js
+    assert "detailLogs.slice(-80).reverse()" in workbench_js
+    assert "chrome.storage.onChanged.addListener" in workbench_js
+    assert "detail-log-list" in workbench_html
+    assert "详情执行日志" in workbench_html
+    assert "runtime.onMessage" not in popup
+    assert "detail-log-list" not in popup_html
     assert "async function emit" in detail_batch
     assert "return onEvent(event)" in detail_batch
     assert "await emit(onEvent" in detail_batch

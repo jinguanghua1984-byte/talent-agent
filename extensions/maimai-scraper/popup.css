@@ -1,102 +1,133 @@
-body { width: 520px; box-sizing: border-box; font-family: -apple-system, "Segoe UI", sans-serif; font-size: 13px; padding: 10px; margin: 0; }
+body {
+  width: 340px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  color: #1f2933;
+  background: #f7f9fc;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
 
-.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.header h3 { margin: 0; font-size: 16px; letter-spacing: 0; }
-.badge { background: #e8f5e9; color: #2e7d32; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+.launcher-shell {
+  padding: 14px;
+}
 
-.tabs { display: flex; gap: 4px; margin-bottom: 8px; }
-.tab { flex: 1; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: #f5f5f5; cursor: pointer; font-size: 12px; }
-.tab.active { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+.launcher-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
 
-.tab-content { display: none; }
-.tab-content.active { display: block; }
+.launcher-header h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
 
-.hint { color: #666; font-size: 12px; margin: 4px 0; }
+.status-line {
+  margin: 5px 0 0;
+  color: #5b6472;
+  font-size: 12px;
+  line-height: 1.4;
+}
 
-.stats { display: flex; gap: 16px; margin: 8px 0; padding: 6px; background: #f8f9fa; border-radius: 4px; }
-.stats span { font-size: 12px; }
-.stats b { color: #1a73e8; }
+.status-badge {
+  flex: 0 0 auto;
+  max-width: 94px;
+  overflow: hidden;
+  padding: 3px 8px;
+  border: 1px solid #b8d8c4;
+  border-radius: 999px;
+  color: #17633a;
+  background: #e9f7ef;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-.btn-row { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
-button { padding: 6px 12px; border: 1px solid #ddd; border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px; white-space: nowrap; }
-button:hover { background: #f0f0f0; }
-button.primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
-button.primary:hover { background: #1557b0; }
+.status-badge.error {
+  border-color: #f1b8b8;
+  color: #9f1d1d;
+  background: #fff0f0;
+}
 
-.form-group { margin: 6px 0; }
-.form-group label { display: block; font-size: 11px; color: #666; margin-bottom: 2px; }
-.form-group input, .form-group select { width: 100%; padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; box-sizing: border-box; }
-.form-row { display: flex; gap: 8px; }
-.form-row .form-group { flex: 1; }
+.status-badge.pending {
+  border-color: #c8d3e2;
+  color: #405064;
+  background: #eef3f8;
+}
 
-.result-box { margin-top: 8px; }
-.result-box pre { white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow: auto; background: #1e1e1e; color: #d4d4d4; padding: 6px; border-radius: 4px; font-size: 11px; }
+.summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 14px 0;
+}
 
-details { margin-top: 8px; }
-details summary { cursor: pointer; font-size: 12px; color: #666; }
-details pre { white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto; background: #1e1e1e; color: #d4d4d4; padding: 6px; border-radius: 4px; font-size: 11px; }
+.summary-item {
+  min-width: 0;
+  padding: 10px 8px;
+  border: 1px solid #dbe3ee;
+  border-radius: 8px;
+  background: #fff;
+  text-align: center;
+}
 
-.success { color: #2e7d32; font-weight: bold; }
-.warn { color: #f57f17; font-weight: bold; }
-.error { color: #c62828; font-weight: bold; }
-
-.pager-section { margin: 8px 0; padding: 8px; background: #f0f4ff; border-radius: 6px; border: 1px solid #d0e0ff; }
-.pager-info { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; font-size: 11px; color: #555; }
-.progress-bar { height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden; margin: 6px 0; }
-.progress-fill { height: 100%; background: #1a73e8; border-radius: 3px; transition: width 0.3s ease; width: 0%; }
-.progress-text { font-size: 11px; color: #666; text-align: center; }
-.capture-log-title { margin-top: 8px; color: #333; font-size: 12px; font-weight: 600; }
-.capture-log-list { max-height: 150px; overflow: auto; margin-top: 4px; border: 1px solid #dfe5ee; border-radius: 4px; background: #fff; }
-.capture-log-item,
-.capture-log-empty { padding: 5px 6px; border-bottom: 1px solid #eeeeee; color: #405064; font-size: 11px; line-height: 1.35; word-break: break-word; }
-.capture-log-item:last-child { border-bottom: 0; }
-.capture-log-empty { color: #888; }
-
-.detail-stats { gap: 10px; flex-wrap: wrap; }
-.local-plan-section { margin: 8px 0; padding: 8px; background: #f6f8fb; border: 1px solid #dfe5ee; border-radius: 6px; }
-.detail-progress-fill { background: #2e7d32; }
-.detail-log {
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 120px;
-  overflow: auto;
-  background: #1e1e1e;
-  color: #d4d4d4;
-  padding: 6px;
-  border-radius: 4px;
+.summary-item span {
+  display: block;
+  color: #667085;
   font-size: 11px;
 }
 
-.detail-log-list {
-  max-height: 220px;
-  overflow: auto;
+.summary-item b {
+  display: block;
   margin-top: 4px;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
-  background: #fafafa;
+  color: #175cd3;
+  font-size: 19px;
+  line-height: 1;
 }
 
-.detail-log-title {
-  margin-top: 8px;
-  color: #333;
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+button {
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid #cfd8e3;
+  border-radius: 7px;
+  color: #1f2933;
+  background: #fff;
+  cursor: pointer;
   font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0;
 }
 
-.detail-log-item,
-.detail-log-empty {
-  padding: 5px 6px;
-  border-bottom: 1px solid #eeeeee;
-  color: #444;
-  font-size: 11px;
-  line-height: 1.35;
-  word-break: break-word;
+button:hover {
+  background: #f0f4f8;
 }
 
-.detail-log-item:last-child {
-  border-bottom: 0;
+button:disabled {
+  cursor: default;
+  opacity: 0.65;
 }
 
-.detail-log-empty {
-  color: #888;
+button.primary {
+  grid-column: 1 / -1;
+  border-color: #1a73e8;
+  color: #fff;
+  background: #1a73e8;
+}
+
+button.primary:hover {
+  background: #1558b7;
 }

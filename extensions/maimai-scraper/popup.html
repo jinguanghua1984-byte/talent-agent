@@ -5,95 +5,36 @@
 <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div class="header">
-    <h3>脉脉人选数据采集</h3>
-    <span class="badge" id="status-badge">--</span>
-  </div>
+  <main class="launcher-shell">
+    <header class="launcher-header">
+      <div>
+        <h3>脉脉人选数据采集</h3>
+        <p id="status-line" class="status-line">正在读取状态...</p>
+      </div>
+      <span class="status-badge" id="status-badge">--</span>
+    </header>
 
-  <!-- 模式切换 -->
-  <div class="tabs">
-    <button class="tab active" data-tab="capture">人选列表采集</button>
-    <button class="tab" data-tab="detail">批量详情</button>
-  </div>
+    <section class="summary" id="popup-summary" aria-label="采集摘要">
+      <div class="summary-item">
+        <span>请求</span>
+        <b id="req-count">0</b>
+      </div>
+      <div class="summary-item">
+        <span>人选</span>
+        <b id="contact-count">0</b>
+      </div>
+      <div class="summary-item">
+        <span>详情</span>
+        <b id="detail-count">0</b>
+      </div>
+    </section>
 
-  <!-- 人选列表采集 -->
-  <div class="tab-content active" id="tab-capture">
-    <p class="hint">在脉脉页面手动搜索或翻页，扩展只读取已发生的请求和列表数据。</p>
-    <div class="stats" id="capture-stats">
-      <span>请求: <b id="req-count">0</b></span>
-      <span>人选: <b id="contact-count">0</b></span>
-      <span>详情: <b id="detail-count">0</b></span>
-    </div>
-    <div class="btn-row">
+    <div class="actions">
+      <button id="btn-open-workbench" class="primary">打开工作台</button>
+      <button id="btn-export-full">快速导出</button>
       <button id="btn-refresh">刷新</button>
-      <button id="btn-clear">清除</button>
-      <button id="btn-export-capture">导出被动拦截 JSON</button>
     </div>
-    <!-- 分页抓取控制 -->
-    <div class="pager-section" id="pager-section">
-      <div class="form-row">
-        <div class="form-group">
-          <label>人选列表逐页采集</label>
-          <select id="pager-mode">
-            <option value="all">全部页面</option>
-            <option value="custom">前 N 页</option>
-          </select>
-        </div>
-        <div class="form-group" id="pager-pages-group" style="display:none;">
-          <label>页数</label>
-          <input type="number" id="pager-max-pages" value="3" min="1" max="100" />
-        </div>
-      </div>
-      <div class="pager-info" id="pager-info" style="display:none;">
-        <span id="pager-template-info">模板状态: 等待捕获...</span>
-        <span id="pager-meta-info"></span>
-      </div>
-      <div class="btn-row">
-        <button id="btn-start-pager" class="primary">开始抓取</button>
-        <button id="btn-stop-pager" style="display:none;">停止</button>
-        <button id="btn-export-pager">导出人选列表 JSON</button>
-      </div>
-      <div class="progress-bar" id="pager-progress" style="display:none;">
-        <div class="progress-fill" id="pager-progress-fill"></div>
-      </div>
-      <div class="progress-text" id="pager-progress-text"></div>
-      <div class="capture-log-title">请求执行日志</div>
-      <div class="capture-log-list" id="capture-log-list">
-        <div class="capture-log-empty">开始逐页采集后显示实时请求进度</div>
-      </div>
-    </div>
-    <details>
-      <summary>原始请求数据</summary>
-      <pre id="capture-preview">等待数据...</pre>
-    </details>
-  </div>
-
-  <!-- 批量详情模式 -->
-  <div class="tab-content" id="tab-detail">
-    <p class="hint">导入人选列表后，在脉脉列表页执行详情采集；遇到验证、权限或限流异常会停止或暂停。</p>
-    <div class="stats detail-stats">
-      <span>任务: <b id="detail-jobs-count">0</b></span>
-      <span>完成: <b id="detail-done-count">0</b></span>
-      <span>失败: <b id="detail-failed-count">0</b></span>
-      <span>跳过: <b id="detail-skipped-count">0</b></span>
-    </div>
-    <div class="form-group">
-      <label>导入人选列表（.JSON）</label>
-      <input type="file" id="detail-import-file" accept="application/json,.json" />
-    </div>
-    <div class="btn-row">
-      <button id="btn-start-detail-batch" class="primary">开始人选详情采集</button>
-      <button id="btn-stop-detail-batch">终止</button>
-      <button id="btn-export-detail-batch">导出 JSON</button>
-    </div>
-    <div class="progress-bar" id="detail-progress">
-      <div class="progress-fill detail-progress-fill" id="detail-progress-fill"></div>
-    </div>
-    <div class="progress-text" id="detail-progress-text">等待导入人选列表</div>
-    <pre class="detail-log" id="detail-batch-log">默认低速顺序采集；遇到验证、权限或限流异常会暂停。</pre>
-    <div class="detail-log-title">执行日志（最近 50 条）</div>
-    <div class="detail-log-list" id="detail-log-list"></div>
-  </div>
-<script src="popup.js"></script>
+  </main>
+  <script src="popup.js"></script>
 </body>
 </html>
