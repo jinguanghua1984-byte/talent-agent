@@ -1276,30 +1276,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   }
 
   if (msg.type === "openMainPage") {
-    function openPopupFallback() {
-      chrome.tabs.create({ url: chrome.runtime.getURL("popup.html") }, function (tab) {
-        sendResponse({ ok: true, tabId: tab && tab.id });
-      });
-    }
-
-    if (chrome.action && chrome.action.openPopup) {
-      try {
-        var popupResult = chrome.action.openPopup();
-        if (popupResult && popupResult.then) {
-          popupResult.then(function () {
-            sendResponse({ ok: true, opened: "popup" });
-          }).catch(function () {
-            openPopupFallback();
-          });
-        } else {
-          sendResponse({ ok: true, opened: "popup" });
-        }
-      } catch (err) {
-        openPopupFallback();
-      }
-    } else {
-      openPopupFallback();
-    }
+    openWorkbenchPage(sendResponse);
     return true;
   }
 
@@ -1339,10 +1316,20 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     recordActionDiagnosticTrace("exportFullJson", msg, _sender);
     buildFullExportData().then(function (data) {
       if (msg.saveAs === false) {
-        sendResponse({ ok: true, data: data });
+        recordExportResult("full", null).then(function () {
+          sendResponse({ ok: true, data: data });
+        });
         return;
       }
-      downloadJsonData(data, msg.filename || "maimai-export.json", msg.saveAs, sendResponse);
+      downloadJsonData(data, msg.filename || "maimai-export.json", msg.saveAs, function (result) {
+        if (result && result.downloadId) {
+          recordExportResult("full", result.downloadId).then(function () {
+            sendResponse(result);
+          });
+          return;
+        }
+        sendResponse(result);
+      });
     }).catch(function (err) {
       sendResponse({ ok: false, error: err.message });
     });
@@ -1417,7 +1404,9 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
         filename: msg.filename || "maimai-export.json",
         saveAs: true,
       }, function (downloadId) {
-        sendResponse({ downloadId: downloadId });
+        recordExportResult("capture", downloadId).then(function () {
+          sendResponse({ downloadId: downloadId });
+        });
       });
     });
     return true;
@@ -1634,8 +1623,33 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
           __activePager = pagerState;
           __pagerTabId = tabId;
 
+          saveWorkbenchStatePatch({
+            active_maimai_tab_id: tabId,
+            pager: {
+              status: "running",
+              mode: msg.mode || "all",
+              max_pages: msg.maxPages || 3,
+              current_page: 1,
+              total_pages: pagerState.totalPages || 0,
+              total_from_api: pagerState.totalFromApi || 0,
+              total_contacts: existingContacts.length || 0,
+              started_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+              finished_at: null,
+              last_error: null,
+            },
+          });
+          clearPagerLogs().then(function () {
+            return appendPagerLog("info", "开始人选列表逐页采集，模式：" + ((msg.mode || "all") === "all" ? "全部页面" : "前 " + (msg.maxPages || 3) + " 页"), {
+              mode: msg.mode || "all",
+              maxPages: msg.maxPages || 3,
+            });
+          });
+
           AutoPager.run(pagerState, msg.mode, msg.maxPages, function (event) {
-            chrome.runtime.sendMessage(event).catch(function () {});
+            updateWorkbenchPagerStateFromEvent(event, msg.mode || "all", msg.maxPages || 3).then(function () {
+              chrome.runtime.sendMessage(event).catch(function () {});
+            });
           });
 
           safeRespond({
@@ -1655,6 +1669,13 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   if (msg.type === "stopPager") {
     if (__activePager) {
       AutoPager.stop(__activePager);
+      saveWorkbenchStatePatch({
+        pager: {
+          status: "stopping",
+          updated_at: new Date().toISOString(),
+        },
+      });
+      appendPagerLog("info", "已发送终止逐页采集请求", null);
       sendResponse({ ok: true });
     } else {
       sendResponse({ ok: false, error: "无正在运行的抓取" });
@@ -1703,7 +1724,9 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
           filename: msg.filename || "maimai-pager-export.json",
           saveAs: true,
         }, function (downloadId) {
-          sendResponse({ downloadId: downloadId });
+          recordExportResult("pager", downloadId).then(function () {
+            sendResponse({ downloadId: downloadId });
+          });
         });
       });
     }).catch(function (err) {
