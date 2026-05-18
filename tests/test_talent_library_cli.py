@@ -230,6 +230,86 @@ def test_import_entry_apply_preserves_maimai_list_raw_for_scoring(tmp_path: Path
         db.close()
 
 
+def test_import_entry_accepts_extension_capture_and_pager_export_shapes(tmp_path: Path):
+    db_path = tmp_path / "talent.db"
+    passive_capture = tmp_path / "passive-capture.json"
+    pager_contacts = tmp_path / "pager-contacts.json"
+    passive_report = tmp_path / "passive-report.md"
+    pager_report = tmp_path / "pager-report.md"
+    contact = _maimai_contact()
+    passive_capture.write_text(
+        json.dumps(
+            {
+                "exportTime": "2026-05-18T00:00:00.000Z",
+                "metadata": {
+                    "export_type": "capture",
+                    "source_pool": "passive_interception",
+                },
+                "contacts": [contact],
+                "totalContacts": 1,
+                "details": [],
+                "totalDetails": 0,
+                "requests": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    pager_contacts.write_text(
+        json.dumps(
+            {
+                "exportTime": "2026-05-18T00:00:00.000Z",
+                "metadata": {
+                    "total_pages": 1,
+                    "captured_pages": 1,
+                    "total_count": 1,
+                    "search_params": {
+                        "url": "/api/ent/v3/search/basic",
+                        "method": "POST",
+                        "headerNames": [],
+                    },
+                },
+                "contacts": [contact],
+                "totalContacts": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    passive_exit = main([
+        "import",
+        "--input",
+        str(passive_capture),
+        "--db",
+        str(db_path),
+        "--out",
+        str(passive_report),
+    ])
+    pager_exit = main([
+        "import",
+        "--input",
+        str(pager_contacts),
+        "--db",
+        str(db_path),
+        "--out",
+        str(pager_report),
+    ])
+
+    passive_summary = json.loads(passive_report.with_suffix(".json").read_text(encoding="utf-8-sig"))
+    pager_summary = json.loads(pager_report.with_suffix(".json").read_text(encoding="utf-8-sig"))
+    assert passive_exit == 0
+    assert pager_exit == 0
+    assert passive_summary["raw_contacts"] == 1
+    assert pager_summary["raw_contacts"] == 1
+    assert passive_summary["unique_contacts"] == pager_summary["unique_contacts"] == 1
+    assert passive_summary["result"]["created"] == pager_summary["result"]["created"] == 1
+    assert passive_summary["pre_errors"] == pager_summary["pre_errors"] == 0
+    db = TalentDB(db_path)
+    try:
+        assert db.count() == 0
+    finally:
+        db.close()
+
+
 def test_wechat_sync_exports_markdown_and_indexes_timeline(
     tmp_path: Path, monkeypatch
 ):

@@ -14,6 +14,8 @@ def test_manifest_is_json_and_version_is_2_4():
     manifest = json.loads(read_extension_file("manifest.json"))
 
     assert manifest["version"] == "2.4"
+    assert manifest["name"] == "脉脉人选数据采集"
+    assert manifest["action"]["default_title"] == "脉脉人选数据采集"
 
 
 def test_background_imports_detail_batch():
@@ -65,8 +67,12 @@ def test_inject_handles_detail_fetch_and_required_endpoints():
 def test_popup_contains_detail_tab_and_start_button():
     popup_html = read_extension_file("popup.html")
 
+    assert "脉脉人选数据采集" in popup_html
+    assert 'data-tab="capture">人选列表采集' in popup_html
     assert 'data-tab="detail"' in popup_html
     assert "btn-start-detail-batch" in popup_html
+    assert "主动搜索" not in popup_html
+    assert "DOM 抓取" not in popup_html
 
 
 def test_export_full_json_exports_detail_jobs():
@@ -111,7 +117,7 @@ def test_automation_page_exposes_detail_bridge_without_popup_dom():
     assert "automation.js" in resource_names
 
 
-def test_detail_daily_limit_defaults_to_10000_for_manual_control():
+def test_detail_daily_limit_defaults_to_10000_without_popup_controls():
     detail_batch = read_extension_file("detail_batch.js")
     popup_html = read_extension_file("popup.html")
     popup_js = read_extension_file("popup.js")
@@ -119,8 +125,10 @@ def test_detail_daily_limit_defaults_to_10000_for_manual_control():
 
     safe_policy_block = detail_batch.split("var SAFE_POLICY =", 1)[1].split("var TEST_POLICY =", 1)[0]
     assert "dailyLimit: 10000" in safe_policy_block
-    assert 'id="detail-daily-limit" value="10000" min="1" max="10000"' in popup_html
-    assert "parseInt(detailDailyLimitEl.value) || 10000" in popup_js
+    assert "detail-daily-limit" not in popup_html
+    assert "detail-mode" not in popup_html
+    assert "detailDailyLimitEl" not in popup_js
+    assert "detailModeEl" not in popup_js
     assert "dailyLimit: options.dailyLimit || 10000" in automation_js
 
 
@@ -190,20 +198,19 @@ def test_background_records_diagnostic_trace_for_key_batch_actions():
     assert "diagnosticTraces: stored.diagnosticTraces || []" in background
 
 
-def test_popup_supports_local_detail_plan_loader():
+def test_popup_hides_local_detail_plan_loader():
     manifest = json.loads(read_extension_file("manifest.json"))
     popup_html = read_extension_file("popup.html")
     popup_js = read_extension_file("popup.js")
 
     assert "http://127.0.0.1/*" in manifest["host_permissions"]
     assert "http://localhost/*" in manifest["host_permissions"]
-    assert "detail-local-plan-url" in popup_html
-    assert "btn-load-local-detail-plan" in popup_html
-    assert "btn-load-start-local-detail-plan" in popup_html
-    assert "detail-local-plan-status" in popup_html
-    assert "function loadLocalDetailPlan" in popup_js
-    assert "fetch(localPlanUrl" in popup_js
-    assert '{ type: "importDetailContacts", contacts: planPayload }' in popup_js
+    assert "detail-local-plan-url" not in popup_html
+    assert "btn-load-local-detail-plan" not in popup_html
+    assert "btn-load-start-local-detail-plan" not in popup_html
+    assert "detail-local-plan-status" not in popup_html
+    assert "function loadLocalDetailPlan" not in popup_js
+    assert "fetch(localPlanUrl" not in popup_js
     assert '{ type: "startDetailBatch"' in popup_js
 
 
@@ -318,21 +325,50 @@ def test_background_reset_detail_batch_clears_persisted_state():
     assert "state: resetState" in reset_block
 
 
-def test_popup_detail_tab_has_reset_and_realtime_logs():
+def test_popup_detail_tab_hides_extra_controls_and_keeps_realtime_logs():
     popup_html = read_extension_file("popup.html")
     popup_js = read_extension_file("popup.js")
 
-    assert "btn-reset-detail-batch" in popup_html
+    assert "btn-reset-detail-batch" not in popup_html
+    assert "btn-pause-detail-batch" not in popup_html
+    assert "btn-resume-detail-batch" not in popup_html
+    assert "btn-refresh-detail-batch" not in popup_html
+    assert "开始人选详情采集" in popup_html
+    assert ">终止<" in popup_html
     assert "detail-log-list" in popup_html
-    assert "resetDetailBatch" in popup_js
+    assert "resetDetailBatch" not in popup_js
     assert "renderDetailBatchLogs" in popup_js
     assert "getScraperSummary" in popup_js
     assert "summary.detail.totalJobs || summary.detail.jobs || 0" in popup_js
     assert "summary.totalDetails" in popup_js
     assert "summary.detail.state.status" in popup_js
     assert "input.total_jobs" in popup_js
+    assert "detailStatusLabel" in popup_js
+    assert "状态：" in popup_js
     assert "function isDetailBadgeActive()" in popup_js
     assert "function setCaptureBadge(text)" in popup_js
+
+
+def test_popup_capture_tab_has_split_exports_and_pager_logs():
+    popup_html = read_extension_file("popup.html")
+    popup_js = read_extension_file("popup.js")
+    background = read_extension_file("background.js")
+
+    assert "btn-refresh" in popup_html
+    assert "btn-export-capture" in popup_html
+    assert "导出被动拦截 JSON" in popup_html
+    assert "btn-export-pager" in popup_html
+    assert "导出人选列表 JSON" in popup_html
+    assert "capture-log-list" in popup_html
+    assert "请求执行日志" in popup_html
+    assert "人选列表逐页采集" in popup_html
+    assert '{ type: "getScraperSummary" }' in popup_js
+    assert '{ type: "exportCaptureJson", filename: filename }' in popup_js
+    assert '{ type: "exportPagerJson", filename: filename }' in popup_js
+    assert "appendPagerLog" in popup_js
+    assert "pager_progress" in popup_js
+    assert "exportCaptureJson" in background
+    assert "exportPagerJson" in background
 
 
 def test_content_mounts_floating_scraper_widget():

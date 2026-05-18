@@ -644,5 +644,5 @@ if (!window.__maimaiScraperV2) {
       });
   });
 
-  console.log("[Maimai Scraper v2] 已安装 — 被动拦截 + 主动搜索 + DOM 抓取就绪");
+  console.log("[Maimai Scraper v2] 已安装 — 被动拦截 + 人选列表逐页采集 + 批量详情就绪");
 }

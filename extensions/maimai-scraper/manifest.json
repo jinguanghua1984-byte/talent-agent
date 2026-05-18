@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Maimai Talent Scraper",
+  "name": "脉脉人选数据采集",
   "version": "2.4",
-  "description": "脉脉人才搜索抓取工具 — 被动拦截 + 主动搜索 + 自动分页 + 批量详情 + 数据导出",
+  "description": "脉脉人选数据采集工具 — 被动拦截 + 人选列表逐页采集 + 批量详情 + 数据导出",
   "permissions": ["storage", "scripting", "downloads"],
   "host_permissions": [
     "*://maimai.cn/*",
@@ -15,7 +15,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Maimai Scraper"
+    "default_title": "脉脉人选数据采集"
   },
   "web_accessible_resources": [
     {

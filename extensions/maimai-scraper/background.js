@@ -1060,11 +1060,15 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
     return true;
   }
 
-  // 导出为 JSON 文件
-  if (msg.type === "exportJson") {
+  // 导出被动拦截 JSON 文件：只读取 chrome.storage.local 中的请求、联系人和详情池。
+  if (msg.type === "exportCaptureJson" || msg.type === "exportJson") {
     chrome.storage.local.get({ captured: [], contacts: [], details: [] }, function (r) {
       var data = {
         exportTime: new Date().toISOString(),
+        metadata: {
+          export_type: "capture",
+          source_pool: "passive_interception",
+        },
         contacts: r.contacts || [],
         totalContacts: (r.contacts || []).length,
         details: r.details || [],

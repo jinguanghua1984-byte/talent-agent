@@ -174,7 +174,7 @@
         return;
       }
 
-      titleEl.textContent = "Maimai Scraper";
+      titleEl.textContent = "脉脉人选采集";
       metaEl.textContent = "联系人 " + totalContacts + " · 详情 " + totalDetails;
     }
 

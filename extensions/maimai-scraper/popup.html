@@ -6,36 +6,34 @@
 </head>
 <body>
   <div class="header">
-    <h3>Maimai Talent Scraper</h3>
+    <h3>脉脉人选数据采集</h3>
     <span class="badge" id="status-badge">--</span>
   </div>
 
   <!-- 模式切换 -->
   <div class="tabs">
-    <button class="tab active" data-tab="capture">被动拦截</button>
-    <button class="tab" data-tab="search">主动搜索</button>
+    <button class="tab active" data-tab="capture">人选列表采集</button>
     <button class="tab" data-tab="detail">批量详情</button>
-    <button class="tab" data-tab="dom">DOM 抓取</button>
   </div>
 
-  <!-- 被动拦截模式 -->
+  <!-- 人选列表采集 -->
   <div class="tab-content active" id="tab-capture">
-    <p class="hint">在脉脉页面手动操作，扩展自动捕获 API 数据</p>
+    <p class="hint">在脉脉页面手动搜索或翻页，扩展只读取已发生的请求和列表数据。</p>
     <div class="stats" id="capture-stats">
       <span>请求: <b id="req-count">0</b></span>
-      <span>联系人: <b id="contact-count">0</b></span>
+      <span>人选: <b id="contact-count">0</b></span>
       <span>详情: <b id="detail-count">0</b></span>
     </div>
     <div class="btn-row">
       <button id="btn-refresh">刷新</button>
       <button id="btn-clear">清除</button>
-      <button id="btn-export">导出 JSON</button>
+      <button id="btn-export-capture">导出被动拦截 JSON</button>
     </div>
     <!-- 分页抓取控制 -->
     <div class="pager-section" id="pager-section">
       <div class="form-row">
         <div class="form-group">
-          <label>抓取范围</label>
+          <label>人选列表逐页采集</label>
           <select id="pager-mode">
             <option value="all">全部页面</option>
             <option value="custom">前 N 页</option>
@@ -53,11 +51,16 @@
       <div class="btn-row">
         <button id="btn-start-pager" class="primary">开始抓取</button>
         <button id="btn-stop-pager" style="display:none;">停止</button>
+        <button id="btn-export-pager">导出人选列表 JSON</button>
       </div>
       <div class="progress-bar" id="pager-progress" style="display:none;">
         <div class="progress-fill" id="pager-progress-fill"></div>
       </div>
       <div class="progress-text" id="pager-progress-text"></div>
+      <div class="capture-log-title">请求执行日志</div>
+      <div class="capture-log-list" id="capture-log-list">
+        <div class="capture-log-empty">开始逐页采集后显示实时请求进度</div>
+      </div>
     </div>
     <details>
       <summary>原始请求数据</summary>
@@ -65,91 +68,31 @@
     </details>
   </div>
 
-  <!-- 主动搜索模式 -->
-  <div class="tab-content" id="tab-search">
-    <div class="form-group">
-      <label>搜索关键词</label>
-      <input type="text" id="search-query" placeholder="例: 产品经理" />
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label>页码</label>
-        <input type="number" id="search-page" value="1" min="1" />
-      </div>
-      <div class="form-group">
-        <label>每页条数</label>
-        <input type="number" id="search-pagesize" value="30" min="1" max="50" />
-      </div>
-    </div>
-    <div class="form-group">
-      <p class="hint" id="search-template-status">模板状态: 等待捕获...</p>
-    </div>
-    <button id="btn-search" class="primary">搜索</button>
-    <div id="search-result" class="result-box"></div>
-  </div>
-
   <!-- 批量详情模式 -->
   <div class="tab-content" id="tab-detail">
-    <p class="hint">在脉脉列表页使用；低速顺序执行，触发验证/权限异常会暂停。导出后需本地 dry-run 再入库。</p>
+    <p class="hint">导入人选列表后，在脉脉列表页执行详情采集；遇到验证、权限或限流异常会停止或暂停。</p>
     <div class="stats detail-stats">
-      <span>Jobs: <b id="detail-jobs-count">0</b></span>
+      <span>任务: <b id="detail-jobs-count">0</b></span>
       <span>完成: <b id="detail-done-count">0</b></span>
       <span>失败: <b id="detail-failed-count">0</b></span>
       <span>跳过: <b id="detail-skipped-count">0</b></span>
     </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label>策略</label>
-        <select id="detail-mode">
-          <option value="safe">safe</option>
-          <option value="test">test</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>每日上限</label>
-        <input type="number" id="detail-daily-limit" value="10000" min="1" max="10000" />
-      </div>
-    </div>
-    <div class="local-plan-section">
-      <div class="form-group">
-        <label>本地任务包 URL</label>
-        <input type="text" id="detail-local-plan-url" value="http://127.0.0.1:8765/detail-plan.json" />
-      </div>
-      <div class="btn-row">
-        <button id="btn-load-local-detail-plan">加载任务包</button>
-        <button id="btn-load-start-local-detail-plan" class="primary">加载并开始</button>
-      </div>
-      <div class="progress-text" id="detail-local-plan-status">本地任务包由 CLI 提供；真实详情仍需用户在 popup 点击触发。</div>
-    </div>
     <div class="form-group">
-      <label>导入联系人 JSON</label>
+      <label>导入人选列表（.JSON）</label>
       <input type="file" id="detail-import-file" accept="application/json,.json" />
     </div>
     <div class="btn-row">
-      <button id="btn-start-detail-batch" class="primary">开始详情</button>
-      <button id="btn-pause-detail-batch">暂停</button>
-      <button id="btn-resume-detail-batch">继续</button>
-      <button id="btn-stop-detail-batch">停止</button>
-    </div>
-    <div class="btn-row">
-      <button id="btn-refresh-detail-batch">刷新</button>
+      <button id="btn-start-detail-batch" class="primary">开始人选详情采集</button>
+      <button id="btn-stop-detail-batch">终止</button>
       <button id="btn-export-detail-batch">导出 JSON</button>
-      <button id="btn-reset-detail-batch">重置</button>
     </div>
     <div class="progress-bar" id="detail-progress">
       <div class="progress-fill detail-progress-fill" id="detail-progress-fill"></div>
     </div>
-    <div class="progress-text" id="detail-progress-text">等待联系人来源...</div>
-    <pre class="detail-log" id="detail-batch-log">safe 模式：每人 5-12 秒，每 30 人暂停 5-10 分钟。</pre>
+    <div class="progress-text" id="detail-progress-text">等待导入人选列表</div>
+    <pre class="detail-log" id="detail-batch-log">默认低速顺序采集；遇到验证、权限或限流异常会暂停。</pre>
     <div class="detail-log-title">执行日志（最近 50 条）</div>
     <div class="detail-log-list" id="detail-log-list"></div>
-  </div>
-
-  <!-- DOM 抓取模式 -->
-  <div class="tab-content" id="tab-dom">
-    <p class="hint">从页面 DOM 直接提取已渲染的人才卡片</p>
-    <button id="btn-dom-scrape" class="primary">抓取当前页面</button>
-    <div id="dom-result" class="result-box"></div>
   </div>
 <script src="popup.js"></script>
 </body>

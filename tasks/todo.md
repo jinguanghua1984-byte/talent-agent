@@ -2532,3 +2532,110 @@
 - 测试库 apply：`python scripts/talent_sync.py import --db data/backups/talent-db-import-test-final-20260517-125819.db --bundle data/output/talent-sync-full.zip --apply --confirm "确认同步人才库"` -> `新建候选人=0，合并候选人=5453，冲突候选人=0，跳过候选人=0`。
 - 主库核对：`python scripts/talent_sync.py status --db data/talent.db` -> 候选人 `5453`、导入记录 `1`；测试库导入记录为 `2`，说明真实 apply 发生在测试库而非主库。
 - 验证：`python -m pytest tests/test_talent_sync.py -q` -> `37 passed`；`python -m py_compile scripts/talent_sync.py` -> PASS；`git diff --check` -> PASS。
+
+# 飞书 CLI 安装（2026-05-18）
+
+> 目标：按飞书/开放平台官方入口安装本机 CLI，并验证命令可用；不代用户完成需要账号授权的登录步骤。
+
+## 执行计划
+
+- [x] 确认官方安装入口和本机 Node/npm 环境。
+- [x] 执行官方安装命令安装飞书 CLI。
+- [x] 验证 CLI 命令、版本和 PATH 可用性。
+- [x] 回填 Review，记录后续登录/配置步骤。
+
+## Review
+
+- 本机环境：Node `v24.13.0`，npm registry 为 `https://registry.npmjs.org/`，全局 npm prefix 为 `C:\Users\Administrator\AppData\Roaming\npm`。
+- 官方包确认：npm `@larksuite/cli@latest` 当前为 `1.0.32`，bin 为 `lark-cli`。
+- 安装命令：`npm install -g @larksuite/cli@latest` -> `added 7 packages in 2m`。
+- PATH 验证：`Get-Command lark-cli` -> `C:\Users\Administrator\AppData\Roaming\npm\lark-cli.ps1`。
+- 版本验证：`lark-cli --version` -> `lark-cli version 1.0.32`；`lark-cli --help` 正常列出 `api/auth/config/docs/im/base/sheets/wiki` 等命令。
+- Agent skills：按 `lark-cli --help` 的官方提示执行 `npx -y skills add larksuite/cli -g -y`，安装器识别 `codex` 环境并安装 `25` 个 `lark-*` skills 到 `C:\Users\Administrator\.agents\skills`。
+- 健康检查：`lark-cli doctor` 中 `cli_version` 和 `cli_update` 通过；`config_file` 失败为预期状态，原因是尚未配置飞书应用和授权。后续需要用户提供 app 信息或完成 `lark-cli config init --new` / `lark-cli auth login` 授权流程。
+- 后续授权：`lark-cli auth login` 初次失败提示未配置；已按 CLI 提示执行 `lark-cli config init --new --lang zh`，用户完成网页配置后返回 `OK: 应用配置成功`，App ID 为 `cli_aa80ddcb80789ccd`。
+- 登录方式：`lark-cli auth login --recommend --no-wait --json` 生成 device flow 后，使用 `lark-cli auth login --device-code ...` 等待用户授权；最终返回 `OK: 授权成功`，用户为 `金光华`。
+- 授权验证：`lark-cli auth status` -> `tokenStatus=valid`，`expiresAt=2026-05-18T10:49:15+08:00`，`refreshExpiresAt=2026-05-25T08:49:15+08:00`；`lark-cli profile list` 显示 active profile 为 `cli_aa80ddcb80789ccd`。
+- 最终健康检查：`lark-cli doctor` -> `ok=true`；`cli_version`、`cli_update`、`config_file`、`app_resolved`、`token_exists`、`token_local`、`token_verified`、`endpoint_open`、`endpoint_mcp` 全部通过。
+
+# 飞书 CLI 能力介绍云文档（2026-05-18）
+
+> 目标：创建一篇飞书云文档，介绍飞书 CLI 的主要能力，并结合当前工作流给出优先使用建议。
+
+## 执行计划
+
+- [x] 确认 `docs +create` 的 v2 文档创建参数和格式要求。
+- [x] 编写 XML 文档源稿，覆盖 CLI 能力、身份/权限边界、推荐场景和上手路径。
+- [x] 使用 `lark-cli docs +create --api-version v2` 创建云文档。
+- [x] 读取新文档并运行健康检查，回填文档 URL 和验证结果。
+
+## Review
+
+- 源稿文件：`tasks/feishu-cli-capabilities-doc.xml`。
+- 格式检查：用 XML root wrapper 解析源稿 -> `XML_OK`；`lark-cli docs +create --api-version v2 --parent-position my_library --content '@tasks/feishu-cli-capabilities-doc.xml' --dry-run` 成功生成请求预览。
+- 创建命令：`lark-cli docs +create --api-version v2 --parent-position my_library --content '@tasks/feishu-cli-capabilities-doc.xml'`。
+- 创建结果：`ok=true`，`identity=user`，`document_id=SY3JdOuQootb1LxJwT6cld9Ln3f`，`revision_id=3`，`warnings=[]`。
+- 文档 URL：`https://sq8org1v4k6.feishu.cn/docx/SY3JdOuQootb1LxJwT6cld9Ln3f`。
+- 读取验证：`lark-cli docs +fetch --api-version v2 --doc 'https://sq8org1v4k6.feishu.cn/docx/SY3JdOuQootb1LxJwT6cld9Ln3f' --detail with-ids` -> `ok=true`，标题、表格、grid、checkbox、pre 代码块均可读回。
+- 健康检查：`lark-cli doctor` -> `ok=true`，CLI、config、token、open endpoint、MCP endpoint 全部通过。
+
+# AI Infra campaign 飞书交付包（2026-05-18）
+
+> 目标：为 AI Infra campaign 生成飞书交付包，包括摘要云文档、候选人 Sheet 和 outreach queue Sheet；使用现有 reports artifacts，不重新跑真实采集，不写本地 DB。
+
+## 执行计划
+
+- [x] 核验 final delivery/outreach artifacts、行数、标签分布和质量审计状态。
+- [x] 生成候选人 Sheet 源数据和 outreach queue Sheet 源数据，避免上传原始 DB/zip 或未筛选 raw。
+- [x] 创建候选人 Sheet，并写入表头和全部行。
+- [x] 创建 outreach queue Sheet，并写入表头和全部行。
+- [x] 创建摘要云文档，链接两张 Sheet，写明交付范围、关键指标、使用建议和风险边界。
+- [x] 读取验证云文档和两张 Sheet，运行 `lark-cli doctor`，回填 Review。
+
+## Review
+
+- 使用现有 reports artifacts：`final-search-report-ab-packs-001-004.json`、`final-detail-report-ab-packs-001-004.json`、`outreach-execution-queue-ab-packs-001-004.csv`、`outreach-quality-audit-p0-p1-top30-ab-packs-001-004.json`；未重新跑真实采集，未读取或上传 SQLite DB/zip/raw。
+- 摘要云文档：`https://sq8org1v4k6.feishu.cn/docx/Ja4zdyvXaoky4XxORDccQrK8n7g`；`docs +fetch --api-version v2 --detail with-ids` -> `ok=true`，可读回标题、漏斗、方向覆盖、详情包状态和两张 Sheet 链接。
+- 候选人 Sheet：`https://sq8org1v4k6.feishu.cn/sheets/N08Qs52LJhCR6dtlm3rcmIW6nng`；`sheet_id=2f04c5`，`row_count=597` 含表头，候选人数据 `596` 行，`column_count=24`，表头冻结 `frozen_row_count=1`。
+- 候选人分布：`强推荐=358`、`推荐=160`、`观察=77`、`不推荐=1`；优先级视图 `P0=150`、`P1=300`、`P2=145`，另有 `1` 个不推荐候选人无外联优先级。
+- Outreach queue Sheet：`https://sq8org1v4k6.feishu.cn/sheets/PsnSs9CFqhPw7xtvqqPcdA1AnOh`；`sheet_id=8a18ce`，`row_count=596` 含表头，外联队列 `595` 行，`column_count=22`，表头冻结 `frozen_row_count=1`。
+- Outreach 队列分布：`P0=150`、`P1=300`、`P2=145`；新增执行列 `owner/status/last_touch_at/next_followup_at/notes`，默认 `status=待联系`。
+- 质量审计：P0/P1 各抽样 `30` 人，`issue_counts={}`，`duplicate_candidate_ids=[]`；摘要文档已写明候选人/外联数据属于敏感信息，分享前需确认飞书权限范围。
+- 本地结果记录：`data/campaigns/ai-infra-v2-2026-05-15-dry-run/reports/feishu-delivery-package-2026-05-18.json`；源 CSV/XML 写在同一 reports 目录，属于 `data/campaigns/` 忽略范围。
+- 验证：候选人 Sheet `sheets +read --sheet-id 2f04c5 --range A1:X5` -> `ok=true`；outreach Sheet `sheets +read --sheet-id 8a18ce --range A1:V5` -> `ok=true`；`lark-cli doctor` -> `ok=true`；`git diff --check` -> PASS。
+- 中途修复：Python 子进程不能解析 `lark-cli` shim，已改为直接调用 Node CLI 入口；`sheets +append` 多行写入不能用 `<sheetId>!A1` 单格 range，已改为 `--range <sheet_id>`；两项已记录到 `memory/error-log.md`。
+- 残留说明：调试早期因解析/append 参数失败，飞书云空间里可能存在少数只含表头的候选人草稿 Sheet；它们未写入交付包、不在摘要文档中引用。如需清理，需要额外走搜索授权和删除确认流程。
+
+# 脉脉扩展 popup 页面优化（2026-05-18）
+
+> 目标：按最新产品要求精简扩展 popup，只保留“人选列表采集”和“批量详情”两条主路径；被动拦截和逐页采集导出必须拆成独立入口，详情采集界面隐藏低频/内部控制项。
+
+## 执行计划
+
+- [x] 梳理现有 `popup.html/js/css`、后台导出消息和扩展契约测试，确认主动搜索、DOM 抓取、本地任务包等入口的依赖。
+- [x] 优化“人选列表采集”标签：移除主动搜索/DOM 抓取 tab，改名、拆分被动拦截与逐页采集导出，修复刷新按钮统计源，增加逐页请求执行日志。
+- [x] 优化“批量详情”标签：隐藏安全策略、每日上限、本地任务包加载和执行区域；调整导入/开始/终止/进度/统计文案为中文业务表达。
+- [x] 更新 `tests/test_maimai_scraper_extension.py` 静态契约，覆盖新 UI 与拆分导出入口。
+- [x] 运行扩展 JS 语法检查、聚焦测试和必要回归，回填 Review。
+
+## Review
+
+- popup 标题、manifest name/default title 已改为“脉脉人选数据采集”；manifest 描述同步去掉主动搜索、DOM 抓取的产品表述。
+- “人选列表采集”仅保留被动拦截与逐页采集入口；被动导出走 `exportCaptureJson`/`chrome.storage.local` 池，逐页导出走 `exportPagerJson`/`PagerDB` 池。
+- 刷新按钮改为读取 `getScraperSummary`，可覆盖 PagerDB 中的逐页采集联系人；失败时回退 `chrome.storage.local`。
+- 逐页采集新增请求执行日志区，实时记录启动、每页完成、暂停、失败、停止和完成事件。
+- “批量详情”隐藏策略、每日上限、本地任务包加载、暂停、继续、刷新、重置；导入/开始/终止和进度文本已改为中文业务文案。
+- 验证：扩展 JS `node --check` 全部通过；`python -m pytest tests/test_maimai_scraper_extension.py -q` -> `39 passed`；`python -m pytest tests scripts -q` -> `634 passed, 1 warning`；`git diff --check` -> PASS。
+- 残留：全量回归 warning 为既有 `scripts/test_boss.py` event loop deprecation；工作树中 `memory/error-log.md`、`tasks/feishu-cli-capabilities-doc.xml` 是本次开始前已有脏状态，未纳入本次修改。
+
+# 扩展列表导出导入兼容检查（2026-05-18）
+
+> 目标：确认“导出被动拦截 JSON”和“导出人选列表 JSON”的人选数据格式是否一致，以及是否都可以直接走 `talent-library import` 导入人才库。
+
+## Review
+
+- 代码结论：两个导出文件的顶层 envelope 不完全一致；被动拦截导出包含 `metadata.export_type=capture`、`contacts`、`details`、`requests`，逐页列表导出包含分页 `metadata`、`contacts`。但 `contacts[]` 都保留脉脉原始联系人对象，字段来源一致。
+- 导入入口：`scripts/talent_library.py import` 的 `_items_from_payload()` 优先读取顶层 `contacts`，会忽略 `metadata/details/requests`；后续统一走 `MaimaiAdapter.map_to_schema()` 和 `TalentDB.batch_ingest()`。
+- 可导入前提：每条联系人至少要有 `name`；有 `id` 时会写入 `source_profiles.platform_id`，否则只能按姓名/公司/职位等弱键去重，不建议作为正式导入数据。
+- 已补回归：`tests/test_talent_library_cli.py::test_import_entry_accepts_extension_capture_and_pager_export_shapes`，分别用被动拦截和逐页列表两种导出形状做 `talent-library import` dry-run，结果均 `raw_contacts=1`、`unique_contacts=1`、`created=1`、`pre_errors=0`，且 dry-run 不写库。
+- 验证：`python -m pytest tests/test_talent_library_cli.py::test_import_entry_accepts_extension_capture_and_pager_export_shapes -q` -> `1 passed`；`python -m pytest tests/test_talent_library_cli.py -q` -> `10 passed`；`python -m pytest tests/test_maimai_scraper_extension.py tests/test_talent_library_cli.py -q` -> `49 passed`；`python -m pytest tests scripts -q` -> `635 passed, 1 warning`；`git diff --check` -> PASS。

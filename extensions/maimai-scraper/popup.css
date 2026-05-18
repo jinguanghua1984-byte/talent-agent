@@ -1,7 +1,7 @@
-body { width: 460px; font-family: -apple-system, "Segoe UI", sans-serif; font-size: 13px; padding: 8px; margin: 0; }
+body { width: 520px; box-sizing: border-box; font-family: -apple-system, "Segoe UI", sans-serif; font-size: 13px; padding: 10px; margin: 0; }
 
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.header h3 { margin: 0; font-size: 14px; }
+.header h3 { margin: 0; font-size: 16px; letter-spacing: 0; }
 .badge { background: #e8f5e9; color: #2e7d32; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
 
 .tabs { display: flex; gap: 4px; margin-bottom: 8px; }
@@ -17,8 +17,8 @@ body { width: 460px; font-family: -apple-system, "Segoe UI", sans-serif; font-si
 .stats span { font-size: 12px; }
 .stats b { color: #1a73e8; }
 
-.btn-row { display: flex; gap: 4px; margin: 8px 0; }
-button { padding: 6px 12px; border: 1px solid #ddd; border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px; }
+.btn-row { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+button { padding: 6px 12px; border: 1px solid #ddd; border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px; white-space: nowrap; }
 button:hover { background: #f0f0f0; }
 button.primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
 button.primary:hover { background: #1557b0; }
@@ -45,6 +45,12 @@ details pre { white-space: pre-wrap; word-break: break-all; max-height: 200px; o
 .progress-bar { height: 6px; background: #e0e0e0; border-radius: 3px; overflow: hidden; margin: 6px 0; }
 .progress-fill { height: 100%; background: #1a73e8; border-radius: 3px; transition: width 0.3s ease; width: 0%; }
 .progress-text { font-size: 11px; color: #666; text-align: center; }
+.capture-log-title { margin-top: 8px; color: #333; font-size: 12px; font-weight: 600; }
+.capture-log-list { max-height: 150px; overflow: auto; margin-top: 4px; border: 1px solid #dfe5ee; border-radius: 4px; background: #fff; }
+.capture-log-item,
+.capture-log-empty { padding: 5px 6px; border-bottom: 1px solid #eeeeee; color: #405064; font-size: 11px; line-height: 1.35; word-break: break-word; }
+.capture-log-item:last-child { border-bottom: 0; }
+.capture-log-empty { color: #888; }
 
 .detail-stats { gap: 10px; flex-wrap: wrap; }
 .local-plan-section { margin: 8px 0; padding: 8px; background: #f6f8fb; border: 1px solid #dfe5ee; border-radius: 6px; }
