@@ -67,3 +67,6 @@ data/cache/
 
 # Runtime output
 runtime/
+
+# Task process artifacts (local draft sources)
+tasks/*-doc.xml
