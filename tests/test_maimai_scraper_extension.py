@@ -276,7 +276,25 @@ def test_background_exposes_summary_and_open_main_page_messages():
     assert "openMainPage" in background
     assert "openWorkbenchPage" in background
     assert "chrome.sidePanel.open" in background
-    assert "chrome.tabs.create" in background
+    assert "sidePanelOpenOptions" in background
+
+
+def test_workbench_opener_uses_side_panel_window_context_without_tab_fallback():
+    background = read_extension_file("background.js")
+    popup_js = read_extension_file("popup.js")
+
+    assert "chrome.windows.getCurrent" in popup_js
+    assert 'type: "openWorkbench", windowId: windowInfo && windowInfo.id' in popup_js
+
+    opener_block = background.split("function openWorkbenchPage", 1)[1].split("function saveDetailBatchState", 1)[0]
+    assert "function sidePanelOpenOptions" in background
+    assert "msg.windowId" in background
+    assert 'typeof sender.tab.windowId === "number"' in background
+    assert "chrome.sidePanel.open(openOptions)" in opener_block
+    assert "chrome.sidePanel.open({})" not in opener_block
+    assert "openTabFallback" not in opener_block
+    assert "opened: \"tab\"" not in opener_block
+    assert "chrome.tabs.create" not in opener_block
 
 
 def test_background_summary_detail_exposes_popup_status_shape():

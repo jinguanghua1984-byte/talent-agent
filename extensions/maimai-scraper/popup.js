@@ -93,7 +93,19 @@
   function openWorkbench() {
     return withBusy(btnOpenWorkbench, "打开中...", function () {
       setStatus("正在打开工作台...", "打开中", "pending");
-      return sendMessage({ type: "openWorkbench" }).then(function (resp) {
+      return new Promise(function (resolve) {
+        if (!(chrome.windows && chrome.windows.getCurrent)) {
+          resolve({ ok: false, error: "side_panel_window_unavailable" });
+          return;
+        }
+        chrome.windows.getCurrent(function (windowInfo) {
+          if (chrome.runtime.lastError) {
+            resolve({ ok: false, error: chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(sendMessage({ type: "openWorkbench", windowId: windowInfo && windowInfo.id }));
+        });
+      }).then(function (resp) {
         if (!resp || !resp.ok) {
           showError(resp && resp.error ? resp.error : "无法打开工作台");
           return;

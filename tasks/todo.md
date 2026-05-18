@@ -1,3 +1,18 @@
+# Workbench 打开侧边栏修复（2026-05-18）
+
+> 目标：修复“打开工作台”进入新标签页而不是 Chrome Side Panel 的问题；保持不自动导航/刷新/点击业务页面。
+
+## 计划
+
+- [ ] 复核 `openWorkbenchPage()` 调用路径和 Side Panel fallback 条件，定位为什么进入 `chrome.tabs.create`。
+- [ ] 补静态契约测试：打开工作台必须传递 `windowId` 给 `chrome.sidePanel.open`，且不能在 Side Panel 可用时自动 fallback 新标签。
+- [ ] 修改 popup/background opener：popup 传当前窗口上下文；background 同步调用 `chrome.sidePanel.open({ windowId })`，失败返回错误而不是开新标签。
+- [ ] 运行聚焦测试、扩展语法检查和必要回归，更新 Review。
+
+## Review
+
+- 待执行。
+
 # 浏览器扩展工作台 V2.0 实施计划（2026-05-18）
 
 > 目标：在已通过的 V2.0 设计基础上，写出可执行实施计划；本阶段不改扩展业务代码。

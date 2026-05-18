@@ -687,40 +687,57 @@ function hasWorkbenchDocument() {
   });
 }
 
-function openWorkbenchPage(sendResponse) {
+function sidePanelOpenOptions(msg, sender) {
+  msg = msg || {};
+  if (typeof msg.windowId === "number" && msg.windowId >= 0) {
+    return { windowId: msg.windowId };
+  }
+  if (sender && sender.tab && typeof sender.tab.windowId === "number") {
+    return { windowId: sender.tab.windowId };
+  }
+  if (sender && sender.tab && typeof sender.tab.id === "number") {
+    return { tabId: sender.tab.id };
+  }
+  return null;
+}
+
+function openWorkbenchPage(msg, sender, sendResponse) {
   if (!hasWorkbenchDocument()) {
     sendResponse({ ok: false, error: "workbench_not_available" });
     return;
   }
 
-  function openTabFallback(reason) {
-    appendPagerLog("info", "side_panel_unavailable_fallback_tab", { reason: reason || null }).then(function () {
-      chrome.tabs.create({ url: chrome.runtime.getURL("workbench.html") }, function (tab) {
-        sendResponse({ ok: true, opened: "tab", tabId: tab && tab.id });
-      });
-    });
+  function recordOpened() {
+    saveWorkbenchStatePatch({ last_opened_at: new Date().toISOString() }).catch(function () {});
   }
 
-  saveWorkbenchStatePatch({ last_opened_at: new Date().toISOString() }).then(function () {
-    if (chrome.sidePanel && chrome.sidePanel.open) {
-      try {
-        var opened = chrome.sidePanel.open({});
-        if (opened && opened.then) {
-          opened.then(function () {
-            sendResponse({ ok: true, opened: "sidePanel" });
-          }).catch(function (err) {
-            openTabFallback(err && err.message);
-          });
-        } else {
-          sendResponse({ ok: true, opened: "sidePanel" });
-        }
-      } catch (err) {
-        openTabFallback(err.message);
-      }
+  if (!(chrome.sidePanel && chrome.sidePanel.open)) {
+    sendResponse({ ok: false, error: "side_panel_api_unavailable" });
+    return;
+  }
+
+  var openOptions = sidePanelOpenOptions(msg, sender);
+  if (!openOptions) {
+    sendResponse({ ok: false, error: "side_panel_window_unavailable" });
+    return;
+  }
+
+  try {
+    var opened = chrome.sidePanel.open(openOptions);
+    if (opened && opened.then) {
+      opened.then(function () {
+        recordOpened();
+        sendResponse({ ok: true, opened: "sidePanel" });
+      }).catch(function (err) {
+        sendResponse({ ok: false, error: err && err.message ? err.message : "side_panel_open_failed" });
+      });
     } else {
-      openTabFallback("sidePanel API unavailable");
+      recordOpened();
+      sendResponse({ ok: true, opened: "sidePanel" });
     }
-  });
+  } catch (err) {
+    sendResponse({ ok: false, error: err && err.message ? err.message : "side_panel_open_failed" });
+  }
 }
 
 function saveDetailBatchState(state, runToken) {
@@ -1231,7 +1248,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
 
   // 清除数据
   if (msg.type === "openWorkbench") {
-    openWorkbenchPage(sendResponse);
+    openWorkbenchPage(msg, _sender, sendResponse);
     return true;
   }
 
@@ -1283,7 +1300,7 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
   }
 
   if (msg.type === "openMainPage") {
-    openWorkbenchPage(sendResponse);
+    openWorkbenchPage(msg, _sender, sendResponse);
     return true;
   }
 
