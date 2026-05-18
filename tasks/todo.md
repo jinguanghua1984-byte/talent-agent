@@ -1,3 +1,20 @@
+# 浏览器扩展工作台 V2.0 实施计划（2026-05-18）
+
+> 目标：在已通过的 V2.0 设计基础上，写出可执行实施计划；本阶段不改扩展业务代码。
+
+## 计划
+
+- [x] 使用 `superpowers:writing-plans` 读取设计文档和现有扩展结构。
+- [x] 写入实施计划到 `docs/superpowers/plans/2026-05-18-maimai-scraper-workbench-v2.md`。
+- [x] 自检实施计划覆盖 spec、无占位项、路径和消息名一致。
+- [x] 回填 Review，等待用户选择执行方式。
+
+## Review
+
+- 实施计划已写入 `docs/superpowers/plans/2026-05-18-maimai-scraper-workbench-v2.md`。
+- 计划覆盖测试护栏、background 状态层、workbench UI、popup 启动器、side panel fallback 和最终验证。
+- 自检结果：spec 覆盖、占位项扫描、消息名一致性、请求执行不变量均已检查。
+
 # 浏览器扩展 Popup/常驻工作台 V2.0 设计验证（2026-05-18）
 
 > 目标：先验证现有列表查询和详情请求链路的技术契约，再设计一个不依赖短生命周期 popup 的 V2.0 工作台方案。当前阶段只做验证与设计，不实现。
