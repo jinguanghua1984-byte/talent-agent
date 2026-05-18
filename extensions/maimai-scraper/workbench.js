@@ -65,6 +65,7 @@
       button.textContent = button.dataset.defaultText;
     }
     button.disabled = false;
+    updateControlStates();
   }
 
   function scheduleSnapshotRefresh() {
@@ -77,6 +78,34 @@
 
   function updatePagerPagesVisibility() {
     $("pager-pages-group").hidden = $("pager-mode").value !== "custom";
+  }
+
+  function isPagerActiveStatus(status) {
+    return ["running", "paused", "stopping"].indexOf(status || "") !== -1;
+  }
+
+  function isDetailActiveStatus(detailState) {
+    detailState = detailState || {};
+    var status = detailState.status || "";
+    return ["running", "paused", "stopping"].indexOf(status) !== -1 || Boolean(detailState.batch_pause_until);
+  }
+
+  function updateControlStates() {
+    var pager = state && state.pager ? state.pager : {};
+    var pagerActive = isPagerActiveStatus(pager.status);
+    var pagerStopping = pager.status === "stopping";
+    $("btn-start-pager").disabled = pagerActive;
+    $("btn-stop-pager").disabled = !pagerActive || pagerStopping;
+    $("pager-mode").disabled = pagerActive;
+    $("pager-max-pages").disabled = pagerActive;
+
+    var detail = state && state.detail ? state.detail : {};
+    var detailState = detail.state || {};
+    var detailActive = isDetailActiveStatus(detailState);
+    var detailStopping = detailState.status === "stopping";
+    $("btn-start-detail-batch").disabled = detailActive;
+    $("btn-stop-detail-batch").disabled = !detailActive || detailStopping;
+    $("detail-import-file").disabled = detailActive;
   }
 
   function setActiveView(view) {
@@ -182,6 +211,7 @@
     renderDetail();
     renderPagerLogs();
     renderDetailLogs();
+    updateControlStates();
   }
 
   function loadSnapshot() {
@@ -300,7 +330,17 @@
       if (changes.workbenchState) state = changes.workbenchState.newValue || state;
       if (changes.pagerLogs) pagerLogs = changes.pagerLogs.newValue || [];
       if (changes.detailBatchLogs) detailLogs = changes.detailBatchLogs.newValue || [];
-      if (changes.captured || changes.contacts || changes.details) scheduleSnapshotRefresh();
+      if (
+        changes.captured ||
+        changes.contacts ||
+        changes.details ||
+        changes.detailBatchState ||
+        changes.detailImportedContacts ||
+        changes.detailBatchRunToken ||
+        changes.detailBatchLogs
+      ) {
+        scheduleSnapshotRefresh();
+      }
       renderAll();
     });
   }

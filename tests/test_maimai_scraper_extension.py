@@ -626,6 +626,53 @@ def test_background_exposes_workbench_state_snapshot_and_logs():
     assert "chrome.runtime.sendMessage(event)" in pager_block
 
 
+def test_workbench_refreshes_detail_state_and_disables_running_controls():
+    workbench_js = read_extension_file("workbench.js")
+
+    storage_block = workbench_js.split("chrome.storage.onChanged.addListener", 1)[1].split("renderAll();", 1)[0]
+    for marker in [
+        "changes.detailBatchState",
+        "changes.detailImportedContacts",
+        "changes.detailBatchRunToken",
+        "changes.detailBatchLogs",
+        "scheduleSnapshotRefresh()",
+    ]:
+        assert marker in storage_block
+
+    for marker in [
+        "function updateControlStates()",
+        "isPagerActiveStatus",
+        "isDetailActiveStatus",
+        '$("btn-start-pager").disabled = pagerActive',
+        '$("btn-stop-pager").disabled = !pagerActive || pagerStopping',
+        '$("btn-start-detail-batch").disabled = detailActive',
+        '$("btn-stop-detail-batch").disabled = !detailActive || detailStopping',
+        '$("detail-import-file").disabled = detailActive',
+    ]:
+        assert marker in workbench_js
+
+
+def test_background_rejects_duplicate_pager_and_detail_batch_starts():
+    background = read_extension_file("background.js")
+
+    detail_start_block = background.split('if (msg.type === "startDetailBatch")', 1)[1].split('if (msg.type === "pauseDetailBatch")', 1)[0]
+    for marker in [
+        "__detailBatchStarting",
+        "__detailBatchRunning || __detailBatchStarting",
+        "isActiveDetailBatchState(storedState)",
+        "批量详情正在运行，请先终止当前任务",
+        "__detailBatchStarting = true",
+        "__detailBatchStarting = false",
+    ]:
+        assert marker in detail_start_block
+
+    pager_start_block = background.split('if (msg.type === "startPager")', 1)[1].split('if (msg.type === "stopPager")', 1)[0]
+    assert "__pagerStarting || (__activePager && __activePager.running)" in pager_start_block
+    assert "__pagerStarting = true" in pager_start_block
+    assert "__pagerStarting = false" in pager_start_block
+    assert "人选列表采集正在运行，请先停止当前任务" in pager_start_block
+
+
 def test_popup_is_launcher_not_long_running_console():
     popup_html = read_extension_file("popup.html")
     popup_js = read_extension_file("popup.js")

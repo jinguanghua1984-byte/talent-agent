@@ -5,10 +5,12 @@ importScripts("idb.js", "autopager.js", "detail_batch.js");
 var pendingSearchCallbacks = {};
 var __activePager = null;
 var __pagerTabId = null;
+var __pagerStarting = false;
 var __activeDetailBatch = null;
 var __detailBatchTabId = null;
 var __detailBatchRunToken = 0;
 var __detailBatchRunning = false;
+var __detailBatchStarting = false;
 var __detailBatchRecovery = null;
 var __diagnosticTraceWrite = Promise.resolve();
 var __workbenchStateWrite = Promise.resolve();
@@ -910,6 +912,11 @@ function detailBatchOptionsFromState(state) {
   };
 }
 
+function isActiveDetailBatchState(state) {
+  var status = state && state.status ? String(state.status) : "";
+  return status === "running" || status === "paused" || status === "stopping";
+}
+
 function normalizeJobsForDetailResume(jobs) {
   return (jobs || []).map(function (job) {
     if (job && job.status === "running") {
@@ -1472,16 +1479,30 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
 
   if (msg.type === "startDetailBatch") {
     recordActionDiagnosticTrace("startDetailBatch", msg, _sender);
-    __detailBatchRunToken++;
+    if (__detailBatchRunning || __detailBatchStarting) {
+      sendResponse({ ok: false, error: "批量详情正在运行，请先终止当前任务" });
+      return true;
+    }
+    __detailBatchStarting = true;
     var runToken = __detailBatchRunToken;
     Promise.all([
       activeMaimaiTab(),
       detailBatchContacts(),
+      storageContactsAndState(),
     ]).then(function (parts) {
       if (runToken !== __detailBatchRunToken) {
         sendResponse({ ok: false, error: "批量详情启动已被新任务取代" });
         return;
       }
+      var stored = parts[2] || {};
+      var currentRunToken = stored.detailBatchRunToken || runToken;
+      var storedState = detailBatchStateForToken(stored.detailBatchState, currentRunToken);
+      if (isActiveDetailBatchState(storedState)) {
+        sendResponse({ ok: false, error: "批量详情正在运行，请先终止当前任务" });
+        return;
+      }
+      __detailBatchRunToken++;
+      runToken = __detailBatchRunToken;
       var tab = parts[0];
       var contacts = parts[1] || [];
       var built = DetailBatch.createJobs(contacts);
@@ -1514,6 +1535,8 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
       });
     }).catch(function (err) {
       sendResponse({ ok: false, error: err.message });
+    }).finally(function () {
+      __detailBatchStarting = false;
     });
     return true;
   }
@@ -1584,12 +1607,19 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
       if (!responded) { responded = true; sendResponse(data); }
     }
 
+    if (__pagerStarting || (__activePager && __activePager.running)) {
+      safeRespond({ ok: false, error: "人选列表采集正在运行，请先停止当前任务" });
+      return true;
+    }
+    __pagerStarting = true;
+
     chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-      if (!tabs[0]) { safeRespond({ ok: false, error: "无活跃标签页" }); return; }
+      if (!tabs[0]) { __pagerStarting = false; safeRespond({ ok: false, error: "无活跃标签页" }); return; }
       tabId = tabs[0].id;
 
       chrome.tabs.sendMessage(tabId, { type: "getFullTemplate" }, function (tplResp) {
         if (chrome.runtime.lastError || !tplResp || !tplResp.template) {
+          __pagerStarting = false;
           safeRespond({ ok: false, error: "未捕获搜索模板 — 请先手动搜索一次" });
           return;
         }
@@ -1660,6 +1690,8 @@ chrome.runtime.onMessage.addListener(function (msg, _sender, sendResponse) {
           });
         }).catch(function (err) {
           safeRespond({ ok: false, error: "初始化失败: " + err.message });
+        }).finally(function () {
+          __pagerStarting = false;
         });
       });
     });

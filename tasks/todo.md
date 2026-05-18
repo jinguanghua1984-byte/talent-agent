@@ -16,8 +16,8 @@
 - 自检结果：spec 覆盖、占位项扫描、消息名一致性、请求执行不变量均已检查。
 - 实施完成：新增 `workbench.html/js/css` 常驻工作台；`background.js` 增加 workbench snapshot、pager logs、export 状态和 opener；`popup.html/css/js` 收缩为 launcher；`manifest.json` 启用 `sidePanel` 并指向 `workbench.html`。
 - 请求边界：`content.js -> inject.js` 的 MAIN world 列表/详情请求链路保持不变；`popup.js` 与 `workbench.js` 不直接 `fetch` 脉脉业务接口。
-- Review gate：Task 1-6 均完成实现、spec review 和 code quality review；已修复 review 中发现的旧 popup 合同残留、workbench runtime push listener、action 错误显示、storage live update、按钮重复启动和 side panel 布局问题。
-- 最终验证：扩展 JS 语法检查 `background/content/inject/autopager/detail_batch/popup/workbench` 全部 PASS；`python -m pytest tests/test_maimai_scraper_extension.py tests/test_maimai_trace_diff.py -q` -> `48 passed`；`python -m pytest tests/test_talent_library_cli.py::test_import_entry_accepts_extension_capture_and_pager_export_shapes tests/test_maimai_trace_diff.py -q` -> `4 passed`；`python -m pytest tests scripts -q` -> `641 passed, 1 warning`；`git diff --check` -> PASS。
+- Review gate：Task 1-6 均完成实现、spec review 和 code quality review；已修复 review 中发现的旧 popup 合同残留、workbench runtime push listener、action 错误显示、storage live update、按钮重复启动、详情状态 live update 和 side panel 布局问题。
+- 最终验证：扩展 JS 语法检查 `background/content/inject/autopager/detail_batch/popup/workbench` 全部 PASS；`python -m pytest tests/test_maimai_scraper_extension.py tests/test_maimai_trace_diff.py -q` -> `50 passed`；`python -m pytest tests/test_talent_library_cli.py::test_import_entry_accepts_extension_capture_and_pager_export_shapes tests/test_maimai_trace_diff.py -q` -> `4 passed`；`python -m pytest tests scripts -q` -> `643 passed, 1 warning`；`git diff --check` -> PASS。
 - 残留说明：全量回归 warning 为既有 `scripts/test_boss.py` event loop deprecation，与本次 maimai-scraper workbench 改造无关。
 
 # 浏览器扩展 Popup/常驻工作台 V2.0 设计验证（2026-05-18）
