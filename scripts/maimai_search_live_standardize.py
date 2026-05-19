@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,22 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.maimai_ai_infra_campaign import ensure_campaign, mark_page_completed
+from scripts.maimai_ai_infra_campaign import ensure_campaign, mark_page_completed, page_raw_path
+
+
+UNIT_ID_PATTERN = re.compile(r"^unit-\d{6}$")
+PAYLOAD_COMPARE_KEYS = {
+    "unit_id",
+    "wave_id",
+    "page",
+    "source_run",
+    "source_run_id",
+    "request",
+    "responseSummary",
+    "responseData",
+    "responseRawPreview",
+    "contacts",
+}
 
 
 def _load_json(path: str | Path) -> Any:
@@ -41,6 +57,27 @@ def _page_value(page: dict[str, Any], batch: dict[str, Any], key: str, default: 
     return batch.get(key, default)
 
 
+def _skip_evidence(
+    run: dict[str, Any],
+    batch: dict[str, Any] | None = None,
+    page_item: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    evidence: dict[str, Any] = {}
+    if "status" in run:
+        evidence["run_status"] = run.get("status")
+    if "stopReason" in run:
+        evidence["run_stop_reason"] = run.get("stopReason")
+    if batch is not None and "error" in batch:
+        evidence["batch_error"] = batch.get("error")
+    if page_item is not None and "error" in page_item:
+        evidence["page_error"] = page_item.get("error")
+    if page_item is not None and "responseSummary" in page_item:
+        evidence["responseSummary"] = page_item.get("responseSummary")
+    elif batch is not None and "responseSummary" in batch:
+        evidence["responseSummary"] = batch.get("responseSummary")
+    return {key: value for key, value in evidence.items() if value is not None}
+
+
 def _skip(
     skipped_pages: list[dict[str, Any]],
     reason: str,
@@ -48,6 +85,7 @@ def _skip(
     page_index: int | None = None,
     unit_id: str | None = None,
     page: Any = None,
+    evidence: dict[str, Any] | None = None,
 ) -> None:
     item: dict[str, Any] = {
         "reason": reason,
@@ -59,7 +97,26 @@ def _skip(
         item["unit_id"] = unit_id
     if page is not None:
         item["page"] = page
+    if evidence:
+        item.update(evidence)
     skipped_pages.append(item)
+
+
+def _is_equivalent_raw(existing: Any, payload: dict[str, Any]) -> bool:
+    if not isinstance(existing, dict):
+        return False
+    for key in PAYLOAD_COMPARE_KEYS:
+        if existing.get(key) != payload.get(key):
+            return False
+    return True
+
+
+def _existing_raw_matches(raw_path: Path, payload: dict[str, Any]) -> bool:
+    try:
+        existing = _load_json(raw_path)
+    except json.JSONDecodeError:
+        return False
+    return _is_equivalent_raw(existing, payload)
 
 
 def standardize_live_run(campaign_root: str | Path, run_path: str | Path) -> dict[str, Any]:
@@ -79,35 +136,61 @@ def standardize_live_run(campaign_root: str | Path, run_path: str | Path) -> dic
 
     for batch_index, batch in enumerate(batches, start=1):
         if not isinstance(batch, dict):
-            _skip(skipped_pages, "invalid_batch", batch_index)
+            _skip(skipped_pages, "invalid_batch", batch_index, evidence=_skip_evidence(run))
             continue
 
         batch_id = batch.get("batch_id")
-        unit_id = batch_id if isinstance(batch_id, str) and batch_id else None
+        unit_id = batch_id if isinstance(batch_id, str) and UNIT_ID_PATTERN.fullmatch(batch_id) else None
+        invalid_batch_id = isinstance(batch_id, str) and batch_id != "" and unit_id is None
         pages = batch.get("pages") or []
         if not isinstance(pages, list):
-            _skip(skipped_pages, "invalid_pages", batch_index, unit_id=unit_id)
+            _skip(
+                skipped_pages,
+                "invalid_pages",
+                batch_index,
+                unit_id=batch_id if isinstance(batch_id, str) else None,
+                evidence=_skip_evidence(run, batch),
+            )
             continue
 
         for page_index, page_item in enumerate(pages, start=1):
             if not isinstance(page_item, dict):
-                _skip(skipped_pages, "invalid_page", batch_index, page_index, unit_id=unit_id)
+                _skip(
+                    skipped_pages,
+                    "invalid_page",
+                    batch_index,
+                    page_index,
+                    unit_id=unit_id,
+                    evidence=_skip_evidence(run, batch),
+                )
                 continue
 
             page_number = page_item.get("page")
+            evidence = _skip_evidence(run, batch, page_item)
+            if invalid_batch_id:
+                _skip(
+                    skipped_pages,
+                    "invalid_batch_id",
+                    batch_index,
+                    page_index,
+                    str(batch_id),
+                    page_number,
+                    evidence,
+                )
+                continue
             if unit_id is None:
-                _skip(skipped_pages, "missing_batch_id", batch_index, page_index, page=page_number)
+                _skip(skipped_pages, "missing_batch_id", batch_index, page_index, page=page_number, evidence=evidence)
                 continue
             if page_item.get("ok") is not True:
-                _skip(skipped_pages, "page_not_ok", batch_index, page_index, unit_id, page_number)
+                _skip(skipped_pages, "page_not_ok", batch_index, page_index, unit_id, page_number, evidence)
                 continue
             if not isinstance(page_number, int) or page_number <= 0:
-                _skip(skipped_pages, "invalid_page_number", batch_index, page_index, unit_id, page_number)
+                _skip(skipped_pages, "invalid_page_number", batch_index, page_index, unit_id, page_number, evidence)
                 continue
 
             contacts = page_item.get("contacts")
             if not isinstance(contacts, list):
-                _skip(skipped_pages, "invalid_contacts", batch_index, page_index, unit_id, page_number)
+                _skip(skipped_pages, "invalid_contacts", batch_index, page_index, unit_id, page_number, evidence)
                 continue
 
             payload = {
@@ -122,6 +205,12 @@ def standardize_live_run(campaign_root: str | Path, run_path: str | Path) -> dic
                 "responseRawPreview": _page_value(page_item, batch, "responseRawPreview", ""),
                 "contacts": contacts,
             }
+            raw_path = page_raw_path(paths, unit_id, page_number)
+            if raw_path.exists():
+                reason = "already_completed" if _existing_raw_matches(raw_path, payload) else "conflict_existing_raw"
+                _skip(skipped_pages, reason, batch_index, page_index, unit_id, page_number, evidence)
+                continue
+
             mark_page_completed(paths, unit_id, page_number, payload)
             written_pages += 1
 
