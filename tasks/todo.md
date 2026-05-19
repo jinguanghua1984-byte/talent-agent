@@ -2813,3 +2813,99 @@
 - 计划沿用“Skill 入口 + canonical workflow + 薄编排器”方案，明确复用现有 `maimai_ai_infra_*`、`maimai_detail_*`、`talent_sync.py`、扩展和 `lark-cli` 能力。
 - 计划覆盖已确认约束：启动阶段自动打开带 `data/session/maimai-cdp-profile`、`--remote-debugging-port=9888` 和 `extensions/maimai-scraper` 的浏览器；真实执行阶段仍不自动导航、刷新、点击业务页面；每日 500 次只计列表搜索请求；搜索 wave 不超过 50 页；详情 pack 不超过 100 人；详情只抓 A/B 档；Feishu IM 是第一版通知能力。
 - 本阶段未运行真实脉脉请求、未启动浏览器、未发布飞书消息或文档；只做文档计划和静态自检。
+
+# 脉脉无人值守 Campaign 实现执行（2026-05-19）
+
+> 目标：按 `docs/superpowers/plans/2026-05-19-maimai-unattended-campaign.md` 使用 Subagent-Driven 流程实现；所有实现工作在 `.worktrees/maimai-unattended-campaign` 的 `feat/maimai-unattended-campaign` 分支执行。
+
+## 执行计划
+
+- [x] 创建隔离 worktree `.worktrees/maimai-unattended-campaign`，避免在 `main` 上直接实现。
+- [x] 基线全量测试：`python -m pytest tests scripts -q` -> `651 passed, 1 warning`。
+- [x] Task 1：Skill、canonical workflow 和 outreach template 合同。
+- [x] Task 2：CDP 浏览器 bootstrap CLI。
+- [x] Task 3：Search live-run 标准化 CLI。
+- [x] Task 4：详情 pack size 上限。
+- [x] Task 5：飞书 IM 通知 helper。
+- [x] Task 6：飞书交付包 helper。
+- [x] Task 7：编排器 policy、状态和 wave split。
+- [x] Task 8：编排器命令 wiring、resume 和 blocking。
+- [x] Task 9：回归验证、文档和最终 review。
+
+## Task 1 Review
+
+- 已完成并通过两道 review。提交：`b74e832 feat: add maimai campaign skill workflow contracts`、`e808344 fix: align maimai outreach template fields`、`b592359 fix: complete maimai campaign contract safety details`。
+- 产物：新增 `skills/maimai-talent-search-campaign/SKILL.md`、`agents/workflows/maimai-unattended-campaign/AGENT.md`、`templates/maimai-campaign/outreach-queue-fields.json`、`tests/test_maimai_talent_search_campaign_skill.py`。
+- 验证：聚焦测试 `6 passed`；相关测试 `8 passed`；code quality re-review 额外验证 `tests/test_maimai_talent_search_campaign_skill.py tests/test_maimai_ai_infra_outreach_export.py` -> `7 passed`。
+- 结论：合同覆盖业务入口、默认预算、run-policy 键、S0-S13、安全停机、恢复事实来源、Feishu IM 通知失败状态；outreach template 已与现有 exporter CSV 字段对齐。
+
+## Task 2 Review
+
+- 已完成并通过两道 review。提交：`970c2a6 feat: add maimai cdp browser bootstrap`。
+- 产物：新增 `scripts/maimai_cdp_browser_bootstrap.py` 和 `tests/test_maimai_cdp_browser_bootstrap.py`。
+- 验证：聚焦测试 `5 passed`；`python -m py_compile scripts/maimai_cdp_browser_bootstrap.py` 通过；`git diff --check` 通过。
+- 结论：bootstrap 只负责启动带 `data/session/maimai-cdp-profile`、`--remote-debugging-port=9888` 和 `extensions/maimai-scraper` 的浏览器；`--dry-run` 已测试为不会调用 `subprocess.Popen`；manifest 不包含 token、cookie、raw capture 等敏感内容。
+- Non-blocking：code quality review 建议未来可补一个 mocked non-dry-run main 集成测试，但当前实现风险低，不阻塞后续任务。
+
+## Task 3 Review
+
+- 已完成并通过 spec review 与最终 code quality re-review。提交：`655bb6b feat: standardize maimai search live runs`、`e853066 fix: harden maimai search live standardization`、`350eafc fix: validate maimai live-run malformed input`、`393a24a fix: reject malformed maimai canonical page raw`。
+- 产物：新增 `scripts/maimai_search_live_standardize.py` 和 `tests/test_maimai_search_live_standardize.py`；同步收紧 `scripts/maimai_ai_infra_campaign.py` 的 completed page 读取。
+- 验证：`python -m pytest tests/test_maimai_search_live_standardize.py tests/test_maimai_ai_infra_campaign.py -q` -> `29 passed`；`python -m py_compile scripts/maimai_search_live_standardize.py scripts/maimai_ai_infra_campaign.py` 通过；`git diff --check` 通过。
+- 结论：标准化 CLI 只把成功页写入 canonical `raw/search/unit-*/page-*.json`，非法 `unit_id`、非正整数页码、bool 页码、malformed `batches/pages` 均不会静默落 raw；已有 raw 相同则幂等跳过，冲突 raw 不覆盖并记录诊断。
+- 边界：本任务未启动浏览器、未触发真实脉脉/飞书请求、未写 DB。
+
+## Task 4 Review
+
+- 已完成并通过 spec review 与 code quality review。提交：`a0c5de4 feat: cap maimai detail pack size`。
+- 产物：`scripts/maimai_ai_infra_detail_plan.py` 新增 `compute_pack_count()`、`build_ab_detail_packs(..., pack_size=None)` 和 CLI `--pack-size`；`tests/test_maimai_ai_infra_detail_plan.py` 补充 helper 与 205 人拆包集成测试。
+- 验证：`python -m pytest tests/test_maimai_ai_infra_detail_plan.py -q` -> `11 passed`；`python -m py_compile scripts/maimai_ai_infra_detail_plan.py` 通过；`git diff --check` 通过。
+- 结论：未传 `pack_size` 时保持原行为；传入 `--pack-size 100` 时只会上调最终包数，显式 `pack_count` 仍是下限。round-robin 拆包结合 `ceil(n / pack_size)` 可保证 ready targets 每包不超过 100。
+- 边界：本任务只使用临时 SQLite/临时目录测试，未启动浏览器、未触发真实脉脉/飞书请求、未写真实 campaign/main DB。
+
+## Task 5 Review
+
+- 已完成并通过 spec review 与最终 code quality re-review。提交：`75d9e28 feat: add campaign feishu im notifications`、`86280f3 fix: harden campaign notification safety`、`6757aa9 fix: redact notification cli secrets`。
+- 产物：新增 `scripts/campaign_notify.py` 和 `tests/test_campaign_notify.py`。
+- 验证：`python -m pytest tests/test_campaign_notify.py -q` -> `12 passed`；`python -m py_compile scripts/campaign_notify.py` 通过；`git diff --check` 通过。
+- 结论：helper 可生成中断通知正文和 `lark-cli im +messages-send` argv，支持 bot/user、chat/user 二选一、idempotency key 和 dry-run 预览；dry-run 不调用 subprocess，非 dry-run 使用 argv list 无 shell 拼接。
+- 安全修复：通知正文只使用白名单字段，并对 raw/cookie/token/secret/password/session/access_token/client_secret/app_secret/api-key/api_key、authorization bearer/basic、quoted/unquoted 敏感 CLI flag 做脱敏；event_id 幂等键包含 stage，避免跨阶段误去重。
+- 边界：本任务未运行真实非 dry-run `lark-cli`，未发送飞书消息，未启动浏览器、未触发脉脉请求、未写 DB。
+
+## Task 6 Review
+
+- 已完成并通过 spec review 与最终 code quality re-review。提交：`c1ff499 feat: formalize maimai feishu delivery package`、`b02e966 fix: harden feishu delivery package publishing`。
+- 产物：新增 `scripts/feishu_delivery_package.py` 和 `tests/test_feishu_delivery_package.py`。
+- 验证：`python -m pytest tests/test_feishu_delivery_package.py -q` -> `8 passed`；`python -m py_compile scripts/feishu_delivery_package.py` 通过；`git diff --check` 通过。
+- 结论：helper 生成飞书交付包 manifest、本地 summary XML、candidate CSV 和 outreach CSV；dry-run commands 覆盖 docs v2 创建和 Sheet 创建，且不会调用真实 `lark-cli`。
+- 安全修复：manifest/source CSV 过滤 DB/raw/sync zip 敏感字段和值；docs `--content` 使用相对 `@reports/feishu-delivery-summary.xml` 并在 manifest 中记录 `executor_cwd`；非 dry-run 不会误执行空 Sheet create，而是以 `publish_blocked.reason=requires_sheet_ids_after_create` 阻止并暴露 append skeleton。
+- 边界：本任务未运行真实 `lark-cli`，未创建飞书文档或表格，未读取 SQLite DB、sync zip、raw capture 或 raw live run。
+
+## Task 7 Review
+
+- 已完成并通过 spec review 与最终 code quality re-review。提交：`76f7bcf feat: add maimai campaign orchestrator policy`、`20ced88 fix: harden maimai orchestrator policy inputs`、`d5ea322 fix: handle orchestrator cli input errors`。
+- 产物：新增 `scripts/maimai_campaign_orchestrator.py` 和 `tests/test_maimai_campaign_orchestrator.py`。
+- 验证：`python -m pytest tests/test_maimai_campaign_orchestrator.py -q` -> `16 passed`；`python -m py_compile scripts/maimai_campaign_orchestrator.py` 通过；`git diff --check` 通过。
+- 结论：`DEFAULT_RUN_POLICY` 明确每日 500 只统计搜索请求、search wave 不超过 50 页、detail pack 不超过 100 人、只抓 A/B 档、通知渠道为 Feishu IM 且不写主库；`count_search_requests()` 只统计 `search_live`；wave splitter 支持预算截断并按 `state/` 写入 stage/events。
+- 安全修复：坏 `pages`/unit `max_pages` 输入不会误计预算或静默变成计划页；坏 JSONL 在 CLI 边界返回单行错误，不输出 Python traceback，不写 `--out` 或 `state/events.jsonl`。
+- 边界：Task 7 只实现 policy、状态和计划写入；未运行 live command/subprocess，未启动浏览器、未触发脉脉/飞书请求、未写 DB。
+
+## Task 8 Review
+
+- 已完成并通过 spec review 与最终 code quality re-review。提交：`334fe15 feat: wire maimai campaign orchestrator stages`、`c3c4031 fix: harden maimai orchestrator command plan`。
+- 产物：继续增强 `scripts/maimai_campaign_orchestrator.py` 和 `tests/test_maimai_campaign_orchestrator.py`。
+- 验证：`python -m pytest tests/test_maimai_campaign_orchestrator.py -q` -> `25 passed`；`python -m py_compile scripts/maimai_campaign_orchestrator.py` 通过；`git diff --check` 通过。
+- 结论：编排器现在能构造结构化 stage command plan 和兼容 argv list；搜索计划后插入 `plan-waves`，保证 `wave-plan.json` 由前序命令生成并被 live gate 消费；详情任务包命令带 `--pack-size 100`；通知命令在 policy 提供 `notify_chat_id` 或 `notify_user_id` 时生成可执行 dry-run argv。
+- 安全修复：真实 live gate 命令在 metadata 中标记 `live_action=True` 和 `requires_policy_gate="allow_live_search"`；缺失通知目标时只保留 skipped metadata，不生成会失败的 notify argv；`write_blocked_continuation()` 补齐 checkpoint、resume cursor、progress、blocked_event_id、stage_argv 和 continuation_path，并同步写入 events。
+- 边界：Task 8 只构造命令和写恢复计划；未运行真实命令，未启动浏览器，未触发脉脉/飞书请求，未写 DB。
+
+## Task 9 Review
+
+- Final code review 首轮返回 CHANGES_REQUIRED，已通过 `4ee02f7 fix: address unattended campaign final review` 修复：`plan-waves` 现在写 aggregate plan 和 live-gate-compatible 单 wave sidecar；live gate、standardize 和 import 使用同一 `search-wave-001`；新增 CLI 业务异常统一单行 `error: ...` 且不输出 traceback；Feishu 通知幂等键优先使用 `blocked_event_id`。
+- 修复范围验证：`python -m pytest tests/test_maimai_campaign_orchestrator.py tests/test_maimai_search_live_standardize.py tests/test_maimai_cdp_browser_bootstrap.py tests/test_campaign_notify.py tests/test_feishu_delivery_package.py -q` -> `72 passed`。
+- 聚焦验证：`python -m pytest tests/test_maimai_talent_search_campaign_skill.py tests/test_maimai_cdp_browser_bootstrap.py tests/test_maimai_search_live_standardize.py tests/test_campaign_notify.py tests/test_feishu_delivery_package.py tests/test_maimai_campaign_orchestrator.py -q` -> `78 passed`。
+- 相关回归：`python -m pytest tests/test_maimai_ai_infra_campaign.py tests/test_maimai_ai_infra_search_live_gate.py tests/test_maimai_ai_infra_detail_plan.py tests/test_maimai_ai_infra_detail_live_gate.py tests/test_maimai_ai_infra_pipeline.py tests/test_maimai_ai_infra_delivery_report.py tests/test_maimai_ai_infra_outreach_export.py -q` -> `85 passed`。
+- 全量回归：`python -m pytest tests scripts -q` -> `732 passed, 1 warning`；warning 是既有 `scripts/test_boss.py::TestBossGetDetailUnavailable::test_get_detail_returns_none` 的 event loop deprecation。
+- 语法与 whitespace：`python -m py_compile scripts/maimai_cdp_browser_bootstrap.py scripts/maimai_search_live_standardize.py scripts/campaign_notify.py scripts/feishu_delivery_package.py scripts/maimai_campaign_orchestrator.py` 通过；`git diff --check` 通过。
+- 本轮验证未运行真实脉脉请求、未启动浏览器、未写 campaign/main DB。Feishu IM 与 Feishu delivery 测试只使用 dry-run、fake command runner 或 monkeypatch，未发送消息、未创建云文档或表格。
+- 真实运行前仍需负责人配置 Feishu IM：确认 `notify_identity`（推荐 bot）、目标 `notify_chat_id` 或 `notify_user_id`、bot 已加入目标群、应用具备消息发送 scope，并先执行 dry-run 预览和一条测试消息。
