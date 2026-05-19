@@ -8,6 +8,7 @@ from scripts.maimai_campaign_orchestrator import (
     DEFAULT_RUN_POLICY,
     _load_jsonl_objects,
     append_event,
+    build_stage_command_plan,
     build_stage_commands,
     count_search_requests,
     is_retriable_error,
@@ -257,11 +258,12 @@ def test_build_stage_commands_uses_existing_scripts_and_standardizer():
     commands = build_stage_commands(
         campaign_root="data/campaigns/demo",
         strategy="data/campaigns/demo/strategy.json",
-        policy={},
+        policy={"notify_chat_id": "oc_demo"},
     )
 
     flattened = [" ".join(command) for command in commands]
     assert any("python -m scripts.maimai_ai_infra_search_plan" in command for command in flattened)
+    assert any("maimai_campaign_orchestrator" in command and "plan-waves" in command for command in flattened)
     assert any("maimai_ai_infra_search_live_gate" in command for command in flattened)
     assert any("maimai_search_live_standardize" in command for command in flattened)
     assert any("maimai_ai_infra_pipeline" in command and "run-campaign" in command for command in flattened)
@@ -273,20 +275,95 @@ def test_build_stage_commands_uses_existing_scripts_and_standardizer():
     assert any(
         "campaign_notify" in command
         and "--event data\\campaigns\\demo\\state\\continuation-plan.json" in command
+        and "--chat-id oc_demo" in command
         for command in flattened
     )
 
 
-def test_build_stage_commands_honors_policy_pack_size():
+def test_build_stage_command_plan_links_wave_plan_producer_to_live_gate_consumer():
+    plan = build_stage_command_plan(
+        campaign_root="data/campaigns/demo",
+        strategy="data/campaigns/demo/strategy.json",
+        policy={},
+    )
+    by_stage = {command["stage"]: command for command in plan}
+
+    search_plan_argv = by_stage["compile_search_plan"]["argv"]
+    plan_waves_argv = by_stage["plan_search_waves"]["argv"]
+    live_gate_argv = by_stage["search_live"]["argv"]
+
+    assert plan_waves_argv[plan_waves_argv.index("--units") + 1] == search_plan_argv[
+        search_plan_argv.index("--out-units") + 1
+    ]
+    assert plan_waves_argv[plan_waves_argv.index("--out") + 1] == live_gate_argv[
+        live_gate_argv.index("--plan") + 1
+    ]
+
+
+def test_live_gate_command_requires_explicit_policy_gate_metadata():
+    plan = build_stage_command_plan(
+        campaign_root="data/campaigns/demo",
+        strategy="data/campaigns/demo/strategy.json",
+        policy={},
+    )
+
+    live_gate = next(command for command in plan if command["stage"] == "search_live")
+    assert live_gate["live_action"] is True
+    assert live_gate["requires_policy_gate"] == "allow_live_search"
+    assert "maimai_ai_infra_search_live_gate" in " ".join(live_gate["argv"])
+
+
+def test_build_stage_commands_honors_policy_pack_size_and_notify_targets():
     commands = build_stage_commands(
         campaign_root="data/campaigns/demo",
         strategy="data/campaigns/demo/strategy.json",
-        policy={"detail_pack_max_contacts": 25, "notify_identity": "user"},
+        policy={"detail_pack_max_contacts": 25, "notify_identity": "user", "notify_chat_id": "oc_demo"},
     )
 
     flattened = [" ".join(command) for command in commands]
     assert any("maimai_ai_infra_detail_plan" in command and "--pack-size 25" in command for command in flattened)
-    assert any("campaign_notify" in command and "--identity user" in command for command in flattened)
+    assert any(
+        "campaign_notify" in command
+        and "--identity user" in command
+        and "--chat-id oc_demo" in command
+        for command in flattened
+    )
+
+    user_commands = build_stage_commands(
+        campaign_root="data/campaigns/demo",
+        strategy="data/campaigns/demo/strategy.json",
+        policy={"notify_user_id": "ou_demo"},
+    )
+    user_flattened = [" ".join(command) for command in user_commands]
+    assert any("campaign_notify" in command and "--user-id ou_demo" in command for command in user_flattened)
+
+
+def test_build_stage_commands_skips_notify_argv_when_target_missing():
+    plan = build_stage_command_plan(
+        campaign_root="data/campaigns/demo",
+        strategy="data/campaigns/demo/strategy.json",
+        policy={},
+    )
+    commands = build_stage_commands(
+        campaign_root="data/campaigns/demo",
+        strategy="data/campaigns/demo/strategy.json",
+        policy={},
+    )
+
+    notify = next(command for command in plan if command["stage"] == "notify_blocked")
+    assert notify["argv"] == []
+    assert notify["skipped"] is True
+    assert notify["blocked_reason"] == "notify_target_missing"
+    assert not any("campaign_notify" in " ".join(command) for command in commands)
+
+
+def test_build_stage_commands_rejects_ambiguous_notify_target():
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        build_stage_commands(
+            campaign_root="data/campaigns/demo",
+            strategy="data/campaigns/demo/strategy.json",
+            policy={"notify_chat_id": "oc_demo", "notify_user_id": "ou_demo"},
+        )
 
 
 def test_blocked_continuation_plan_contains_resume_command_and_event(tmp_path: Path):
@@ -295,15 +372,26 @@ def test_blocked_continuation_plan_contains_resume_command_and_event(tmp_path: P
         stage="detail_live",
         reason="captcha_api",
         evidence_file="reports/interruption.json",
+        resume_from={"pack_id": "detail-ab-pack-001", "job_index": 9},
+        completed=8,
+        total=149,
+        stage_argv=["python", "-m", "scripts.maimai_ai_infra_detail_live_gate"],
     )
 
     saved = load_json(tmp_path / "state" / "continuation-plan.json")
     assert saved == plan
     assert plan["campaign_id"] == tmp_path.name
+    assert plan["blocked_event_id"].startswith(f"blocked-{tmp_path.name}-detail_live-captcha_api-")
     assert plan["blocked_stage"] == "detail_live"
     assert plan["reason"] == "captcha_api"
     assert plan["evidence_file"] == "reports/interruption.json"
-    assert "负责人" in plan["safe_to_resume_after"]
+    assert plan["checkpoint_source"] == "raw/detail-live/<pack_id>/job-*.json"
+    assert plan["resume_from"] == {"pack_id": "detail-ab-pack-001", "job_index": 9}
+    assert plan["completed"] == 8
+    assert plan["total"] == 149
+    assert plan["stage_argv"] == ["python", "-m", "scripts.maimai_ai_infra_detail_live_gate"]
+    assert plan["continuation_path"] == (tmp_path / "state" / "continuation-plan.json").as_posix()
+    assert "\u8d1f\u8d23\u4eba" in plan["safe_to_resume_after"]
     assert "maimai_campaign_orchestrator resume" in plan["resume_command"]
     assert f"--campaign-root {tmp_path.as_posix()}" in plan["resume_command"]
 
@@ -311,6 +399,8 @@ def test_blocked_continuation_plan_contains_resume_command_and_event(tmp_path: P
     assert state["stage"] == "detail_live"
     assert state["status"] == "blocked"
     assert state["reason"] == "captcha_api"
+    assert state["blocked_event_id"] == plan["blocked_event_id"]
+    assert state["continuation_path"] == plan["continuation_path"]
 
     event_lines = (tmp_path / "state" / "events.jsonl").read_text(encoding="utf-8").splitlines()
     events = [json.loads(line) for line in event_lines]
@@ -318,8 +408,22 @@ def test_blocked_continuation_plan_contains_resume_command_and_event(tmp_path: P
         event["stage"] == "detail_live"
         and event["status"] == "blocked"
         and event["reason"] == "captcha_api"
+        and event["blocked_event_id"] == plan["blocked_event_id"]
+        and event["continuation_path"] == plan["continuation_path"]
         for event in events
     )
+
+    search_root = tmp_path / "search-case"
+    search_plan = write_blocked_continuation(
+        campaign_root=search_root,
+        stage="search_live",
+        reason="http_429",
+        evidence_file="reports/search-interruption.json",
+    )
+    assert search_plan["checkpoint_source"] == "raw/search/unit-*/page-*.json"
+    assert search_plan["resume_from"] == {}
+    assert search_plan["completed"] == 0
+    assert search_plan["total"] == 0
 
 
 def test_retry_classification_treats_platform_security_as_non_retriable():

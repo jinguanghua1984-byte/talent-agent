@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -198,7 +199,28 @@ def build_wave_plan(
     }
 
 
-def build_stage_commands(campaign_root: str, strategy: str, policy: dict[str, Any]) -> list[list[str]]:
+def _command_entry(
+    *,
+    stage: str,
+    argv: list[str],
+    description: str,
+    live_action: bool = False,
+    requires_policy_gate: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "stage": stage,
+        "argv": argv,
+        "description": description,
+        "live_action": live_action,
+        "requires_policy_gate": requires_policy_gate,
+    }
+    if extra:
+        entry.update(extra)
+    return entry
+
+
+def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str, Any]) -> list[dict[str, Any]]:
     root = Path(campaign_root)
     pack_size = policy.get("detail_pack_max_contacts")
     if pack_size is None:
@@ -212,78 +234,134 @@ def build_stage_commands(campaign_root: str, strategy: str, policy: dict[str, An
     continuation_plan = root / "state" / "continuation-plan.json"
     reports = root / "reports"
 
-    return [
-        [
-            "python",
-            "-m",
-            "scripts.maimai_ai_infra_search_plan",
-            "--config",
-            strategy,
-            "--out",
-            str(search_plan),
-            "--out-units",
-            str(search_units),
-        ],
-        [
-            "python",
-            "-m",
-            "scripts.maimai_ai_infra_search_live_gate",
-            "--plan",
-            str(live_plan),
-            "--out",
-            str(live_run),
-            "--cdp-url",
-            "http://127.0.0.1:9888",
-        ],
-        [
-            "python",
-            "-m",
-            "scripts.maimai_search_live_standardize",
-            "--campaign-root",
-            campaign_root,
-            "--run",
-            str(live_run),
-        ],
-        [
-            "python",
-            "-m",
-            "scripts.maimai_ai_infra_pipeline",
-            "run-campaign",
-            "--campaign-root",
-            campaign_root,
-            "--config",
-            strategy,
-            "--wave",
-            "wave-001",
-            "--db",
-            str(campaign_db),
-        ],
-        [
-            "python",
-            "-m",
-            "scripts.maimai_ai_infra_rank",
-            "--db",
-            str(campaign_db),
-            "--config",
-            strategy,
-            "--mode",
-            "list",
-            "--out-json",
-            str(reports / "list-rank.json"),
-            "--out-md",
-            str(reports / "list-rank.md"),
-        ],
-        [
-            "python",
-            "-m",
-            "scripts.maimai_ai_infra_detail_plan",
-            "build-ab-packs",
-            "--campaign-root",
-            campaign_root,
-            "--pack-size",
-            str(pack_size),
-        ],
-        [
+    commands = [
+        _command_entry(
+            stage="compile_search_plan",
+            description="Generate search plan and search units from the confirmed strategy.",
+            argv=[
+                "python",
+                "-m",
+                "scripts.maimai_ai_infra_search_plan",
+                "--config",
+                strategy,
+                "--out",
+                str(search_plan),
+                "--out-units",
+                str(search_units),
+            ],
+            extra={"produces": [str(search_plan), str(search_units)]},
+        ),
+        _command_entry(
+            stage="plan_search_waves",
+            description="Convert search units into the wave plan consumed by the live gate.",
+            argv=[
+                "python",
+                "-m",
+                "scripts.maimai_campaign_orchestrator",
+                "plan-waves",
+                "--campaign-root",
+                campaign_root,
+                "--units",
+                str(search_units),
+                "--out",
+                str(live_plan),
+            ],
+            extra={"consumes": [str(search_units)], "produces": [str(live_plan)]},
+        ),
+        _command_entry(
+            stage="search_live",
+            description="Run the controlled Maimai search live gate against an already-open CDP page.",
+            live_action=True,
+            requires_policy_gate="allow_live_search",
+            argv=[
+                "python",
+                "-m",
+                "scripts.maimai_ai_infra_search_live_gate",
+                "--plan",
+                str(live_plan),
+                "--out",
+                str(live_run),
+                "--cdp-url",
+                "http://127.0.0.1:9888",
+            ],
+            extra={"consumes": [str(live_plan)], "produces": [str(live_run)]},
+        ),
+        _command_entry(
+            stage="standardize_search_live",
+            description="Standardize the whole-run live output into canonical search raw files.",
+            argv=[
+                "python",
+                "-m",
+                "scripts.maimai_search_live_standardize",
+                "--campaign-root",
+                campaign_root,
+                "--run",
+                str(live_run),
+            ],
+            extra={
+                "consumes": [str(live_run)],
+                "produces": [str(root / "raw" / "search" / "unit-*" / "page-*.json")],
+            },
+        ),
+        _command_entry(
+            stage="import_wave",
+            description="Dry-run campaign import from canonical search raw files into the campaign DB path.",
+            argv=[
+                "python",
+                "-m",
+                "scripts.maimai_ai_infra_pipeline",
+                "run-campaign",
+                "--campaign-root",
+                campaign_root,
+                "--config",
+                strategy,
+                "--wave",
+                "wave-001",
+                "--db",
+                str(campaign_db),
+            ],
+        ),
+        _command_entry(
+            stage="list_rank",
+            description="Rank list-stage candidates from the campaign DB.",
+            argv=[
+                "python",
+                "-m",
+                "scripts.maimai_ai_infra_rank",
+                "--db",
+                str(campaign_db),
+                "--config",
+                strategy,
+                "--mode",
+                "list",
+                "--out-json",
+                str(reports / "list-rank.json"),
+                "--out-md",
+                str(reports / "list-rank.md"),
+            ],
+        ),
+        _command_entry(
+            stage="detail_pack",
+            description="Build A/B detail target packs capped by policy.",
+            argv=[
+                "python",
+                "-m",
+                "scripts.maimai_ai_infra_detail_plan",
+                "build-ab-packs",
+                "--campaign-root",
+                campaign_root,
+                "--pack-size",
+                str(pack_size),
+            ],
+        ),
+    ]
+
+    notify_chat_id = str(policy.get("notify_chat_id") or "").strip()
+    notify_user_id = str(policy.get("notify_user_id") or "").strip()
+    if notify_chat_id and notify_user_id:
+        raise ValueError("notify_chat_id and notify_user_id are mutually exclusive")
+    if notify_chat_id or notify_user_id:
+        notify_argv = [
             "python",
             "-m",
             "scripts.campaign_notify",
@@ -291,9 +369,58 @@ def build_stage_commands(campaign_root: str, strategy: str, policy: dict[str, An
             str(continuation_plan),
             "--identity",
             str(policy.get("notify_identity", DEFAULT_RUN_POLICY["notify_identity"])),
-            "--dry-run",
-        ],
+        ]
+        if notify_chat_id:
+            notify_argv.extend(["--chat-id", notify_chat_id])
+        else:
+            notify_argv.extend(["--user-id", notify_user_id])
+        notify_argv.append("--dry-run")
+        commands.append(
+            _command_entry(
+                stage="notify_blocked",
+                description="Dry-run Feishu IM notification for blocked continuation events.",
+                argv=notify_argv,
+                extra={"consumes": [str(continuation_plan)]},
+            )
+        )
+    else:
+        commands.append(
+            _command_entry(
+                stage="notify_blocked",
+                description="Notification command not constructed because policy has no notify target.",
+                argv=[],
+                extra={
+                    "skipped": True,
+                    "blocked_reason": "notify_target_missing",
+                    "consumes": [str(continuation_plan)],
+                },
+            )
+        )
+
+    return commands
+
+
+def build_stage_commands(campaign_root: str, strategy: str, policy: dict[str, Any]) -> list[list[str]]:
+    return [
+        list(command["argv"])
+        for command in build_stage_command_plan(campaign_root, strategy, policy)
+        if command.get("argv")
     ]
+
+
+def _default_checkpoint_source(stage: str) -> str:
+    stage_name = stage.lower()
+    if "search" in stage_name:
+        return "raw/search/unit-*/page-*.json"
+    if "detail" in stage_name:
+        return "raw/detail-live/<pack_id>/job-*.json"
+    return "state/import-ledger.jsonl"
+
+
+def _blocked_event_id(campaign_id: str, stage: str, reason: str, evidence_file: str) -> str:
+    readable = re.sub(r"[^0-9A-Za-z_.-]+", "-", f"{campaign_id}-{stage}-{reason}").strip("-")
+    digest = hashlib.sha1(f"{campaign_id}\n{stage}\n{reason}\n{evidence_file}".encode("utf-8")).hexdigest()[:8]
+    return f"blocked-{readable}-{digest}"
 
 
 def write_blocked_continuation(
@@ -301,20 +428,36 @@ def write_blocked_continuation(
     stage: str,
     reason: str,
     evidence_file: str,
+    *,
+    checkpoint_source: str | None = None,
+    resume_from: dict[str, Any] | None = None,
+    completed: int = 0,
+    total: int = 0,
+    stage_argv: list[str] | None = None,
 ) -> dict[str, Any]:
     root = Path(campaign_root)
+    continuation_path = root / "state" / "continuation-plan.json"
+    campaign_id = root.name
+    event_id = _blocked_event_id(campaign_id, stage, reason, evidence_file)
     plan = {
-        "campaign_id": root.name,
+        "campaign_id": campaign_id,
+        "blocked_event_id": event_id,
         "blocked_stage": stage,
         "reason": reason,
         "evidence_file": evidence_file,
+        "checkpoint_source": checkpoint_source or _default_checkpoint_source(stage),
+        "resume_from": dict(resume_from or {}),
+        "completed": max(0, int(completed)),
+        "total": max(0, int(total)),
+        "stage_argv": list(stage_argv or []),
+        "continuation_path": continuation_path.as_posix(),
         "safe_to_resume_after": "负责人处理验证码、登录或安全页面后，回到人才银行页面并确认页面健康检查通过。",
         "resume_command": (
             "python -m scripts.maimai_campaign_orchestrator resume "
             f"--campaign-root {root.as_posix()}"
         ),
     }
-    write_json(root / "state" / "continuation-plan.json", plan)
+    write_json(continuation_path, plan)
     write_stage_state(
         root,
         stage,
@@ -322,7 +465,13 @@ def write_blocked_continuation(
         {
             "reason": reason,
             "evidence_file": evidence_file,
-            "continuation_plan": (root / "state" / "continuation-plan.json").as_posix(),
+            "blocked_event_id": event_id,
+            "checkpoint_source": plan["checkpoint_source"],
+            "resume_from": plan["resume_from"],
+            "completed": plan["completed"],
+            "total": plan["total"],
+            "stage_argv": plan["stage_argv"],
+            "continuation_path": plan["continuation_path"],
         },
     )
     return plan
