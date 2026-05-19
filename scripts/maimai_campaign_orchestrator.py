@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -29,11 +30,36 @@ DEFAULT_RUN_POLICY: dict[str, Any] = {
 def count_search_requests(event: dict[str, Any]) -> int:
     if event.get("stage") != "search_live":
         return 0
-    return max(0, int(event.get("pages") or 0))
+    pages = event.get("pages")
+    if pages is None or isinstance(pages, bool):
+        return 0
+    try:
+        return max(0, int(pages))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _unit_pages(unit: dict[str, Any]) -> int:
-    return max(1, int(unit.get("max_pages") or 1))
+    unit_id = str(unit.get("unit_id") or "<unknown>")
+    if "max_pages" not in unit or unit["max_pages"] is None:
+        return 1
+
+    raw_pages = unit["max_pages"]
+    if isinstance(raw_pages, bool):
+        raise ValueError(f"unit {unit_id} max_pages must be a positive integer")
+    if isinstance(raw_pages, int):
+        pages = raw_pages
+    elif isinstance(raw_pages, str):
+        text = raw_pages.strip()
+        if not re.fullmatch(r"[+-]?\d+", text):
+            raise ValueError(f"unit {unit_id} max_pages must be a positive integer")
+        pages = int(text)
+    else:
+        raise ValueError(f"unit {unit_id} max_pages must be a positive integer")
+
+    if pages <= 0:
+        raise ValueError(f"unit {unit_id} max_pages must be a positive integer")
+    return pages
 
 
 def split_search_units_into_live_waves(

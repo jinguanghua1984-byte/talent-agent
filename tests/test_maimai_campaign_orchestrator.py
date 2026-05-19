@@ -5,6 +5,7 @@ import pytest
 
 from scripts.maimai_campaign_orchestrator import (
     DEFAULT_RUN_POLICY,
+    _load_jsonl_objects,
     append_event,
     count_search_requests,
     load_json,
@@ -15,7 +16,7 @@ from scripts.maimai_campaign_orchestrator import (
 )
 
 
-def _unit(index: int, pages: int = 3) -> dict[str, object]:
+def _unit(index: int, pages: object = 3) -> dict[str, object]:
     return {
         "unit_id": f"unit-{index:06d}",
         "query": "ai infra",
@@ -34,6 +35,8 @@ def test_default_policy_counts_search_budget_only():
     assert DEFAULT_RUN_POLICY["allow_main_db_write"] is False
 
     assert count_search_requests({"stage": "search_live", "pages": 12}) == 12
+    assert count_search_requests({"stage": "search_live", "pages": True}) == 0
+    assert count_search_requests({"stage": "search_live", "pages": "abc"}) == 0
     assert count_search_requests({"stage": "detail_live", "pages": 99}) == 0
     assert count_search_requests({"stage": "search_plan", "pages": 99}) == 0
 
@@ -84,6 +87,50 @@ def test_split_search_units_truncates_by_used_daily_budget():
 def test_split_search_units_rejects_single_unit_over_wave_limit():
     with pytest.raises(ValueError, match="single unit exceeds max_pages"):
         split_search_units_into_live_waves([_unit(1, pages=51)], max_pages=50, daily_budget=500)
+
+
+@pytest.mark.parametrize("bad_pages", [0, -1, False, "", "abc"])
+def test_split_search_units_rejects_invalid_explicit_unit_pages(bad_pages: object):
+    with pytest.raises(ValueError, match="unit-000001.*max_pages"):
+        split_search_units_into_live_waves([_unit(1, pages=bad_pages)], max_pages=50, daily_budget=500)
+
+
+def test_split_search_units_handles_wave_parameter_boundaries():
+    with pytest.raises(ValueError, match="max_pages must be positive"):
+        split_search_units_into_live_waves([_unit(1)], max_pages=0, daily_budget=500)
+
+    assert split_search_units_into_live_waves([_unit(1)], max_pages=50, daily_budget=0) == []
+    assert split_search_units_into_live_waves(
+        [_unit(1)],
+        max_pages=50,
+        daily_budget=5,
+        used_today=5,
+    ) == []
+
+    assert split_search_units_into_live_waves([_unit(1)], max_pages=50, daily_budget=2) == []
+
+
+def test_load_jsonl_objects_ignores_empty_lines_and_wraps_bad_json(tmp_path: Path):
+    units_path = tmp_path / "units.jsonl"
+    units_path.write_text(
+        "\n"
+        + json.dumps(_unit(1), ensure_ascii=False)
+        + "\n\n"
+        + json.dumps(_unit(2), ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert [unit["unit_id"] for unit in _load_jsonl_objects(units_path)] == [
+        "unit-000001",
+        "unit-000002",
+    ]
+
+    bad_path = tmp_path / "bad-units.jsonl"
+    bad_path.write_text('{"unit_id": "unit-000001"\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="bad-units.jsonl line 1: invalid JSON"):
+        _load_jsonl_objects(bad_path)
 
 
 def test_json_state_helpers_write_stage_state_and_append_events(tmp_path: Path):
