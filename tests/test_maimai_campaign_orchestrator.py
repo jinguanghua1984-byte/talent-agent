@@ -206,6 +206,34 @@ def test_plan_waves_cli_writes_plan_without_live_side_effects(tmp_path: Path, ca
     assert not (tmp_path / "state" / "events.jsonl").exists()
 
 
+def test_plan_waves_cli_reports_bad_jsonl_without_traceback_or_side_effects(
+    tmp_path: Path,
+    capsys,
+):
+    units_path = tmp_path / "bad-units.jsonl"
+    units_path.write_text('{"unit_id": "unit-000001"\n', encoding="utf-8")
+    out_path = tmp_path / "wave-plan.json"
+
+    return_code = main([
+        "plan-waves",
+        "--campaign-root",
+        str(tmp_path),
+        "--units",
+        str(units_path),
+        "--out",
+        str(out_path),
+    ])
+
+    captured = capsys.readouterr()
+    combined_output = captured.out + captured.err
+    assert return_code != 0
+    assert "error: invalid search units JSONL" in captured.err
+    assert "bad-units.jsonl line 1: invalid JSON" in captured.err
+    assert "Traceback" not in combined_output
+    assert not out_path.exists()
+    assert not (tmp_path / "state" / "events.jsonl").exists()
+
+
 def test_resume_cli_prefers_continuation_plan_then_stage_state(tmp_path: Path, capsys):
     write_stage_state(tmp_path, "search_live", "blocked")
     assert main(["resume", "--campaign-root", str(tmp_path)]) == 0

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -206,7 +207,10 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
 
 def _cmd_plan_waves(args: argparse.Namespace) -> int:
-    units = _load_jsonl_objects(args.units)
+    try:
+        units = _load_jsonl_objects(args.units)
+    except ValueError as exc:
+        raise ValueError(f"invalid search units JSONL: {exc}") from exc
     plan = build_wave_plan(args.campaign_root, units, policy=DEFAULT_RUN_POLICY)
     if args.out:
         write_json(args.out, plan)
@@ -249,7 +253,11 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    return int(args.func(args))
+    try:
+        return int(args.func(args))
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
