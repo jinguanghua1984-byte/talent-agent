@@ -7,6 +7,7 @@ import json
 import sqlite3
 import sys
 from datetime import datetime
+from math import ceil
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,14 @@ from scripts.maimai_detail_targets import parse_maimai_profile_url
 SOURCE_GRADES = ("A", "B")
 DEFAULT_WAVES = [f"wave-{index:03d}" for index in range(1, 13)]
 GRADE_RANK = {"A": 0, "B": 1}
+
+
+def compute_pack_count(total_contacts: int, pack_size: int) -> int:
+    if pack_size <= 0:
+        raise ValueError("pack_size must be positive")
+    if total_contacts <= 0:
+        return 1
+    return max(1, ceil(total_contacts / pack_size))
 
 
 def _load_json(path: Path) -> Any:
@@ -341,6 +350,7 @@ def build_ab_detail_packs(
     waves: list[str] | None = None,
     out_dir: str | Path | None = None,
     pack_count: int = 4,
+    pack_size: int | None = None,
 ) -> dict[str, Any]:
     """Write the A/B target manifest and pack files, then return the summary."""
 
@@ -379,6 +389,8 @@ def build_ab_detail_packs(
         resolver.close()
 
     contacts.sort(key=_target_sort_key)
+    if pack_size is not None:
+        pack_count = max(pack_count, compute_pack_count(len(contacts), pack_size))
     status = "blocked" if missing else "ready"
     packs: list[dict[str, Any]] = []
     for pack_index in range(pack_count):
@@ -398,6 +410,7 @@ def build_ab_detail_packs(
         "runnable_targets": len(contacts) if status == "ready" else 0,
         "missing": len(missing),
         "pack_count": pack_count,
+        "pack_size": pack_size,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
     }
     result = {
@@ -426,6 +439,7 @@ def _build_parser() -> argparse.ArgumentParser:
     build.add_argument("--db-path")
     build.add_argument("--out-dir")
     build.add_argument("--pack-count", type=int, default=4)
+    build.add_argument("--pack-size", type=int)
     build.add_argument("--waves", nargs="*", help="默认 wave-001 到 wave-012")
     return parser
 
@@ -440,6 +454,7 @@ def main(argv: list[str] | None = None) -> int:
             waves=args.waves,
             out_dir=args.out_dir,
             pack_count=args.pack_count,
+            pack_size=args.pack_size,
         )
         metadata = result["metadata"]
         pack_counts = ",".join(str(pack["metadata"]["count"]) for pack in result["packs"])

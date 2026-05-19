@@ -2,9 +2,12 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from scripts.maimai_ai_infra_detail_plan import (
     build_ab_detail_packs,
     collect_review_items,
+    compute_pack_count,
     dedupe_review_items,
 )
 from scripts.talent_db import TalentDB
@@ -47,6 +50,17 @@ def seed_source_profile(db_path: Path, candidate_id: int, platform_id: str, toke
         conn.commit()
     finally:
         conn.close()
+
+
+def test_compute_pack_count_caps_detail_pack_size():
+    assert compute_pack_count(total_contacts=0, pack_size=100) == 1
+    assert compute_pack_count(total_contacts=100, pack_size=100) == 1
+    assert compute_pack_count(total_contacts=101, pack_size=100) == 2
+    assert compute_pack_count(total_contacts=596, pack_size=100) == 6
+
+    for pack_size in (0, -1):
+        with pytest.raises(ValueError, match="pack_size must be positive"):
+            compute_pack_count(total_contacts=10, pack_size=pack_size)
 
 
 def test_collect_review_items_filters_ab_and_attaches_wave(tmp_path: Path):
@@ -128,6 +142,40 @@ def test_build_ab_detail_packs_dedupes_and_splits_round_robin(tmp_path: Path):
     assert result["packs"][1]["contacts"][0]["candidate_id"] == 1
     assert (out_dir / "detail-targets-ab-all.json").exists()
     assert (out_dir / "detail-ab-pack-001.json").exists()
+
+
+def test_build_ab_detail_packs_caps_ready_targets_by_pack_size(tmp_path: Path):
+    root = tmp_path / "campaign"
+    review_dir = root / "review"
+    out_dir = root / "raw" / "detail-targets"
+    review_dir.mkdir(parents=True)
+    db_path = root / "talent.db"
+    for candidate_id in range(1, 206):
+        seed_source_profile(db_path, candidate_id, f"u{candidate_id}", f"t{candidate_id}")
+    write_review(
+        review_dir / "initial-human-review-draft-wave-001.json",
+        "wave-001",
+        [
+            {"candidate_id": candidate_id, "grade": "A", "score": 1000 - candidate_id}
+            for candidate_id in range(1, 206)
+        ],
+    )
+
+    result = build_ab_detail_packs(
+        campaign_root=root,
+        db_path=db_path,
+        waves=["wave-001"],
+        out_dir=out_dir,
+        pack_count=1,
+        pack_size=100,
+    )
+
+    assert result["metadata"]["status"] == "ready"
+    assert result["metadata"]["pack_count"] == 3
+    assert len(result["packs"]) == 3
+    assert sum(pack["count"] for pack in result["packs"]) == 205
+    assert all(pack["count"] <= 100 for pack in result["packs"])
+    assert all((out_dir / f"detail-ab-pack-{index:03d}.json").exists() for index in range(1, 4))
 
 
 def test_build_ab_detail_packs_blocks_missing_trackable_token(tmp_path: Path):
