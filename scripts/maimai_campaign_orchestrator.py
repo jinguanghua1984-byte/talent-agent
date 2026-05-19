@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -194,6 +196,176 @@ def build_wave_plan(
         "page_count": sum(int(wave["page_count"]) for wave in waves),
         "waves": waves,
     }
+
+
+def build_stage_commands(campaign_root: str, strategy: str, policy: dict[str, Any]) -> list[list[str]]:
+    root = Path(campaign_root)
+    pack_size = policy.get("detail_pack_max_contacts")
+    if pack_size is None:
+        pack_size = DEFAULT_RUN_POLICY["detail_pack_max_contacts"]
+
+    search_plan = root / "search-plan.json"
+    search_units = root / "search-units.jsonl"
+    live_plan = root / "raw" / "search-live-runs" / "wave-plan.json"
+    live_run = root / "raw" / "search-live-runs" / "run.json"
+    campaign_db = root / "talent.db"
+    continuation_plan = root / "state" / "continuation-plan.json"
+    reports = root / "reports"
+
+    return [
+        [
+            "python",
+            "-m",
+            "scripts.maimai_ai_infra_search_plan",
+            "--config",
+            strategy,
+            "--out",
+            str(search_plan),
+            "--out-units",
+            str(search_units),
+        ],
+        [
+            "python",
+            "-m",
+            "scripts.maimai_ai_infra_search_live_gate",
+            "--plan",
+            str(live_plan),
+            "--out",
+            str(live_run),
+            "--cdp-url",
+            "http://127.0.0.1:9888",
+        ],
+        [
+            "python",
+            "-m",
+            "scripts.maimai_search_live_standardize",
+            "--campaign-root",
+            campaign_root,
+            "--run",
+            str(live_run),
+        ],
+        [
+            "python",
+            "-m",
+            "scripts.maimai_ai_infra_pipeline",
+            "run-campaign",
+            "--campaign-root",
+            campaign_root,
+            "--config",
+            strategy,
+            "--wave",
+            "wave-001",
+            "--db",
+            str(campaign_db),
+        ],
+        [
+            "python",
+            "-m",
+            "scripts.maimai_ai_infra_rank",
+            "--db",
+            str(campaign_db),
+            "--config",
+            strategy,
+            "--mode",
+            "list",
+            "--out-json",
+            str(reports / "list-rank.json"),
+            "--out-md",
+            str(reports / "list-rank.md"),
+        ],
+        [
+            "python",
+            "-m",
+            "scripts.maimai_ai_infra_detail_plan",
+            "build-ab-packs",
+            "--campaign-root",
+            campaign_root,
+            "--pack-size",
+            str(pack_size),
+        ],
+        [
+            "python",
+            "-m",
+            "scripts.campaign_notify",
+            "--event",
+            str(continuation_plan),
+            "--identity",
+            str(policy.get("notify_identity", DEFAULT_RUN_POLICY["notify_identity"])),
+            "--dry-run",
+        ],
+    ]
+
+
+def write_blocked_continuation(
+    campaign_root: str | Path,
+    stage: str,
+    reason: str,
+    evidence_file: str,
+) -> dict[str, Any]:
+    root = Path(campaign_root)
+    plan = {
+        "campaign_id": root.name,
+        "blocked_stage": stage,
+        "reason": reason,
+        "evidence_file": evidence_file,
+        "safe_to_resume_after": "负责人处理验证码、登录或安全页面后，回到人才银行页面并确认页面健康检查通过。",
+        "resume_command": (
+            "python -m scripts.maimai_campaign_orchestrator resume "
+            f"--campaign-root {root.as_posix()}"
+        ),
+    }
+    write_json(root / "state" / "continuation-plan.json", plan)
+    write_stage_state(
+        root,
+        stage,
+        "blocked",
+        {
+            "reason": reason,
+            "evidence_file": evidence_file,
+            "continuation_plan": (root / "state" / "continuation-plan.json").as_posix(),
+        },
+    )
+    return plan
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    argv: list[str]
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+def is_retriable_error(text: str) -> bool:
+    lowered = text.lower()
+    blocking_needles = (
+        "captcha",
+        "captcha_api",
+        "login",
+        "登录",
+        "验证码",
+        "安全页面",
+        "security page",
+    )
+    if any(needle in lowered for needle in blocking_needles):
+        return False
+
+    retriable_needles = (
+        "connection timed out",
+        "temporarily unavailable",
+        "file is being used by another process",
+    )
+    return any(needle in lowered for needle in retriable_needles)
+
+
+def run_command(argv: list[str]) -> CommandResult:
+    completed = subprocess.run(argv, text=True, capture_output=True, check=False)
+    return CommandResult(
+        argv=list(argv),
+        returncode=completed.returncode,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+    )
 
 
 def _print_json(data: Any) -> None:

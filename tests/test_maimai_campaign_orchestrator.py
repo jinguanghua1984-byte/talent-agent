@@ -4,13 +4,18 @@ from pathlib import Path
 import pytest
 
 from scripts.maimai_campaign_orchestrator import (
+    CommandResult,
     DEFAULT_RUN_POLICY,
     _load_jsonl_objects,
     append_event,
+    build_stage_commands,
     count_search_requests,
+    is_retriable_error,
     load_json,
     main,
+    run_command,
     split_search_units_into_live_waves,
+    write_blocked_continuation,
     write_json,
     write_stage_state,
 )
@@ -246,3 +251,118 @@ def test_resume_cli_prefers_continuation_plan_then_stage_state(tmp_path: Path, c
 
     assert main(["resume", "--campaign-root", str(tmp_path)]) == 0
     assert json.loads(capsys.readouterr().out)["blocked_stage"] == "search_live"
+
+
+def test_build_stage_commands_uses_existing_scripts_and_standardizer():
+    commands = build_stage_commands(
+        campaign_root="data/campaigns/demo",
+        strategy="data/campaigns/demo/strategy.json",
+        policy={},
+    )
+
+    flattened = [" ".join(command) for command in commands]
+    assert any("python -m scripts.maimai_ai_infra_search_plan" in command for command in flattened)
+    assert any("maimai_ai_infra_search_live_gate" in command for command in flattened)
+    assert any("maimai_search_live_standardize" in command for command in flattened)
+    assert any("maimai_ai_infra_pipeline" in command and "run-campaign" in command for command in flattened)
+    assert any("maimai_ai_infra_rank" in command and "--mode list" in command for command in flattened)
+    assert any(
+        "maimai_ai_infra_detail_plan" in command and "--pack-size 100" in command
+        for command in flattened
+    )
+    assert any(
+        "campaign_notify" in command
+        and "--event data\\campaigns\\demo\\state\\continuation-plan.json" in command
+        for command in flattened
+    )
+
+
+def test_build_stage_commands_honors_policy_pack_size():
+    commands = build_stage_commands(
+        campaign_root="data/campaigns/demo",
+        strategy="data/campaigns/demo/strategy.json",
+        policy={"detail_pack_max_contacts": 25, "notify_identity": "user"},
+    )
+
+    flattened = [" ".join(command) for command in commands]
+    assert any("maimai_ai_infra_detail_plan" in command and "--pack-size 25" in command for command in flattened)
+    assert any("campaign_notify" in command and "--identity user" in command for command in flattened)
+
+
+def test_blocked_continuation_plan_contains_resume_command_and_event(tmp_path: Path):
+    plan = write_blocked_continuation(
+        campaign_root=tmp_path,
+        stage="detail_live",
+        reason="captcha_api",
+        evidence_file="reports/interruption.json",
+    )
+
+    saved = load_json(tmp_path / "state" / "continuation-plan.json")
+    assert saved == plan
+    assert plan["campaign_id"] == tmp_path.name
+    assert plan["blocked_stage"] == "detail_live"
+    assert plan["reason"] == "captcha_api"
+    assert plan["evidence_file"] == "reports/interruption.json"
+    assert "负责人" in plan["safe_to_resume_after"]
+    assert "maimai_campaign_orchestrator resume" in plan["resume_command"]
+    assert f"--campaign-root {tmp_path.as_posix()}" in plan["resume_command"]
+
+    state = load_json(tmp_path / "state" / "stage-state.json")
+    assert state["stage"] == "detail_live"
+    assert state["status"] == "blocked"
+    assert state["reason"] == "captcha_api"
+
+    event_lines = (tmp_path / "state" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    events = [json.loads(line) for line in event_lines]
+    assert any(
+        event["stage"] == "detail_live"
+        and event["status"] == "blocked"
+        and event["reason"] == "captcha_api"
+        for event in events
+    )
+
+
+def test_retry_classification_treats_platform_security_as_non_retriable():
+    assert is_retriable_error("Connection timed out") is True
+    assert is_retriable_error("temporarily unavailable") is True
+    assert is_retriable_error("file is being used by another process") is True
+    assert is_retriable_error("captcha_api") is False
+    assert is_retriable_error("需要登录后继续") is False
+    assert is_retriable_error("安全页面") is False
+
+
+def test_run_command_uses_subprocess_without_shell(monkeypatch):
+    calls: list[dict[str, object]] = []
+
+    class Completed:
+        returncode = 7
+        stdout = "out"
+        stderr = "err"
+
+    def fake_run(argv: list[str], *, text: bool, capture_output: bool, check: bool) -> Completed:
+        calls.append({
+            "argv": argv,
+            "text": text,
+            "capture_output": capture_output,
+            "check": check,
+        })
+        return Completed()
+
+    monkeypatch.setattr("scripts.maimai_campaign_orchestrator.subprocess.run", fake_run)
+
+    result = run_command(["python", "-m", "scripts.demo"])
+
+    assert result == CommandResult(
+        argv=["python", "-m", "scripts.demo"],
+        returncode=7,
+        stdout="out",
+        stderr="err",
+    )
+    assert calls == [
+        {
+            "argv": ["python", "-m", "scripts.demo"],
+            "text": True,
+            "capture_output": True,
+            "check": False,
+        }
+    ]
