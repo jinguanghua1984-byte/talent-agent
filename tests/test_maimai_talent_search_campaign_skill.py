@@ -1,10 +1,13 @@
 from pathlib import Path
 import json
 
+from scripts.maimai_ai_infra_outreach_export import CSV_FIELDS
+
 
 SKILL = Path("skills/maimai-talent-search-campaign/SKILL.md")
 WORKFLOW = Path("agents/workflows/maimai-unattended-campaign/AGENT.md")
 OUTREACH_TEMPLATE = Path("templates/maimai-campaign/outreach-queue-fields.json")
+EXECUTION_FIELDS = ["owner", "status", "last_touch_at", "next_followup_at", "notes"]
 
 
 def test_skill_extracts_first_and_asks_only_missing_fields():
@@ -37,8 +40,31 @@ def test_workflow_keeps_live_safety_boundary_and_resume_sources():
 
 def test_outreach_template_has_execution_fields():
     data = json.loads(OUTREACH_TEMPLATE.read_text(encoding="utf-8"))
-    names = [field["name"] for field in data["fields"]]
-    assert names[:5] == ["owner", "status", "last_touch_at", "next_followup_at", "notes"]
-    assert "priority" in names
-    assert "recommendation_label" in names
-    assert "profile_url" in names
+    assert data["schema"] == "maimai_outreach_queue_fields_v1"
+
+    fields = data["fields"]
+    names = [field["name"] for field in fields]
+    assert names == EXECUTION_FIELDS + CSV_FIELDS
+    assert len(names) == len(set(names))
+
+    by_name = {field["name"]: field for field in fields}
+    for field in fields:
+        assert field["label"]
+        assert field["type"]
+        assert isinstance(field["required"], bool)
+        assert field["description"]
+
+    for name in EXECUTION_FIELDS:
+        assert by_name[name].get("source_field") in (None, "")
+
+    for name in CSV_FIELDS:
+        assert by_name[name]["source_field"] == name
+
+    assert by_name["status"]["values"] == ["待联系", "联系中", "已回复", "暂缓", "关闭"]
+    assert by_name["priority"]["values"] == ["P0", "P1", "P2", "P3"]
+    assert by_name["recommendation_label"]["values"] == ["强推荐", "推荐", "观察", "不推荐"]
+
+    required_names = {field["name"] for field in fields if field["required"]}
+    assert required_names == {"owner", "status", *CSV_FIELDS}
+    assert by_name["key_evidence"]["required"] is True
+    assert by_name["suggested_outreach_angle"]["required"] is True

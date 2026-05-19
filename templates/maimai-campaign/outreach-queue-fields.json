@@ -3,90 +3,182 @@
   "fields": [
     {
       "name": "owner",
+      "label": "负责人",
       "type": "string",
       "required": true,
-      "description": "跟进负责人"
+      "source_field": null,
+      "description": "外联执行负责人"
     },
     {
       "name": "status",
+      "label": "执行状态",
       "type": "enum",
       "required": true,
-      "values": ["todo", "in_progress", "replied", "paused", "closed"],
-      "description": "执行状态"
+      "source_field": null,
+      "values": ["待联系", "联系中", "已回复", "暂缓", "关闭"],
+      "description": "外联当前处理状态"
     },
     {
       "name": "last_touch_at",
+      "label": "最近触达时间",
       "type": "datetime",
       "required": false,
-      "description": "最近一次触达时间"
+      "source_field": null,
+      "description": "最近一次联系或更新状态的时间"
     },
     {
       "name": "next_followup_at",
+      "label": "下次跟进时间",
       "type": "datetime",
       "required": false,
-      "description": "下次跟进时间"
+      "source_field": null,
+      "description": "计划下一次跟进的时间"
     },
     {
       "name": "notes",
+      "label": "备注",
       "type": "text",
       "required": false,
-      "description": "执行备注"
+      "source_field": null,
+      "description": "外联过程中的人工备注"
     },
     {
       "name": "priority",
+      "label": "优先级",
       "type": "enum",
       "required": true,
+      "source_field": "priority",
       "values": ["P0", "P1", "P2", "P3"],
-      "description": "触达优先级"
+      "description": "外联队列优先级"
     },
     {
-      "name": "recommendation_label",
-      "type": "enum",
+      "name": "rank",
+      "label": "排序",
+      "type": "integer",
       "required": true,
-      "values": ["强推荐", "推荐", "观察", "不推荐"],
-      "description": "推荐标签"
+      "source_field": "rank",
+      "description": "候选人在当前优先级队列内的排序"
     },
     {
       "name": "candidate_id",
+      "label": "候选人 ID",
       "type": "string",
       "required": true,
+      "source_field": "candidate_id",
       "description": "人才库候选人 ID"
     },
     {
-      "name": "candidate_name",
+      "name": "name",
+      "label": "姓名",
       "type": "string",
       "required": true,
+      "source_field": "name",
       "description": "候选人姓名"
     },
     {
+      "name": "platform_id",
+      "label": "平台 ID",
+      "type": "string",
+      "required": true,
+      "source_field": "platform_id",
+      "description": "脉脉平台候选人标识"
+    },
+    {
+      "name": "company",
+      "label": "公司",
+      "type": "string",
+      "required": true,
+      "source_field": "company",
+      "description": "候选人当前或最近公司"
+    },
+    {
+      "name": "title",
+      "label": "职位",
+      "type": "string",
+      "required": true,
+      "source_field": "title",
+      "description": "候选人当前或最近职位"
+    },
+    {
+      "name": "city",
+      "label": "城市",
+      "type": "string",
+      "required": true,
+      "source_field": "city",
+      "description": "候选人所在城市"
+    },
+    {
+      "name": "work_years",
+      "label": "工作年限",
+      "type": "number",
+      "required": true,
+      "source_field": "work_years",
+      "description": "候选人工作年限"
+    },
+    {
+      "name": "score",
+      "label": "评分",
+      "type": "number",
+      "required": true,
+      "source_field": "score",
+      "description": "候选人综合评分"
+    },
+    {
+      "name": "grade",
+      "label": "分档",
+      "type": "string",
+      "required": true,
+      "source_field": "grade",
+      "description": "候选人推荐分档"
+    },
+    {
+      "name": "recommendation_label",
+      "label": "推荐标签",
+      "type": "enum",
+      "required": true,
+      "source_field": "recommendation_label",
+      "values": ["强推荐", "推荐", "观察", "不推荐"],
+      "description": "最终推荐结论"
+    },
+    {
+      "name": "directions",
+      "label": "匹配方向",
+      "type": "text",
+      "required": true,
+      "source_field": "directions",
+      "description": "候选人匹配的岗位或技术方向"
+    },
+    {
+      "name": "key_evidence",
+      "label": "关键证据",
+      "type": "text",
+      "required": true,
+      "source_field": "key_evidence",
+      "description": "支持推荐判断的关键经历和能力证据"
+    },
+    {
+      "name": "risk_summary",
+      "label": "风险摘要",
+      "type": "text",
+      "required": true,
+      "source_field": "risk_summary",
+      "description": "不匹配项、信息缺口或外联风险摘要"
+    },
+    {
+      "name": "suggested_outreach_angle",
+      "label": "建议外联切入点",
+      "type": "text",
+      "required": true,
+      "source_field": "suggested_outreach_angle",
+      "description": "推荐给执行人的首轮外联切入角度"
+    },
+    {
       "name": "profile_url",
+      "label": "资料链接",
       "type": "url",
       "required": true,
-      "description": "候选人资料页"
-    },
-    {
-      "name": "current_title",
-      "type": "string",
-      "required": false,
-      "description": "当前职位"
-    },
-    {
-      "name": "current_company",
-      "type": "string",
-      "required": false,
-      "description": "当前公司"
-    },
-    {
-      "name": "contact_channel",
-      "type": "string",
-      "required": false,
-      "description": "建议触达渠道"
-    },
-    {
-      "name": "outreach_angle",
-      "type": "text",
-      "required": false,
-      "description": "触达切入点"
+      "source_field": "profile_url",
+      "description": "候选人脉脉资料页链接"
     }
   ]
 }
