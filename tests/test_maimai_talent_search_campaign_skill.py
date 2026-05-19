@@ -29,6 +29,20 @@ def test_skill_bakes_in_confirmed_defaults():
     assert "本地 Markdown 报告、CSV、飞书云文档、飞书多维表格" in text
 
 
+def test_skill_declares_output_root_and_run_policy_contract():
+    text = SKILL.read_text(encoding="utf-8")
+    for token in [
+        "data/campaigns/<campaign_id>/",
+        "daily_search_request_budget=500",
+        "search_wave_max_pages=50",
+        "detail_pack_max_contacts=100",
+        'detail_target_grades=["A","B"]',
+        'notify_channel="feishu_im"',
+        "allow_main_db_write=false",
+    ]:
+        assert token in text
+
+
 def test_workflow_keeps_live_safety_boundary_and_resume_sources():
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "不自动导航、刷新、点击已进入执行态的脉脉业务页面" in text
@@ -36,6 +50,28 @@ def test_workflow_keeps_live_safety_boundary_and_resume_sources():
     assert "raw/detail-live/<pack_id>/job-" in text
     assert "state/import-ledger.jsonl" in text
     assert "blocked_notification_failed" in text
+
+
+def test_workflow_declares_stop_conditions_and_status_outputs():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    for token in [
+        "登录页",
+        "登录失效",
+        "验证码",
+        "安全页",
+        "403",
+        "429",
+        "432",
+        "非 JSON",
+        "HTML 响应",
+        "模板漂移",
+        "详情 partial capture",
+        "reports/interruption-*.json",
+        "state/events.jsonl",
+        "state/continuation-plan.json",
+        "scripts/campaign_notify.py",
+    ]:
+        assert token in text
 
 
 def test_outreach_template_has_execution_fields():

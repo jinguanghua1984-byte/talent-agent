@@ -12,12 +12,22 @@ description: 脉脉 unattended campaign 的 canonical workflow，约束搜索、
 - 不在未确认 dry-run 结果前写 campaign DB 或主人才库。
 - 不发布飞书消息、云文档或多维表格，除非当前任务明确授权。
 
+## 停机条件
+
+遇到以下任一情况必须停止当前阶段，不得继续翻页、重试 apply 或推进下游：登录页、登录失效、验证码、安全页、403、429、432、非 JSON、HTML 响应、模板漂移、详情 partial capture。
+
+停机后必须保留已成功 raw 和中断证据，写入 `reports/interruption-*.json`，追加 `state/events.jsonl`，并更新 `state/continuation-plan.json` 作为下一次恢复的唯一计划入口。
+
 ## 恢复事实来源
 
 - 搜索恢复事实来源：`raw/search/unit-*/page-*.json`。
 - 详情恢复事实来源：`raw/detail-live/<pack_id>/job-*.json`。
 - apply 防重事实来源：`state/import-ledger.jsonl`。
 - 通知失败状态：`blocked_notification_failed`。
+
+## 通知合同
+
+所有通知统一通过 `scripts/campaign_notify.py` 执行。通知失败不得改变 campaign 执行结果；必须记录事件并把通知状态写为 `blocked_notification_failed`。
 
 ## 阶段
 

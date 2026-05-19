@@ -9,6 +9,10 @@ description: 脉脉人才搜索 campaign 的需求抽取、策略固化和静态
 
 把一次脉脉人才搜索 campaign 从模糊输入整理成可执行、可恢复、可审计的静态合同。此 Skill 只负责需求抽取和计划产物，不运行真实脉脉请求，不启动浏览器，不发布飞书消息或文档。
 
+## 业务合同
+
+面向业务方交付的是一套无人值守人才搜索 campaign 合同：业务方提供 JD、职位描述或粘贴材料，Skill 先自动抽取目标人群、筛选口径、外联交付物和执行边界，再把可执行策略落到 campaign 目录。默认输出根目录为 `data/campaigns/<campaign_id>/`，所有需求、策略、运行策略、执行计划、报告和恢复状态都必须在该目录下可追溯。
+
 ## 需求抽取规则
 
 - 优先从调用提示词、JD、职位描述或粘贴内容中自动抽取岗位目标、候选人画像、行业范围、地点、资历、关键词、排除项、交付格式和时间约束。
@@ -28,6 +32,17 @@ description: 脉脉人才搜索 campaign 的需求抽取、策略固化和静态
 - 详情 pack 每组上限 100 人。
 - 只对 A/B 档人选抓详情。
 - 交付格式为本地 Markdown 报告、CSV、飞书云文档、飞书多维表格。
+
+## run-policy.json 合同
+
+`run-policy.json` 必须显式写入以下键和值，作为 workflow 执行、恢复和人工确认的 source of truth：
+
+- `daily_search_request_budget=500`
+- `search_wave_max_pages=50`
+- `detail_pack_max_contacts=100`
+- `detail_target_grades=["A","B"]`
+- `notify_channel="feishu_im"`
+- `allow_main_db_write=false`
 
 ## 输出产物
 
