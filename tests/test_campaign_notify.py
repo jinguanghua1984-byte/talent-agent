@@ -69,6 +69,32 @@ def test_build_message_text_redacts_sensitive_values_inside_whitelisted_fields()
     assert text.count("<redacted-sensitive-value>") >= 7
 
 
+def test_build_message_text_redacts_authorization_cli_flag_secret():
+    text = build_message_text({
+        **_event(),
+        "resume_command": "python resume --authorization Bearer bearer-flag-secret",
+    })
+
+    assert "bearer-flag-secret" not in text
+    assert "--authorization Bearer" not in text
+    assert "<redacted-sensitive-value>" in text
+
+
+def test_build_message_text_redacts_sensitive_cli_flag_value_forms():
+    text = build_message_text({
+        **_event(),
+        "resume_command": (
+            "python resume --client_secret='single quoted secret value' "
+            "--api-key=api-key-secret --password password-secret"
+        ),
+    })
+
+    assert "single quoted secret value" not in text
+    assert "quoted secret value" not in text
+    assert "api-key-secret" not in text
+    assert "password-secret" not in text
+
+
 def test_build_idempotency_key_event_id_includes_blocked_stage():
     key = build_idempotency_key({
         "campaign_id": "ai-infra-demo",
@@ -148,7 +174,10 @@ def test_cli_dry_run_prints_preview_without_subprocess(tmp_path: Path, monkeypat
         "event_id": "evt-001",
         "reason": "authorization: bearer bearer-secret-value",
         "operator_action": "api_key=api-key-secret",
-        "resume_command": "python resume --client_secret client-secret --session session-secret",
+        "resume_command": (
+            "python resume --client_secret \"client secret value\" "
+            "--authorization Basic basic-flag-secret --session session-secret"
+        ),
     }
     event_path = tmp_path / "event.json"
     event_path.write_text(json.dumps(sensitive_event, ensure_ascii=False), encoding="utf-8-sig")
@@ -172,7 +201,9 @@ def test_cli_dry_run_prints_preview_without_subprocess(tmp_path: Path, monkeypat
     out = capsys.readouterr().out
     assert "bearer-secret-value" not in out
     assert "api-key-secret" not in out
-    assert "client-secret" not in out
+    assert "client secret value" not in out
+    assert "secret value" not in out
+    assert "basic-flag-secret" not in out
     assert "session-secret" not in out
     preview = json.loads(out)
     assert preview["argv"][:3] == ["lark-cli", "im", "+messages-send"]

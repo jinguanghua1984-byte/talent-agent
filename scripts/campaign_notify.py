@@ -25,10 +25,12 @@ SENSITIVE_KEYWORDS = (
     "token",
 )
 SENSITIVE_KEYWORD_PATTERN = "|".join(SENSITIVE_KEYWORDS)
+SENSITIVE_VALUE_PATTERN = r'"[^"]*"|\'[^\']*\'|[^\s&,;]+'
 SENSITIVE_PATTERNS = [
     re.compile(r"(?i)\bauthorization\s*[:=]\s*(?:basic|bearer)\s+[^\s,;]+"),
     re.compile(rf"(?i)\b(?:{SENSITIVE_KEYWORD_PATTERN})\b\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s&,;]+)"),
-    re.compile(rf"(?i)--(?:{SENSITIVE_KEYWORD_PATTERN})\b(?:=|\s+)[^\s]+"),
+    re.compile(rf"(?i)--authorization\b(?:\s*=\s*|\s+)(?:(?:basic|bearer)\s+)?(?:{SENSITIVE_VALUE_PATTERN})"),
+    re.compile(rf"(?i)--(?:{SENSITIVE_KEYWORD_PATTERN})\b(?:\s*=\s*|\s+)(?:{SENSITIVE_VALUE_PATTERN})"),
 ]
 
 
