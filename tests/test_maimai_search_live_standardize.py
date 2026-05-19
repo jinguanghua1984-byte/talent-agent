@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from scripts.maimai_ai_infra_campaign import ensure_campaign, load_completed_pages, mark_page_completed, page_raw_path
 from scripts.maimai_search_live_standardize import standardize_live_run
 
@@ -267,3 +269,64 @@ def test_standardize_live_run_skip_diagnostics_include_compact_evidence(tmp_path
     assert skipped["batch_error"] == "batch captcha"
     assert skipped["page_error"] == "page captcha"
     assert skipped["responseSummary"] == {"httpStatus": 432, "total": 0}
+
+
+def test_standardize_live_run_rejects_boolean_page_number(tmp_path: Path):
+    campaign = ensure_campaign(tmp_path / "campaign")
+    run_path = tmp_path / "run.json"
+    run_path.write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "run_id": "run-008",
+                "batches": [
+                    {
+                        "batch_id": "unit-000001",
+                        "pages": [{"page": True, "ok": True, "contacts": []}],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = standardize_live_run(campaign.root, run_path)
+
+    assert result["written_pages"] == 0
+    assert result["skipped_pages"][0]["reason"] == "invalid_page_number"
+    assert not page_raw_path(campaign, "unit-000001", 1).exists()
+    assert load_completed_pages(campaign) == set()
+
+
+def test_standardize_live_run_raises_for_malformed_top_level_batches(tmp_path: Path):
+    campaign = ensure_campaign(tmp_path / "campaign")
+    run_path = tmp_path / "run.json"
+    run_path.write_text(
+        json.dumps({"status": "completed", "run_id": "run-009", "batches": ""}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="batches must be a list"):
+        standardize_live_run(campaign.root, run_path)
+
+
+def test_standardize_live_run_records_invalid_pages_for_malformed_pages(tmp_path: Path):
+    campaign = ensure_campaign(tmp_path / "campaign")
+    run_path = tmp_path / "run.json"
+    run_path.write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "run_id": "run-010",
+                "batches": [{"batch_id": "unit-000001", "pages": ""}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = standardize_live_run(campaign.root, run_path)
+
+    assert result["written_pages"] == 0
+    assert result["skipped_pages"][0]["reason"] == "invalid_pages"
+    assert result["skipped_pages"][0]["unit_id"] == "unit-000001"
+    assert not (campaign.raw_search_dir / "unit-000001").exists()

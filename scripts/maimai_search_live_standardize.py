@@ -130,7 +130,7 @@ def standardize_live_run(campaign_root: str | Path, run_path: str | Path) -> dic
     skipped_pages: list[dict[str, Any]] = []
     wave_id = _run_wave_id(run)
     source_run_id = str(run.get("run_id") or "")
-    batches = run.get("batches") or []
+    batches = run.get("batches", [])
     if not isinstance(batches, list):
         raise ValueError("live-run batches must be a list")
 
@@ -142,7 +142,7 @@ def standardize_live_run(campaign_root: str | Path, run_path: str | Path) -> dic
         batch_id = batch.get("batch_id")
         unit_id = batch_id if isinstance(batch_id, str) and UNIT_ID_PATTERN.fullmatch(batch_id) else None
         invalid_batch_id = isinstance(batch_id, str) and batch_id != "" and unit_id is None
-        pages = batch.get("pages") or []
+        pages = batch.get("pages", [])
         if not isinstance(pages, list):
             _skip(
                 skipped_pages,
@@ -184,7 +184,7 @@ def standardize_live_run(campaign_root: str | Path, run_path: str | Path) -> dic
             if page_item.get("ok") is not True:
                 _skip(skipped_pages, "page_not_ok", batch_index, page_index, unit_id, page_number, evidence)
                 continue
-            if not isinstance(page_number, int) or page_number <= 0:
+            if type(page_number) is not int or page_number <= 0:
                 _skip(skipped_pages, "invalid_page_number", batch_index, page_index, unit_id, page_number, evidence)
                 continue
 
