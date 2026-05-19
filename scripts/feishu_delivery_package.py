@@ -44,13 +44,33 @@ MANIFEST_EXCLUDED_INPUTS = [
 SENSITIVE_PATH_MARKERS = (
     "raw/search",
     "raw/detail",
+    "raw_capture",
     "raw capture",
+    "raw_live_run",
     "raw live run",
+    "database",
+    "source_path",
+    "sync_bundle",
+    "sync.zip",
+    "sync zip",
+    "sync-zip",
+    "raw_path",
     "sqlite",
     "talent.db",
     ".sqlite",
     ".db",
     ".zip",
+)
+MANIFEST_FORBIDDEN_PATH_MARKERS = (
+    "raw/search",
+    "raw/detail",
+    "raw capture",
+    "raw live run",
+    "talent.db",
+    ".sqlite",
+    ".db",
+    ".zip",
+    "sync.zip",
 )
 SENSITIVE_FIELD_MARKERS = (
     "raw",
@@ -59,9 +79,15 @@ SENSITIVE_FIELD_MARKERS = (
     "token",
     "secret",
     "password",
+    "database",
+    "source_path",
+    "sync_bundle",
+    "sync.zip",
+    "sync zip",
+    "sync-zip",
+    "raw_path",
     "sqlite",
     "db",
-    "sync_zip",
 )
 
 
@@ -80,6 +106,23 @@ def _read_csv(path: str | Path) -> list[dict[str, str]]:
 
 def _path_text(path: str | Path) -> str:
     return Path(path).as_posix()
+
+
+def _sensitive_text(value: Any) -> bool:
+    text = str(value or "").lower().replace("\\", "/")
+    return any(marker in text for marker in SENSITIVE_PATH_MARKERS)
+
+
+def _relative_source_arg(path: str | Path, root: Path) -> str:
+    file_path = Path(path)
+    try:
+        relative = file_path.resolve().relative_to(root.resolve())
+    except ValueError:
+        try:
+            relative = file_path.resolve().relative_to(Path.cwd().resolve())
+        except ValueError:
+            relative = Path(file_path.name)
+    return f"@{relative.as_posix()}"
 
 
 def _xml(value: Any) -> str:
@@ -133,11 +176,14 @@ def _safe_csv_fieldnames(rows: list[dict[str, str]]) -> list[str]:
             if field not in fieldnames:
                 fieldnames.append(field)
 
-    safe_fields = [
-        field
-        for field in fieldnames
-        if not any(marker in field.lower() for marker in SENSITIVE_FIELD_MARKERS)
-    ]
+    safe_fields = []
+    for field in fieldnames:
+        field_text = field.lower().replace("\\", "/")
+        if any(marker in field_text for marker in SENSITIVE_FIELD_MARKERS):
+            continue
+        if any(_sensitive_text(row.get(field, "")) for row in rows):
+            continue
+        safe_fields.append(field)
     return safe_fields or DEFAULT_CSV_FIELDS.copy()
 
 
@@ -145,7 +191,12 @@ def _filter_row(row: dict[str, str], fieldnames: list[str]) -> dict[str, str]:
     return {field: row.get(field, "") for field in fieldnames}
 
 
-def _build_commands(campaign_id: str, generated_files: dict[str, str], dry_run: bool) -> list[list[str]]:
+def _build_commands(
+    campaign_id: str,
+    generated_files: dict[str, str],
+    dry_run: bool,
+    root: Path,
+) -> list[list[str]]:
     commands = [
         [
             "lark-cli",
@@ -158,7 +209,7 @@ def _build_commands(campaign_id: str, generated_files: dict[str, str], dry_run: 
             "--title",
             f"{campaign_id} 飞书交付包",
             "--content",
-            f"@{generated_files['summary_xml']}",
+            _relative_source_arg(generated_files["summary_xml"], root),
         ],
         [
             "lark-cli",
@@ -181,9 +232,73 @@ def _build_commands(campaign_id: str, generated_files: dict[str, str], dry_run: 
     return commands
 
 
+def _append_command_template(source_file: str, root: Path, sheet_token_placeholder: str, sheet_id_placeholder: str) -> list[str]:
+    return [
+        "lark-cli",
+        "sheets",
+        "+append",
+        "--spreadsheet-token",
+        sheet_token_placeholder,
+        "--range",
+        sheet_id_placeholder,
+        "--file",
+        _relative_source_arg(source_file, root),
+    ]
+
+
+def _build_publish_steps(
+    commands: list[list[str]],
+    generated_files: dict[str, str],
+    root: Path,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "kind": "docs_create",
+            "status": "ready",
+            "command": commands[0],
+        },
+        {
+            "kind": "sheets_create",
+            "target": "candidates",
+            "status": "creates_empty_sheet_until_append",
+            "command": commands[1],
+        },
+        {
+            "kind": "sheets_append",
+            "target": "candidates",
+            "status": "requires_sheet_id_after_create",
+            "source_file": generated_files["candidate_csv"],
+            "command_template": _append_command_template(
+                generated_files["candidate_csv"],
+                root,
+                "<candidate_spreadsheet_token>",
+                "<candidate_sheet_id>",
+            ),
+        },
+        {
+            "kind": "sheets_create",
+            "target": "outreach_queue",
+            "status": "creates_empty_sheet_until_append",
+            "command": commands[2],
+        },
+        {
+            "kind": "sheets_append",
+            "target": "outreach_queue",
+            "status": "requires_sheet_id_after_create",
+            "source_file": generated_files["outreach_csv"],
+            "command_template": _append_command_template(
+                generated_files["outreach_csv"],
+                root,
+                "<outreach_spreadsheet_token>",
+                "<outreach_sheet_id>",
+            ),
+        },
+    ]
+
+
 def _assert_manifest_has_no_sensitive_paths(manifest: dict[str, Any]) -> None:
     serialized = json.dumps(manifest, ensure_ascii=False).lower().replace("\\", "/")
-    for marker in SENSITIVE_PATH_MARKERS:
+    for marker in MANIFEST_FORBIDDEN_PATH_MARKERS:
         if marker in serialized:
             raise ValueError(f"manifest contains excluded path marker: {marker}")
 
@@ -195,7 +310,7 @@ def build_delivery_manifest(
     audit_json: str | Path,
     dry_run: bool,
 ) -> dict[str, Any]:
-    root = Path(campaign_root)
+    root = Path(campaign_root).resolve()
     report = _load_json(final_report)
     outreach_rows = _read_csv(outreach_csv)
     audit = _load_json(audit_json)
@@ -205,13 +320,18 @@ def build_delivery_manifest(
         "outreach_csv": _path_text(root / "reports" / "feishu-outreach-queue.csv"),
     }
     campaign_id = _campaign_id(report, root)
+    commands = _build_commands(campaign_id, generated_files, bool(dry_run), root)
     manifest: dict[str, Any] = {
         "schema": SCHEMA,
+        "executor_cwd": _path_text(root),
         "campaign_id": campaign_id,
         "dry_run": bool(dry_run),
         "source_counts": _source_counts(report, audit, outreach_rows),
         "generated_files": generated_files,
-        "commands": _build_commands(campaign_id, generated_files, bool(dry_run)),
+        "commands": commands,
+        "publish_steps": _build_publish_steps(commands, generated_files, root),
+        "requires_sheet_ids_after_create": True,
+        "publish_ready": False,
         "excluded_inputs": MANIFEST_EXCLUDED_INPUTS,
     }
     _assert_manifest_has_no_sensitive_paths(manifest)
@@ -295,18 +415,22 @@ def write_source_files(
             writer.writerows(safe_rows)
 
 
-def run_publish_commands(commands: list[list[str]]) -> list[dict[str, Any]]:
+def run_publish_commands(commands: list[list[str]], cwd: str | Path | None = None) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for command in commands:
-        completed = subprocess.run(command, text=True, capture_output=True, check=False)
-        results.append(
-            {
-                "argv": command,
-                "returncode": completed.returncode,
-                "stdout": completed.stdout,
-                "stderr": completed.stderr,
-            }
-        )
+        if cwd is None:
+            completed = subprocess.run(command, text=True, capture_output=True, check=False)
+        else:
+            completed = subprocess.run(command, text=True, capture_output=True, check=False, cwd=str(cwd))
+        result = {
+            "argv": command,
+            "returncode": completed.returncode,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+        }
+        if cwd is not None:
+            result["cwd"] = str(cwd)
+        results.append(result)
         if completed.returncode != 0:
             break
     return results
@@ -342,11 +466,14 @@ def main(argv: list[str] | None = None) -> int:
 
     returncode = 0
     if not args.dry_run:
-        publish_results = run_publish_commands(manifest["commands"])
-        manifest["publish_results"] = publish_results
-        failed = next((result for result in publish_results if result["returncode"] != 0), None)
-        if failed is not None:
-            returncode = int(failed["returncode"]) or 1
+        manifest["publish_blocked"] = {
+            "reason": "requires_sheet_ids_after_create",
+            "message": (
+                "非 dry-run 不自动执行空 Sheet create；先按 publish_steps 创建 Sheet，"
+                "取得 sheet_id 后再执行 append command_template。"
+            ),
+        }
+        returncode = 2
 
     out = Path(args.manifest_out)
     out.parent.mkdir(parents=True, exist_ok=True)

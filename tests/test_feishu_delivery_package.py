@@ -59,6 +59,8 @@ def _fixture_inputs(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
                 "recommendation_label": "强推荐",
                 "profile_url": "https://example.com/profile/1",
                 "notes": "来自筛后外联队列",
+                "database": "data/campaigns/demo/talent.db",
+                "raw_path": "raw/search/unit-000001/page-001.json",
             }
         ],
     )
@@ -147,7 +149,38 @@ def test_write_source_files_outputs_summary_and_csvs_without_reading_raw_or_db(t
 
     assert candidate_rows == outreach_rows
     assert candidate_rows[0]["name"] == "张三 & <top>"
+    assert "database" not in candidate_rows[0]
+    assert "raw_path" not in candidate_rows[0]
     assert all("/raw/" not in path for path in opened)
+
+    serialized_csv = candidate_csv.read_text(encoding="utf-8-sig") + outreach_source_csv.read_text(encoding="utf-8-sig")
+    for forbidden in [
+        "database",
+        "raw_path",
+        "data/campaigns/demo/talent.db",
+        "raw/search/unit-000001/page-001.json",
+    ]:
+        assert forbidden not in serialized_csv
+
+
+def test_docs_create_content_uses_relative_at_file_when_campaign_root_is_absolute(tmp_path: Path):
+    campaign_root, final_report, outreach_csv, audit_json = _fixture_inputs(tmp_path)
+
+    manifest = build_delivery_manifest(
+        campaign_root=campaign_root.resolve(),
+        final_report=final_report,
+        outreach_csv=outreach_csv,
+        audit_json=audit_json,
+        dry_run=True,
+    )
+
+    docs_command = manifest["commands"][0]
+    content_arg = docs_command[docs_command.index("--content") + 1]
+    assert content_arg.startswith("@")
+    assert content_arg == "@reports/feishu-delivery-summary.xml"
+    assert not Path(content_arg[1:]).is_absolute()
+    assert "executor_cwd" in manifest
+    assert Path(manifest["executor_cwd"]).is_absolute()
 
 
 def test_render_summary_xml_escapes_campaign_metrics_and_candidate_names():
@@ -194,6 +227,55 @@ def test_cli_dry_run_writes_manifest_and_sources_without_publish_executor(tmp_pa
     stored = json.loads(manifest_out.read_text(encoding="utf-8-sig"))
     assert printed == stored
     assert Path(stored["generated_files"]["summary_xml"]).exists()
+    assert "publish_results" not in stored
+
+
+def test_manifest_publish_steps_include_append_skeleton_for_sheet_sources(tmp_path: Path):
+    campaign_root, final_report, outreach_csv, audit_json = _fixture_inputs(tmp_path)
+
+    manifest = build_delivery_manifest(campaign_root, final_report, outreach_csv, audit_json, dry_run=False)
+
+    step_kinds = [step["kind"] for step in manifest["publish_steps"]]
+    assert step_kinds == [
+        "docs_create",
+        "sheets_create",
+        "sheets_append",
+        "sheets_create",
+        "sheets_append",
+    ]
+    append_steps = [step for step in manifest["publish_steps"] if step["kind"] == "sheets_append"]
+    assert append_steps
+    assert all(step["status"] == "requires_sheet_id_after_create" for step in append_steps)
+    assert all("command_template" in step for step in append_steps)
+
+
+def test_cli_non_dry_run_blocks_publish_instead_of_creating_empty_sheets(tmp_path: Path, monkeypatch, capsys):
+    campaign_root, final_report, outreach_csv, audit_json = _fixture_inputs(tmp_path)
+    manifest_out = campaign_root / "reports" / "feishu-manifest.json"
+
+    def fail_publish(commands, **kwargs):
+        raise AssertionError("non-dry-run skeleton must not execute empty sheet create")
+
+    monkeypatch.setattr(feishu_delivery_package, "run_publish_commands", fail_publish)
+
+    code = main([
+        "--campaign-root",
+        str(campaign_root),
+        "--final-report",
+        str(final_report),
+        "--outreach-csv",
+        str(outreach_csv),
+        "--audit-json",
+        str(audit_json),
+        "--manifest-out",
+        str(manifest_out),
+    ])
+
+    assert code == 2
+    printed = json.loads(capsys.readouterr().out)
+    stored = json.loads(manifest_out.read_text(encoding="utf-8-sig"))
+    assert printed == stored
+    assert stored["publish_blocked"]["reason"] == "requires_sheet_ids_after_create"
     assert "publish_results" not in stored
 
 
