@@ -2774,3 +2774,23 @@
 - 可导入前提：每条联系人至少要有 `name`；有 `id` 时会写入 `source_profiles.platform_id`，否则只能按姓名/公司/职位等弱键去重，不建议作为正式导入数据。
 - 已补回归：`tests/test_talent_library_cli.py::test_import_entry_accepts_extension_capture_and_pager_export_shapes`，分别用被动拦截和逐页列表两种导出形状做 `talent-library import` dry-run，结果均 `raw_contacts=1`、`unique_contacts=1`、`created=1`、`pre_errors=0`，且 dry-run 不写库。
 - 验证：`python -m pytest tests/test_talent_library_cli.py::test_import_entry_accepts_extension_capture_and_pager_export_shapes -q` -> `1 passed`；`python -m pytest tests/test_talent_library_cli.py -q` -> `10 passed`；`python -m pytest tests/test_maimai_scraper_extension.py tests/test_talent_library_cli.py -q` -> `49 passed`；`python -m pytest tests scripts -q` -> `635 passed, 1 warning`；`git diff --check` -> PASS。
+
+# 脉脉无人值守长任务全自动执行方案设计（2026-05-19）
+
+> 目标：基于已实践的 AI Infra campaign 端到端能力，设计从寻访需求输入、计划生成、自动搜索采集、评分粗筛、详情抓取、二次评分精排到交付报告的无人值守长任务方案；本轮只做设计，不改业务实现。
+
+## 执行计划
+
+- [x] 读取 `superpowers:brainstorming` 流程、项目 lessons 和相关记忆边界。
+- [x] 调研 docs、scripts、tests、data/campaigns 中现有能力与实践产物。
+- [x] 提炼 2-3 个架构方案及推荐取舍。
+- [x] 输出推荐设计，覆盖业务入口、执行编排、断点恢复、异常通知和验收标准。
+- [x] 等待确认后再落正式 spec 文档。
+
+## Review
+
+- 文档结论：旧“完全无人执行详情补全”目标已被 Phase 0 和 feasible execution 文档修正；落地边界应定义为“无人监控 + 安全拦截停机通知 + 人工处理后从断点恢复”。
+- 能力盘点：`scripts/maimai_ai_infra_*`、`scripts/maimai_detail_*` 已覆盖搜索计划、live gate、campaign 导入、列表评分、详情包、详情 live gate、dry-run/apply、二次评分、delivery/outreach；缺口主要是总编排器、live-run 标准化 CLI、自然语言需求到 strategy config 的入口、Feishu 包正式化。
+- 产物证据：`data/campaigns/ai-infra-v2-2026-05-15-dry-run` 已有 `450` 个 search units、`1350` 个标准化 search page raw、`596` 个 detail job raw；最终交付强推荐 `358`、推荐 `160`、actionable queue `595`，P0/P1 抽检无问题。
+- 恢复策略：搜索以 `raw/search/unit-*/page-*.json` 为真实 checkpoint，不能只信 `state/search-progress.json`；详情以 `raw/detail-live/<pack>/job-*.json` 和 `next_resume_index()` 为 job 级 checkpoint。
+- 正式 spec：`docs/superpowers/specs/2026-05-19-maimai-unattended-campaign-design.md` 已写入，等待用户审阅后再进入实施计划。
