@@ -2796,3 +2796,20 @@
 - 正式 spec：`docs/superpowers/specs/2026-05-19-maimai-unattended-campaign-design.md` 已写入，等待用户审阅后再进入实施计划。
 - Review 修订：按反馈移除备选方案；补入 CDP 浏览器 bootstrap（`data/session/maimai-cdp-profile`、`--remote-debugging-port=9888`、加载扩展、人工登录/人才银行/首搜）；业务入口改为先从提示词/JD 自动抽取，只问缺失并解释术语；固化默认值（每日搜索请求预算 500 且不包括详情请求、搜索 wave <=50 页、详情只抓 A/B 且每包 <=100 人、交付为本地 MD/CSV + 飞书文档/多维表格）；通知第一版改为飞书 IM。
 - 预算口径确认：用户确认 500 次只指列表搜索请求，不包括详情请求；spec 已同步。
+# 脉脉无人值守 Campaign 工程实施计划（2026-05-19）
+
+> 目标：在已审核通过的 `docs/superpowers/specs/2026-05-19-maimai-unattended-campaign-design.md` 基础上，写出可执行工程实施计划；本阶段只写计划，不改业务实现，不启动浏览器，不触发真实脉脉请求。
+
+## 执行计划
+
+- [x] 使用 `superpowers:writing-plans` 读取 spec、现有 campaign 脚本、workflow 结构和相关实践记录。
+- [x] 将工程落地拆成 skill/workflow 合同、CDP 浏览器 bootstrap、live-run 标准化、详情 pack 上限、飞书 IM 通知、飞书交付包、总编排器和回归验证。
+- [x] 写入实施计划到 `docs/superpowers/plans/2026-05-19-maimai-unattended-campaign.md`。
+- [x] 自检计划覆盖 spec、安全边界、预算口径和可测试性。
+
+## Review
+
+- 实施计划已写入 `docs/superpowers/plans/2026-05-19-maimai-unattended-campaign.md`。
+- 计划沿用“Skill 入口 + canonical workflow + 薄编排器”方案，明确复用现有 `maimai_ai_infra_*`、`maimai_detail_*`、`talent_sync.py`、扩展和 `lark-cli` 能力。
+- 计划覆盖已确认约束：启动阶段自动打开带 `data/session/maimai-cdp-profile`、`--remote-debugging-port=9888` 和 `extensions/maimai-scraper` 的浏览器；真实执行阶段仍不自动导航、刷新、点击业务页面；每日 500 次只计列表搜索请求；搜索 wave 不超过 50 页；详情 pack 不超过 100 人；详情只抓 A/B 档；Feishu IM 是第一版通知能力。
+- 本阶段未运行真实脉脉请求、未启动浏览器、未发布飞书消息或文档；只做文档计划和静态自检。
