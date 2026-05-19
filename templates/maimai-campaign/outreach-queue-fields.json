@@ -1,0 +1,92 @@
+{
+  "schema": "maimai_outreach_queue_fields_v1",
+  "fields": [
+    {
+      "name": "owner",
+      "type": "string",
+      "required": true,
+      "description": "跟进负责人"
+    },
+    {
+      "name": "status",
+      "type": "enum",
+      "required": true,
+      "values": ["todo", "in_progress", "replied", "paused", "closed"],
+      "description": "执行状态"
+    },
+    {
+      "name": "last_touch_at",
+      "type": "datetime",
+      "required": false,
+      "description": "最近一次触达时间"
+    },
+    {
+      "name": "next_followup_at",
+      "type": "datetime",
+      "required": false,
+      "description": "下次跟进时间"
+    },
+    {
+      "name": "notes",
+      "type": "text",
+      "required": false,
+      "description": "执行备注"
+    },
+    {
+      "name": "priority",
+      "type": "enum",
+      "required": true,
+      "values": ["P0", "P1", "P2", "P3"],
+      "description": "触达优先级"
+    },
+    {
+      "name": "recommendation_label",
+      "type": "enum",
+      "required": true,
+      "values": ["强推荐", "推荐", "观察", "不推荐"],
+      "description": "推荐标签"
+    },
+    {
+      "name": "candidate_id",
+      "type": "string",
+      "required": true,
+      "description": "人才库候选人 ID"
+    },
+    {
+      "name": "candidate_name",
+      "type": "string",
+      "required": true,
+      "description": "候选人姓名"
+    },
+    {
+      "name": "profile_url",
+      "type": "url",
+      "required": true,
+      "description": "候选人资料页"
+    },
+    {
+      "name": "current_title",
+      "type": "string",
+      "required": false,
+      "description": "当前职位"
+    },
+    {
+      "name": "current_company",
+      "type": "string",
+      "required": false,
+      "description": "当前公司"
+    },
+    {
+      "name": "contact_channel",
+      "type": "string",
+      "required": false,
+      "description": "建议触达渠道"
+    },
+    {
+      "name": "outreach_angle",
+      "type": "text",
+      "required": false,
+      "description": "触达切入点"
+    }
+  ]
+}
