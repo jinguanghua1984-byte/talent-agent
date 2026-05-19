@@ -2794,3 +2794,4 @@
 - 产物证据：`data/campaigns/ai-infra-v2-2026-05-15-dry-run` 已有 `450` 个 search units、`1350` 个标准化 search page raw、`596` 个 detail job raw；最终交付强推荐 `358`、推荐 `160`、actionable queue `595`，P0/P1 抽检无问题。
 - 恢复策略：搜索以 `raw/search/unit-*/page-*.json` 为真实 checkpoint，不能只信 `state/search-progress.json`；详情以 `raw/detail-live/<pack>/job-*.json` 和 `next_resume_index()` 为 job 级 checkpoint。
 - 正式 spec：`docs/superpowers/specs/2026-05-19-maimai-unattended-campaign-design.md` 已写入，等待用户审阅后再进入实施计划。
+- Review 修订：按反馈移除备选方案；补入 CDP 浏览器 bootstrap（`data/session/maimai-cdp-profile`、`--remote-debugging-port=9888`、加载扩展、人工登录/人才银行/首搜）；业务入口改为先从提示词/JD 自动抽取，只问缺失并解释术语；固化默认值（每日请求预算 500、搜索 wave <=50 页、详情只抓 A/B 且每包 <=100 人、交付为本地 MD/CSV + 飞书文档/多维表格）；通知第一版改为飞书 IM。
