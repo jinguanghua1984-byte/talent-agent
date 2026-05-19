@@ -105,7 +105,13 @@ def _skip(
 def _is_equivalent_raw(existing: Any, payload: dict[str, Any]) -> bool:
     if not isinstance(existing, dict):
         return False
+    existing_page = existing.get("page")
+    payload_page = payload.get("page")
+    if type(existing_page) is not int or type(payload_page) is not int or existing_page != payload_page:
+        return False
     for key in PAYLOAD_COMPARE_KEYS:
+        if key == "page":
+            continue
         if existing.get(key) != payload.get(key):
             return False
     return True

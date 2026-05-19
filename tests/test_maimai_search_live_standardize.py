@@ -330,3 +330,49 @@ def test_standardize_live_run_records_invalid_pages_for_malformed_pages(tmp_path
     assert result["skipped_pages"][0]["reason"] == "invalid_pages"
     assert result["skipped_pages"][0]["unit_id"] == "unit-000001"
     assert not (campaign.raw_search_dir / "unit-000001").exists()
+
+
+def test_standardize_live_run_conflicts_with_existing_raw_boolean_page(tmp_path: Path):
+    campaign = ensure_campaign(tmp_path / "campaign")
+    raw = page_raw_path(campaign, "unit-000001", 1)
+    raw.parent.mkdir(parents=True, exist_ok=True)
+    run_path = tmp_path / "run.json"
+    run_path.write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "run_id": "run-011",
+                "batches": [
+                    {
+                        "batch_id": "unit-000001",
+                        "pages": [{"page": 1, "ok": True, "contacts": [{"id": "old"}]}],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    raw.write_text(
+        json.dumps(
+            {
+                "unit_id": "unit-000001",
+                "wave_id": "",
+                "page": True,
+                "source_run": str(run_path),
+                "source_run_id": "run-011",
+                "request": {},
+                "responseSummary": {},
+                "responseData": None,
+                "responseRawPreview": "",
+                "contacts": [{"id": "old"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = standardize_live_run(campaign.root, run_path)
+
+    assert result["written_pages"] == 0
+    assert result["skipped_pages"][0]["reason"] == "conflict_existing_raw"
+    assert json.loads(raw.read_text(encoding="utf-8-sig"))["page"] is True
+    assert not campaign.search_events.exists()

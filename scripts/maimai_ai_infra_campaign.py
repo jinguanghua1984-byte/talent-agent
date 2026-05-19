@@ -209,7 +209,8 @@ def load_completed_pages(paths: CampaignPaths) -> set[tuple[str, int]]:
             continue
         if payload.get("unit_id") != unit_id:
             continue
-        if payload.get("page") != page:
+        payload_page = payload.get("page")
+        if type(payload_page) is not int or payload_page != page:
             continue
         if not isinstance(payload.get("contacts"), list):
             continue

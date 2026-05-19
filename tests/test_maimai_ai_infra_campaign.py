@@ -186,6 +186,21 @@ def test_load_completed_pages_ignores_malformed_raw_content(tmp_path: Path):
     assert completed == {("unit-000009", 9)}
 
 
+def test_load_completed_pages_ignores_boolean_page_payload(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    raw = page_raw_path(paths, "unit-000001", 1)
+    raw.parent.mkdir(parents=True, exist_ok=True)
+    raw.write_text(
+        json.dumps({"unit_id": "unit-000001", "page": True, "contacts": []}),
+        encoding="utf-8",
+    )
+    mark_page_completed(paths, "unit-000002", 2, {"contacts": []})
+
+    completed = load_completed_pages(paths)
+
+    assert completed == {("unit-000002", 2)}
+
+
 def test_load_completed_pages_ignores_malformed_raw_names(tmp_path: Path):
     paths = ensure_campaign(tmp_path / "campaign")
     malformed_paths = [
