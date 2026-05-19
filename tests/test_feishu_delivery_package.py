@@ -230,6 +230,63 @@ def test_cli_dry_run_writes_manifest_and_sources_without_publish_executor(tmp_pa
     assert "publish_results" not in stored
 
 
+def test_cli_reports_missing_final_report_without_traceback_or_manifest(tmp_path: Path, capsys):
+    campaign_root = tmp_path / "campaign"
+    manifest_out = campaign_root / "reports" / "feishu-manifest.json"
+
+    code = main([
+        "--campaign-root",
+        str(campaign_root),
+        "--final-report",
+        str(tmp_path / "missing-final-report.json"),
+        "--outreach-csv",
+        str(tmp_path / "missing-outreach.csv"),
+        "--audit-json",
+        str(tmp_path / "missing-audit.json"),
+        "--manifest-out",
+        str(manifest_out),
+        "--dry-run",
+    ])
+
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert "Traceback" not in captured.out + captured.err
+    assert not manifest_out.exists()
+    assert not (campaign_root / "reports" / "feishu-delivery-summary.xml").exists()
+
+
+def test_cli_reports_bad_final_report_json_without_traceback_or_manifest(tmp_path: Path, capsys):
+    campaign_root = tmp_path / "campaign"
+    final_report = tmp_path / "inputs" / "final-report.json"
+    final_report.parent.mkdir(parents=True, exist_ok=True)
+    final_report.write_text("{bad json", encoding="utf-8")
+    manifest_out = campaign_root / "reports" / "feishu-manifest.json"
+
+    code = main([
+        "--campaign-root",
+        str(campaign_root),
+        "--final-report",
+        str(final_report),
+        "--outreach-csv",
+        str(tmp_path / "missing-outreach.csv"),
+        "--audit-json",
+        str(tmp_path / "missing-audit.json"),
+        "--manifest-out",
+        str(manifest_out),
+        "--dry-run",
+    ])
+
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert "Traceback" not in captured.out + captured.err
+    assert not manifest_out.exists()
+    assert not (campaign_root / "reports" / "feishu-delivery-summary.xml").exists()
+
+
 def test_manifest_publish_steps_include_append_skeleton_for_sheet_sources(tmp_path: Path):
     campaign_root, final_report, outreach_csv, audit_json = _fixture_inputs(tmp_path)
 

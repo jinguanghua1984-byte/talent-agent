@@ -106,6 +106,18 @@ def test_build_idempotency_key_event_id_includes_blocked_stage():
     assert key == "ai-infra-demo-search_live-evt-001"
 
 
+def test_build_idempotency_key_prefers_blocked_event_id():
+    key = build_idempotency_key({
+        "campaign_id": "ai-infra-demo",
+        "blocked_stage": "search_live",
+        "blocked_event_id": "blocked-ai-infra-demo-search_live-captcha_api-a1b2c3d4",
+        "event_id": "evt-older",
+        "reason": "captcha_api",
+    })
+
+    assert key == "ai-infra-demo-search_live-blocked-ai-infra-demo-search_live-captcha_api-a1b2c3d4"
+
+
 def test_build_send_argv_uses_lark_messages_send_dry_run_and_idempotency_key():
     argv = build_send_argv(
         identity="bot",
@@ -209,3 +221,50 @@ def test_cli_dry_run_prints_preview_without_subprocess(tmp_path: Path, monkeypat
     assert preview["argv"][:3] == ["lark-cli", "im", "+messages-send"]
     assert preview["text"] == build_message_text(sensitive_event)
     assert preview["idempotency_key"] == "ai-infra-demo-detail_live-evt-001"
+
+
+def test_cli_reports_missing_event_without_traceback_or_subprocess(tmp_path: Path, monkeypatch, capsys):
+    def fail_run(*args, **kwargs):
+        raise AssertionError("subprocess.run should not be called when event load fails")
+
+    monkeypatch.setattr("scripts.campaign_notify.subprocess.run", fail_run)
+    code = main([
+        "--event",
+        str(tmp_path / "missing.json"),
+        "--identity",
+        "bot",
+        "--chat-id",
+        "oc_xxx",
+        "--dry-run",
+    ])
+
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert "Traceback" not in captured.out + captured.err
+
+
+def test_cli_reports_bad_event_json_without_traceback_or_subprocess(tmp_path: Path, monkeypatch, capsys):
+    event_path = tmp_path / "event.json"
+    event_path.write_text("{bad json", encoding="utf-8")
+
+    def fail_run(*args, **kwargs):
+        raise AssertionError("subprocess.run should not be called when event load fails")
+
+    monkeypatch.setattr("scripts.campaign_notify.subprocess.run", fail_run)
+    code = main([
+        "--event",
+        str(event_path),
+        "--identity",
+        "bot",
+        "--chat-id",
+        "oc_xxx",
+        "--dry-run",
+    ])
+
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert "Traceback" not in captured.out + captured.err

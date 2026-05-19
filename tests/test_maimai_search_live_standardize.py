@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from scripts.maimai_ai_infra_campaign import ensure_campaign, load_completed_pages, mark_page_completed, page_raw_path
-from scripts.maimai_search_live_standardize import standardize_live_run
+from scripts.maimai_search_live_standardize import main, standardize_live_run
 
 
 def _search_event_count(campaign) -> int:
@@ -131,6 +131,8 @@ def test_cli_writes_summary_out(tmp_path: Path):
             str(run_path),
             "--out",
             str(out_path),
+            "--wave-id",
+            "search-wave-001",
         ],
         cwd=Path(__file__).resolve().parents[1],
         check=True,
@@ -141,9 +143,59 @@ def test_cli_writes_summary_out(tmp_path: Path):
     stdout_summary = json.loads(completed.stdout)
     file_summary = json.loads(out_path.read_text(encoding="utf-8"))
     assert stdout_summary["written_pages"] == 1
+    assert stdout_summary["wave_id"] == "search-wave-001"
     assert file_summary["status"] == "standardized"
     assert file_summary["written_pages"] == 1
-    assert page_raw_path(campaign, "unit-000001", 1).exists()
+    payload = json.loads(page_raw_path(campaign, "unit-000001", 1).read_text(encoding="utf-8-sig"))
+    assert payload["wave_id"] == "search-wave-001"
+
+
+def test_cli_reports_missing_run_without_traceback_or_outputs(tmp_path: Path, capsys):
+    campaign_root = tmp_path / "campaign"
+    out_path = tmp_path / "summary.json"
+
+    code = main([
+        "--campaign-root",
+        str(campaign_root),
+        "--run",
+        str(tmp_path / "missing-run.json"),
+        "--out",
+        str(out_path),
+        "--wave-id",
+        "search-wave-001",
+    ])
+
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert "Traceback" not in captured.out + captured.err
+    assert not out_path.exists()
+    assert not (campaign_root / "campaign-manifest.json").exists()
+
+
+def test_cli_reports_bad_run_json_without_traceback_or_outputs(tmp_path: Path, capsys):
+    campaign_root = tmp_path / "campaign"
+    run_path = tmp_path / "run.json"
+    out_path = tmp_path / "summary.json"
+    run_path.write_text("{bad json", encoding="utf-8")
+
+    code = main([
+        "--campaign-root",
+        str(campaign_root),
+        "--run",
+        str(run_path),
+        "--out",
+        str(out_path),
+    ])
+
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert "Traceback" not in captured.out + captured.err
+    assert not out_path.exists()
+    assert not (campaign_root / "campaign-manifest.json").exists()
 
 
 def test_standardize_live_run_rejects_non_canonical_batch_ids(tmp_path: Path):

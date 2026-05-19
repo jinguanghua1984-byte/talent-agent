@@ -4,6 +4,7 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -102,7 +103,7 @@ def load_json(path: str | Path) -> dict[str, Any]:
 
 
 def build_idempotency_key(event: dict[str, Any]) -> str:
-    event_id = _string_value(event.get("event_id"))
+    event_id = _string_value(event.get("blocked_event_id")) or _string_value(event.get("event_id"))
     if event_id:
         raw_key = "-".join(
             [
@@ -137,37 +138,41 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    event = load_json(args.event)
-    text = build_message_text(event)
-    idempotency_key = build_idempotency_key(event)
     try:
-        cmd = build_send_argv(
-            identity=args.identity,
-            chat_id=args.chat_id,
-            user_id=args.user_id,
-            text=text,
-            idempotency_key=idempotency_key,
-            dry_run=args.dry_run,
-        )
-    except ValueError as exc:
-        parser.error(str(exc))
-
-    if args.dry_run:
-        print(
-            json.dumps(
-                {"argv": cmd, "text": text, "idempotency_key": idempotency_key},
-                ensure_ascii=False,
-                indent=2,
+        event = load_json(args.event)
+        text = build_message_text(event)
+        idempotency_key = build_idempotency_key(event)
+        try:
+            cmd = build_send_argv(
+                identity=args.identity,
+                chat_id=args.chat_id,
+                user_id=args.user_id,
+                text=text,
+                idempotency_key=idempotency_key,
+                dry_run=args.dry_run,
             )
-        )
-        return 0
+        except ValueError as exc:
+            parser.error(str(exc))
 
-    completed = subprocess.run(cmd, check=False, text=True, capture_output=True)
-    if completed.stdout:
-        print(completed.stdout, end="")
-    if completed.stderr:
-        print(completed.stderr, end="")
-    return completed.returncode
+        if args.dry_run:
+            print(
+                json.dumps(
+                    {"argv": cmd, "text": text, "idempotency_key": idempotency_key},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 0
+
+        completed = subprocess.run(cmd, check=False, text=True, capture_output=True)
+        if completed.stdout:
+            print(completed.stdout, end="")
+        if completed.stderr:
+            print(completed.stderr, end="")
+        return completed.returncode
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

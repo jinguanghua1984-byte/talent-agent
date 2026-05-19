@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -109,32 +110,36 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
-    browser = find_browser(args.browser)
-    config = BrowserLaunchConfig(
-        browser=browser,
-        profile=args.profile,
-        remote_debugging_port=args.remote_debugging_port,
-        extension=args.extension,
-        url=args.url,
-    )
-    manifest = build_session_manifest(
-        profile=config.profile,
-        remote_debugging_port=config.remote_debugging_port,
-        extension=config.extension,
-        url=config.url,
-    )
+    try:
+        browser = find_browser(args.browser)
+        config = BrowserLaunchConfig(
+            browser=browser,
+            profile=args.profile,
+            remote_debugging_port=args.remote_debugging_port,
+            extension=args.extension,
+            url=args.url,
+        )
+        manifest = build_session_manifest(
+            profile=config.profile,
+            remote_debugging_port=config.remote_debugging_port,
+            extension=config.extension,
+            url=config.url,
+        )
 
-    write_manifest(args.manifest_out, manifest)
-    if args.dry_run:
-        print(json.dumps(manifest, ensure_ascii=False, indent=2))
+        write_manifest(args.manifest_out, manifest)
+        if args.dry_run:
+            print(json.dumps(manifest, ensure_ascii=False, indent=2))
+            return 0
+
+        config.profile.mkdir(parents=True, exist_ok=True)
+        subprocess.Popen(build_browser_args(config), close_fds=True)
+        print(f"CDP browser launched: {manifest['cdp_url']}")
+        print("Manual steps: login_maimai -> enter_talent_bank -> execute_one_search")
+        print("Automation boundary: launch_only")
         return 0
-
-    config.profile.mkdir(parents=True, exist_ok=True)
-    subprocess.Popen(build_browser_args(config), close_fds=True)
-    print(f"CDP browser launched: {manifest['cdp_url']}")
-    print("Manual steps: login_maimai -> enter_talent_bank -> execute_one_search")
-    print("Automation boundary: launch_only")
-    return 0
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

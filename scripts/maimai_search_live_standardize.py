@@ -125,16 +125,16 @@ def _existing_raw_matches(raw_path: Path, payload: dict[str, Any]) -> bool:
     return _is_equivalent_raw(existing, payload)
 
 
-def standardize_live_run(campaign_root: str | Path, run_path: str | Path) -> dict[str, Any]:
-    paths = ensure_campaign(campaign_root)
+def standardize_live_run(campaign_root: str | Path, run_path: str | Path, wave_id: str | None = None) -> dict[str, Any]:
     source_run = Path(run_path)
     run = _load_json(source_run)
     if not isinstance(run, dict):
         raise ValueError("live-run JSON must be an object")
+    paths = ensure_campaign(campaign_root)
 
     written_pages = 0
     skipped_pages: list[dict[str, Any]] = []
-    wave_id = _run_wave_id(run)
+    resolved_wave_id = str(wave_id).strip() if wave_id is not None else _run_wave_id(run)
     source_run_id = str(run.get("run_id") or "")
     batches = run.get("batches", [])
     if not isinstance(batches, list):
@@ -201,7 +201,7 @@ def standardize_live_run(campaign_root: str | Path, run_path: str | Path) -> dic
 
             payload = {
                 "unit_id": unit_id,
-                "wave_id": wave_id,
+                "wave_id": resolved_wave_id,
                 "page": page_number,
                 "source_run": str(source_run),
                 "source_run_id": source_run_id,
@@ -224,6 +224,7 @@ def standardize_live_run(campaign_root: str | Path, run_path: str | Path) -> dic
         "status": "standardized",
         "campaign_root": str(paths.root),
         "run": str(source_run),
+        "wave_id": resolved_wave_id,
         "written_pages": written_pages,
         "skipped_pages": skipped_pages,
     }
@@ -234,13 +235,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--campaign-root", required=True)
     parser.add_argument("--run", required=True)
     parser.add_argument("--out")
+    parser.add_argument("--wave-id", default=None)
     args = parser.parse_args(argv)
 
-    result = standardize_live_run(args.campaign_root, args.run)
-    if args.out:
-        _write_json(args.out, result)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    try:
+        result = standardize_live_run(args.campaign_root, args.run, wave_id=args.wave_id)
+        if args.out:
+            _write_json(args.out, result)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ from scripts.maimai_campaign_orchestrator import (
     DEFAULT_RUN_POLICY,
     _load_jsonl_objects,
     append_event,
+    build_live_gate_wave_plan,
     build_stage_command_plan,
     build_stage_commands,
     count_search_requests,
@@ -20,6 +21,11 @@ from scripts.maimai_campaign_orchestrator import (
     write_json,
     write_stage_state,
 )
+from scripts.maimai_ai_infra_campaign import ensure_campaign
+from scripts.maimai_ai_infra_pipeline import extract_wave_contacts_from_pages
+from scripts.maimai_ai_infra_search_live_gate import iter_batch_pages
+from scripts.maimai_search_live_standardize import standardize_live_run
+from scripts.campaign_notify import build_idempotency_key
 
 
 def _unit(index: int, pages: object = 3) -> dict[str, object]:
@@ -62,7 +68,9 @@ def test_split_search_units_limits_each_live_wave_to_50_pages():
     assert all(wave["page_count"] <= 50 for wave in waves)
     first_batch = waves[0]["batches"][0]
     assert first_batch["unit_id"] == "unit-000001"
+    assert first_batch["batch_id"] == "unit-000001"
     assert first_batch["start_page"] == 1
+    assert first_batch["max_pages"] == 3
     assert first_batch["max_page"] == 3
 
 
@@ -209,7 +217,91 @@ def test_plan_waves_cli_writes_plan_without_live_side_effects(tmp_path: Path, ca
     assert printed == saved
     assert saved["wave_count"] == 3
     assert [wave["page_count"] for wave in saved["waves"]] == [48, 48, 27]
+    first_wave = saved["waves"][0]
+    sidecar_path = Path(first_wave["live_gate_plan_path"])
+    sidecar = load_json(sidecar_path)
+    assert sidecar["wave_id"] == "search-wave-001"
+    assert sidecar["gate"] == "S2"
+    assert sidecar["page_count"] == 48
+    assert sidecar["batches"][0]["unit_id"] == "unit-000001"
+    assert sidecar["batches"][0]["batch_id"] == "unit-000001"
+    assert sidecar["batches"][0]["start_page"] == 1
+    assert sidecar["batches"][0]["max_pages"] == 3
+    assert sidecar["batches"][0]["max_page"] == 3
     assert not (tmp_path / "state" / "events.jsonl").exists()
+
+
+def test_plan_waves_to_standardize_preserves_wave_id_for_pipeline_filter(tmp_path: Path, capsys):
+    campaign = ensure_campaign(tmp_path / "campaign")
+    units_path = tmp_path / "units.jsonl"
+    units_path.write_text(
+        "\n".join(
+            [
+                json.dumps(_unit(1, pages=2), ensure_ascii=False),
+                json.dumps(_unit(2, pages=1), ensure_ascii=False),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    aggregate_path = tmp_path / "plans" / "wave-plan.json"
+
+    assert main([
+        "plan-waves",
+        "--campaign-root",
+        str(campaign.root),
+        "--units",
+        str(units_path),
+        "--out",
+        str(aggregate_path),
+    ]) == 0
+    capsys.readouterr()
+
+    aggregate = load_json(aggregate_path)
+    wave = aggregate["waves"][0]
+    wave_id = wave["wave_id"]
+    assert build_live_gate_wave_plan(wave)["wave_id"] == wave_id
+
+    sidecar = load_json(wave["live_gate_plan_path"])
+    assert set(sidecar) >= {"wave_id", "gate", "page_count", "batches"}
+    assert sidecar["wave_id"] == wave_id
+    assert [iter_batch_pages(batch) for batch in sidecar["batches"]] == [[1, 2], [1]]
+
+    run_path = tmp_path / "fake-live-run.json"
+    run_path.write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "run_id": "fake-run-001",
+                "batches": [
+                    {
+                        "batch_id": sidecar["batches"][0]["batch_id"],
+                        "pages": [
+                            {"page": 1, "ok": True, "contacts": [{"id": "p1", "name": "one"}]},
+                            {"page": 2, "ok": True, "contacts": [{"id": "p2", "name": "two"}]},
+                        ],
+                    },
+                    {
+                        "batch_id": sidecar["batches"][1]["batch_id"],
+                        "pages": [{"page": 1, "ok": True, "contacts": [{"id": "p3", "name": "three"}]}],
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    summary = standardize_live_run(campaign.root, run_path, wave_id=wave_id)
+    extracted = extract_wave_contacts_from_pages(campaign, wave_id)
+    wrong_wave = extract_wave_contacts_from_pages(campaign, "wave-001")
+
+    assert summary["wave_id"] == wave_id
+    assert summary["written_pages"] == 3
+    assert extracted["metadata"]["wave_id"] == wave_id
+    assert extracted["metadata"]["total_contacts"] == 3
+    assert [contact["id"] for contact in extracted["contacts"]] == ["p1", "p2", "p3"]
+    assert wrong_wave["metadata"]["total_contacts"] == 0
 
 
 def test_plan_waves_cli_reports_bad_jsonl_without_traceback_or_side_effects(
@@ -237,6 +329,33 @@ def test_plan_waves_cli_reports_bad_jsonl_without_traceback_or_side_effects(
     assert "bad-units.jsonl line 1: invalid JSON" in captured.err
     assert "Traceback" not in combined_output
     assert not out_path.exists()
+    assert not (tmp_path / "state" / "events.jsonl").exists()
+
+
+def test_plan_waves_cli_reports_missing_units_without_traceback_or_side_effects(
+    tmp_path: Path,
+    capsys,
+):
+    out_path = tmp_path / "wave-plan.json"
+
+    return_code = main([
+        "plan-waves",
+        "--campaign-root",
+        str(tmp_path),
+        "--units",
+        str(tmp_path / "missing-units.jsonl"),
+        "--out",
+        str(out_path),
+    ])
+
+    captured = capsys.readouterr()
+    combined_output = captured.out + captured.err
+    assert return_code == 2
+    assert captured.out == ""
+    assert "error:" in captured.err
+    assert "Traceback" not in combined_output
+    assert not out_path.exists()
+    assert not (tmp_path / "search-wave-001-plan.json").exists()
     assert not (tmp_path / "state" / "events.jsonl").exists()
 
 
@@ -295,9 +414,18 @@ def test_build_stage_command_plan_links_wave_plan_producer_to_live_gate_consumer
     assert plan_waves_argv[plan_waves_argv.index("--units") + 1] == search_plan_argv[
         search_plan_argv.index("--out-units") + 1
     ]
-    assert plan_waves_argv[plan_waves_argv.index("--out") + 1] == live_gate_argv[
-        live_gate_argv.index("--plan") + 1
-    ]
+    aggregate_plan = Path(plan_waves_argv[plan_waves_argv.index("--out") + 1])
+    live_gate_plan = Path(live_gate_argv[live_gate_argv.index("--plan") + 1])
+    assert aggregate_plan.name == "wave-plan.json"
+    assert live_gate_plan.name == "search-wave-001-plan.json"
+    assert live_gate_plan.parent == aggregate_plan.parent
+    assert str(live_gate_plan) in by_stage["plan_search_waves"]["produces"]
+
+    standardize_argv = by_stage["standardize_search_live"]["argv"]
+    import_argv = by_stage["import_wave"]["argv"]
+    assert standardize_argv[standardize_argv.index("--wave-id") + 1] == "search-wave-001"
+    assert import_argv[import_argv.index("--wave") + 1] == "search-wave-001"
+    assert Path(standardize_argv[standardize_argv.index("--run") + 1]).name == "search-wave-001-run.json"
 
 
 def test_live_gate_command_requires_explicit_policy_gate_metadata():
@@ -382,6 +510,7 @@ def test_blocked_continuation_plan_contains_resume_command_and_event(tmp_path: P
     assert saved == plan
     assert plan["campaign_id"] == tmp_path.name
     assert plan["blocked_event_id"].startswith(f"blocked-{tmp_path.name}-detail_live-captcha_api-")
+    assert plan["event_id"] == plan["blocked_event_id"]
     assert plan["blocked_stage"] == "detail_live"
     assert plan["reason"] == "captcha_api"
     assert plan["evidence_file"] == "reports/interruption.json"
@@ -394,6 +523,7 @@ def test_blocked_continuation_plan_contains_resume_command_and_event(tmp_path: P
     assert "\u8d1f\u8d23\u4eba" in plan["safe_to_resume_after"]
     assert "maimai_campaign_orchestrator resume" in plan["resume_command"]
     assert f"--campaign-root {tmp_path.as_posix()}" in plan["resume_command"]
+    assert build_idempotency_key(plan) == f"{tmp_path.name}-detail_live-{plan['blocked_event_id']}"
 
     state = load_json(tmp_path / "state" / "stage-state.json")
     assert state["stage"] == "detail_live"

@@ -6,6 +6,7 @@ import argparse
 import csv
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 from xml.sax.saxutils import escape
@@ -448,7 +449,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def _main_business(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
@@ -481,6 +482,14 @@ def main(argv: list[str] | None = None) -> int:
     out.write_text(serialized, encoding="utf-8-sig")
     print(serialized)
     return returncode
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        return _main_business(argv)
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

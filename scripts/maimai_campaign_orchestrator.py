@@ -104,7 +104,10 @@ def split_search_units_into_live_waves(
             flush_current()
 
         batch = dict(unit)
+        batch["unit_id"] = str(unit.get("unit_id") or "")
+        batch["batch_id"] = batch["unit_id"]
         batch["start_page"] = 1
+        batch["max_pages"] = pages
         batch["max_page"] = pages
         current_batches.append(batch)
         current_pages += pages
@@ -112,6 +115,56 @@ def split_search_units_into_live_waves(
 
     flush_current()
     return waves
+
+
+def build_live_gate_wave_plan(wave: dict[str, Any], gate: str = "S2") -> dict[str, Any]:
+    wave_id = str(wave.get("wave_id") or "").strip()
+    if not wave_id:
+        raise ValueError("wave_id is required")
+
+    batches: list[dict[str, Any]] = []
+    page_count = 0
+    for batch in wave.get("batches") or []:
+        if not isinstance(batch, dict):
+            raise ValueError(f"wave {wave_id} batches must be objects")
+        unit_id = str(batch.get("unit_id") or "").strip()
+        if not unit_id:
+            raise ValueError(f"wave {wave_id} batch unit_id is required")
+        pages = _unit_pages({"unit_id": unit_id, "max_pages": batch.get("max_pages", batch.get("max_page"))})
+        live_batch = dict(batch)
+        live_batch["unit_id"] = unit_id
+        live_batch["batch_id"] = unit_id
+        live_batch["start_page"] = int(live_batch.get("start_page") or 1)
+        live_batch["max_pages"] = pages
+        live_batch["max_page"] = pages
+        batches.append(live_batch)
+        page_count += pages
+
+    return {
+        "wave_id": wave_id,
+        "gate": gate,
+        "page_count": int(wave.get("page_count") or page_count),
+        "batches": batches,
+    }
+
+
+def write_wave_plan_with_sidecars(path: str | Path, plan: dict[str, Any], gate: str = "S2") -> dict[str, Any]:
+    out_path = Path(path)
+    enriched = dict(plan)
+    enriched_waves: list[dict[str, Any]] = []
+    for wave in plan.get("waves") or []:
+        if not isinstance(wave, dict):
+            raise ValueError("waves must be objects")
+        wave_copy = dict(wave)
+        wave_id = str(wave_copy.get("wave_id") or "").strip()
+        sidecar_path = out_path.parent / f"{wave_id}-plan.json"
+        live_gate_plan = build_live_gate_wave_plan(wave_copy, gate=gate)
+        write_json(sidecar_path, live_gate_plan)
+        wave_copy["live_gate_plan_path"] = sidecar_path.as_posix()
+        enriched_waves.append(wave_copy)
+    enriched["waves"] = enriched_waves
+    write_json(out_path, enriched)
+    return enriched
 
 
 def load_json(path: str | Path, default: Any = None) -> Any:
@@ -228,8 +281,10 @@ def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str
 
     search_plan = root / "search-plan.json"
     search_units = root / "search-units.jsonl"
-    live_plan = root / "raw" / "search-live-runs" / "wave-plan.json"
-    live_run = root / "raw" / "search-live-runs" / "run.json"
+    aggregate_live_plan = root / "raw" / "search-live-runs" / "wave-plan.json"
+    live_wave_id = "search-wave-001"
+    live_plan = aggregate_live_plan.parent / f"{live_wave_id}-plan.json"
+    live_run = aggregate_live_plan.parent / f"{live_wave_id}-run.json"
     campaign_db = root / "talent.db"
     continuation_plan = root / "state" / "continuation-plan.json"
     reports = root / "reports"
@@ -264,9 +319,9 @@ def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str
                 "--units",
                 str(search_units),
                 "--out",
-                str(live_plan),
+                str(aggregate_live_plan),
             ],
-            extra={"consumes": [str(search_units)], "produces": [str(live_plan)]},
+            extra={"consumes": [str(search_units)], "produces": [str(aggregate_live_plan), str(live_plan)]},
         ),
         _command_entry(
             stage="search_live",
@@ -297,6 +352,8 @@ def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str
                 campaign_root,
                 "--run",
                 str(live_run),
+                "--wave-id",
+                live_wave_id,
             ],
             extra={
                 "consumes": [str(live_run)],
@@ -316,7 +373,7 @@ def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str
                 "--config",
                 strategy,
                 "--wave",
-                "wave-001",
+                live_wave_id,
                 "--db",
                 str(campaign_db),
             ],
@@ -441,6 +498,7 @@ def write_blocked_continuation(
     event_id = _blocked_event_id(campaign_id, stage, reason, evidence_file)
     plan = {
         "campaign_id": campaign_id,
+        "event_id": event_id,
         "blocked_event_id": event_id,
         "blocked_stage": stage,
         "reason": reason,
@@ -534,7 +592,7 @@ def _cmd_plan_waves(args: argparse.Namespace) -> int:
         raise ValueError(f"invalid search units JSONL: {exc}") from exc
     plan = build_wave_plan(args.campaign_root, units, policy=DEFAULT_RUN_POLICY)
     if args.out:
-        write_json(args.out, plan)
+        plan = write_wave_plan_with_sidecars(args.out, plan)
     _print_json(plan)
     return 0
 
@@ -576,7 +634,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
-    except ValueError as exc:
+    except (FileNotFoundError, json.JSONDecodeError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
