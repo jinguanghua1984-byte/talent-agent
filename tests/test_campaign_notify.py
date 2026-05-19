@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.campaign_notify import build_message_text, build_send_argv, main
+from scripts.campaign_notify import build_idempotency_key, build_message_text, build_send_argv, main
 
 
 def _event() -> dict[str, object]:
@@ -44,6 +44,40 @@ def test_build_message_text_does_not_include_sensitive_raw_fields():
     assert "不应出现" not in text
     assert "secret-cookie" not in text
     assert "secret-token" not in text
+
+
+def test_build_message_text_redacts_sensitive_values_inside_whitelisted_fields():
+    event = {
+        **_event(),
+        "reason": "authorization: basic basic-secret-value",
+        "operator_action": "password=hunter2 client_secret=client-secret-value app_secret=app-secret-value",
+        "resume_command": (
+            "python -m scripts.maimai_campaign_orchestrator resume "
+            "--access_token access-token-value --api-key api-key-value --session session-value"
+        ),
+    }
+
+    text = build_message_text(event)
+
+    assert "basic-secret-value" not in text
+    assert "hunter2" not in text
+    assert "client-secret-value" not in text
+    assert "app-secret-value" not in text
+    assert "access-token-value" not in text
+    assert "api-key-value" not in text
+    assert "session-value" not in text
+    assert text.count("<redacted-sensitive-value>") >= 7
+
+
+def test_build_idempotency_key_event_id_includes_blocked_stage():
+    key = build_idempotency_key({
+        "campaign_id": "ai-infra-demo",
+        "blocked_stage": "search_live",
+        "event_id": "evt-001",
+        "reason": "captcha_api",
+    })
+
+    assert key == "ai-infra-demo-search_live-evt-001"
 
 
 def test_build_send_argv_uses_lark_messages_send_dry_run_and_idempotency_key():
@@ -109,8 +143,15 @@ def test_build_send_argv_rejects_invalid_identity_or_target(identity, chat_id, u
 
 
 def test_cli_dry_run_prints_preview_without_subprocess(tmp_path: Path, monkeypatch, capsys):
+    sensitive_event = {
+        **_event(),
+        "event_id": "evt-001",
+        "reason": "authorization: bearer bearer-secret-value",
+        "operator_action": "api_key=api-key-secret",
+        "resume_command": "python resume --client_secret client-secret --session session-secret",
+    }
     event_path = tmp_path / "event.json"
-    event_path.write_text(json.dumps(_event(), ensure_ascii=False), encoding="utf-8-sig")
+    event_path.write_text(json.dumps(sensitive_event, ensure_ascii=False), encoding="utf-8-sig")
 
     def fail_run(*args, **kwargs):
         raise AssertionError("subprocess.run should not be called in dry-run")
@@ -128,7 +169,12 @@ def test_cli_dry_run_prints_preview_without_subprocess(tmp_path: Path, monkeypat
     ])
 
     assert code == 0
-    preview = json.loads(capsys.readouterr().out)
+    out = capsys.readouterr().out
+    assert "bearer-secret-value" not in out
+    assert "api-key-secret" not in out
+    assert "client-secret" not in out
+    assert "session-secret" not in out
+    preview = json.loads(out)
     assert preview["argv"][:3] == ["lark-cli", "im", "+messages-send"]
-    assert preview["text"] == build_message_text(_event())
-    assert preview["idempotency_key"] == "ai-infra-demo-detail_live-captcha_api"
+    assert preview["text"] == build_message_text(sensitive_event)
+    assert preview["idempotency_key"] == "ai-infra-demo-detail_live-evt-001"

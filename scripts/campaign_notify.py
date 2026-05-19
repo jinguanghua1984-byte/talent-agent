@@ -12,10 +12,23 @@ DEFAULT_OPERATOR_ACTION = (
     "处理平台验证/登录/安全页面后，回到人才银行页面，不刷新页面，再运行恢复命令。"
 )
 IDENTITIES = {"bot", "user"}
+SENSITIVE_KEYWORDS = (
+    "secret",
+    "password",
+    "session",
+    "sessionid",
+    "access[_-]token",
+    "client[_-]secret",
+    "app[_-]secret",
+    "api[-_]key",
+    "cookie",
+    "token",
+)
+SENSITIVE_KEYWORD_PATTERN = "|".join(SENSITIVE_KEYWORDS)
 SENSITIVE_PATTERNS = [
-    re.compile(r"(?i)\bauthorization\s*:\s*bearer\s+[^\s]+"),
-    re.compile(r"(?i)\b(cookie|token|authorization)\s*[:=]\s*[^\s&]+"),
-    re.compile(r"(?i)--(cookie|token)\s+[^\s]+"),
+    re.compile(r"(?i)\bauthorization\s*[:=]\s*(?:basic|bearer)\s+[^\s,;]+"),
+    re.compile(rf"(?i)\b(?:{SENSITIVE_KEYWORD_PATTERN})\b\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\s&,;]+)"),
+    re.compile(rf"(?i)--(?:{SENSITIVE_KEYWORD_PATTERN})\b(?:=|\s+)[^\s]+"),
 ]
 
 
@@ -89,7 +102,13 @@ def load_json(path: str | Path) -> dict[str, Any]:
 def build_idempotency_key(event: dict[str, Any]) -> str:
     event_id = _string_value(event.get("event_id"))
     if event_id:
-        raw_key = f"{_string_value(event.get('campaign_id')) or 'campaign'}-{event_id}"
+        raw_key = "-".join(
+            [
+                _string_value(event.get("campaign_id")) or "campaign",
+                _string_value(event.get("blocked_stage")) or "stage",
+                event_id,
+            ]
+        )
     else:
         raw_key = "-".join(
             [
