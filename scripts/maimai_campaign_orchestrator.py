@@ -13,17 +13,25 @@ from typing import Any
 
 
 DEFAULT_RUN_POLICY: dict[str, Any] = {
+    "auto_continue_after_search_plan_confirmation": True,
+    "auto_bootstrap_browser_after_plan_confirmation": True,
+    "auto_run_detail_after_list_funnel": True,
+    "auto_rank_after_detail_apply": True,
+    "auto_publish_feishu_delivery_after_detail_rank": True,
     "allow_live_search": True,
     "allow_campaign_db_auto_apply_after_clean_dry_run": True,
     "allow_detail_live_after_health_ok": True,
     "allow_detail_campaign_db_auto_apply_after_clean_dry_run": True,
     "allow_main_db_write": False,
     "allow_feishu_delivery_publish": True,
+    "main_db_sync_mode": "manual_only",
     "daily_search_request_budget": 500,
     "search_wave_max_pages": 50,
     "detail_pack_max_contacts": 100,
     "detail_target_grades": ["A", "B"],
+    "detail_include_c_when_abc_total_lte": 100,
     "delivery_outputs": ["local_md", "csv", "feishu_doc", "feishu_base"],
+    "delivery_language": "zh-CN",
     "notify_channel": "feishu_im",
     "notify_identity": "bot",
     "stop_on_platform_security_signal": True,
@@ -288,6 +296,17 @@ def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str
     campaign_db = root / "talent.db"
     continuation_plan = root / "state" / "continuation-plan.json"
     reports = root / "reports"
+    detail_targets = root / "raw" / "detail-targets" / "detail-targets-ab-all.json"
+    detailed_rank_json = reports / "detailed-rank.json"
+    detailed_rank_md = reports / "detailed-rank.md"
+    final_report_json = reports / "final-search-report.json"
+    final_report_md = reports / "final-search-report.md"
+    outreach_json = reports / "final-outreach-priority.json"
+    outreach_md = reports / "final-outreach-priority.md"
+    outreach_csv = reports / "outreach-execution-queue.csv"
+    outreach_audit_json = reports / "outreach-quality-audit.json"
+    outreach_audit_md = reports / "outreach-quality-audit.md"
+    feishu_manifest = reports / "feishu-delivery-manifest.json"
 
     commands = [
         _command_entry(
@@ -380,7 +399,7 @@ def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str
         ),
         _command_entry(
             stage="list_rank",
-            description="Rank list-stage candidates from the campaign DB.",
+            description="Rank list-stage candidates from the campaign DB and produce the A/B/C/淘汰 funnel.",
             argv=[
                 "python",
                 "-m",
@@ -396,10 +415,15 @@ def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str
                 "--out-md",
                 str(reports / "list-rank.md"),
             ],
+            extra={
+                "auto_next_stage": "detail_pack",
+                "funnel_labels": ["A", "B", "C", "淘汰"],
+                "produces": [str(reports / "list-rank.json"), str(reports / "list-rank.md")],
+            },
         ),
         _command_entry(
             stage="detail_pack",
-            description="Build A/B detail target packs capped by policy.",
+            description="Build detail target packs: default A/B, include C when A+B+C total is within policy threshold.",
             argv=[
                 "python",
                 "-m",
@@ -409,7 +433,121 @@ def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str
                 campaign_root,
                 "--pack-size",
                 str(pack_size),
+                "--include-c-when-abc-total-lte",
+                str(policy.get("detail_include_c_when_abc_total_lte", DEFAULT_RUN_POLICY["detail_include_c_when_abc_total_lte"])),
             ],
+            extra={
+                "auto_next_stage": "detail_live",
+                "detail_target_grades": list(policy.get("detail_target_grades", DEFAULT_RUN_POLICY["detail_target_grades"])),
+                "detail_include_c_when_abc_total_lte": policy.get(
+                    "detail_include_c_when_abc_total_lte",
+                    DEFAULT_RUN_POLICY["detail_include_c_when_abc_total_lte"],
+                ),
+                "produces": [str(detail_targets), str(root / "raw" / "detail-targets" / "detail-ab-pack-*.json")],
+            },
+        ),
+        _command_entry(
+            stage="detailed_rank",
+            description="Run detailed ranking after detail apply completes cleanly.",
+            argv=[
+                "python",
+                "-m",
+                "scripts.maimai_ai_infra_rank",
+                "--db",
+                str(campaign_db),
+                "--config",
+                strategy,
+                "--mode",
+                "detailed",
+                "--out-json",
+                str(detailed_rank_json),
+                "--out-md",
+                str(detailed_rank_md),
+            ],
+            extra={
+                "auto_next_stage": "delivery_report",
+                "produces": [str(detailed_rank_json), str(detailed_rank_md)],
+            },
+        ),
+        _command_entry(
+            stage="delivery_report",
+            description="Generate Chinese final report and outreach priority data from detailed ranking.",
+            argv=[
+                "python",
+                "-m",
+                "scripts.maimai_ai_infra_delivery_report",
+                "--campaign-root",
+                campaign_root,
+                "--db-path",
+                str(campaign_db),
+                "--targets",
+                str(detail_targets),
+                "--rank-json",
+                str(detailed_rank_json),
+                "--out-report-json",
+                str(final_report_json),
+                "--out-report-md",
+                str(final_report_md),
+                "--out-outreach-json",
+                str(outreach_json),
+                "--out-outreach-md",
+                str(outreach_md),
+            ],
+            extra={
+                "auto_next_stage": "outreach_package",
+                "delivery_language": policy.get("delivery_language", DEFAULT_RUN_POLICY["delivery_language"]),
+                "produces": [str(final_report_json), str(final_report_md), str(outreach_json), str(outreach_md)],
+            },
+        ),
+        _command_entry(
+            stage="outreach_package",
+            description="Generate Chinese outreach execution CSV/Markdown and quality audit.",
+            argv=[
+                "python",
+                "-m",
+                "scripts.maimai_ai_infra_outreach_export",
+                "--outreach-json",
+                str(outreach_json),
+                "--out-csv",
+                str(outreach_csv),
+                "--out-md",
+                str(reports / "outreach-execution-queue.md"),
+                "--out-audit-json",
+                str(outreach_audit_json),
+                "--out-audit-md",
+                str(outreach_audit_md),
+            ],
+            extra={
+                "auto_next_stage": "delivery_package",
+                "delivery_language": policy.get("delivery_language", DEFAULT_RUN_POLICY["delivery_language"]),
+                "produces": [str(outreach_csv), str(outreach_audit_json), str(outreach_audit_md)],
+            },
+        ),
+        _command_entry(
+            stage="delivery_package",
+            description="Publish Chinese Feishu summary document, candidate sheet, and outreach queue sheet when policy allows.",
+            live_action=True,
+            requires_policy_gate="allow_feishu_delivery_publish",
+            argv=[
+                "python",
+                "-m",
+                "scripts.feishu_delivery_package",
+                "--campaign-root",
+                campaign_root,
+                "--final-report",
+                str(final_report_json),
+                "--outreach-csv",
+                str(outreach_csv),
+                "--audit-json",
+                str(outreach_audit_json),
+                "--manifest-out",
+                str(feishu_manifest),
+            ],
+            extra={
+                "delivery_language": policy.get("delivery_language", DEFAULT_RUN_POLICY["delivery_language"]),
+                "main_db_sync_mode": policy.get("main_db_sync_mode", DEFAULT_RUN_POLICY["main_db_sync_mode"]),
+                "produces": [str(feishu_manifest)],
+            },
         ),
     ]
 

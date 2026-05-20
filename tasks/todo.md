@@ -2909,3 +2909,250 @@
 - 语法与 whitespace：`python -m py_compile scripts/maimai_cdp_browser_bootstrap.py scripts/maimai_search_live_standardize.py scripts/campaign_notify.py scripts/feishu_delivery_package.py scripts/maimai_campaign_orchestrator.py` 通过；`git diff --check` 通过。
 - 本轮验证未运行真实脉脉请求、未启动浏览器、未写 campaign/main DB。Feishu IM 与 Feishu delivery 测试只使用 dry-run、fake command runner 或 monkeypatch，未发送消息、未创建云文档或表格。
 - 真实运行前仍需负责人配置 Feishu IM：确认 `notify_identity`（推荐 bot）、目标 `notify_chat_id` 或 `notify_user_id`、bot 已加入目标群、应用具备消息发送 scope，并先执行 dry-run 预览和一条测试消息。
+
+## 2026-05-20 maimai-talent-search-campaign skill 语义入口优化
+
+> 目标：优化 `skills/maimai-talent-search-campaign/SKILL.md`，让它支持“根据 JD 搜索脉脉”“按需求搜索脉脉，需求如下”等自然语言场景语义调用；合同产物生成完成后自动交接 `agents/workflows/maimai-unattended-campaign/AGENT.md`，引导后续 workflow。
+
+- [x] 先补回归测试，锁定场景语义触发和 workflow 自动交接要求。
+- [x] 确认测试先失败，证明当前 skill 缺口存在。
+- [x] 更新 `SKILL.md` frontmatter、调用方式、输出产物骨架和交接规则。
+- [x] 运行聚焦测试和格式检查。
+
+### Review
+
+- 已完成：`SKILL.md` 现在支持“根据 AI Infra JD 搜索脉脉”“按需求搜索脉脉，需求如下”“按需求搜素脉脉”等语义触发；合同文件写入后明确要求自动交接到 `agents/workflows/maimai-unattended-campaign/AGENT.md`。
+- 验证：先写测试并看到 `2 failed, 6 passed`，随后更新 skill 后 `tests/test_maimai_talent_search_campaign_skill.py` -> `8 passed`；`git diff --check` 通过。
+- 边界：本次只修改 skill 文档、测试和任务记录；未启动浏览器、未触发真实脉脉请求、未发送飞书消息、未写 DB。
+
+## 2026-05-20 LLM 大模型推理 JD 脉脉寻访
+
+> 目标：基于 `C:\Users\Administrator\Downloads\LLM大模型推理.md` 生成脉脉 unattended campaign 合同，展开首轮搜索计划，并完成只读/离线校验；真实脉脉搜索、详情抓取、DB apply、飞书发布另行确认。
+
+- [x] 读取 JD、skill、canonical workflow 和现有安全 lessons，确认边界。
+- [x] 生成 `data/campaigns/llm-inference-2026-05-20/` 下的 `requirements.json`、`strategy.json`、`run-policy.json`、`search-implementation-plan.md`、`campaign-manifest.json`。
+- [x] 运行 workflow status、搜索计划编译和 wave 展开，生成 `search-plan.json`、`search-units.jsonl`、`raw/search-live-runs/wave-plan.json`。
+- [x] 校验合同关键字段、策略约束、wave 页数预算和无真实请求副作用。
+- [x] 回填 Review，给出下一步真实执行前的人工动作和确认点。
+
+### Review
+
+- 已生成本地 campaign：`data/campaigns/llm-inference-2026-05-20/`，包含 `requirements.json`、`strategy.json`、`run-policy.json`、`campaign-manifest.json`、`search-implementation-plan.md`。
+- JD 抽取结果：目标岗位为 LLM 大模型推理工程师；年限 1-7；学校门槛 985/211/QS Top500/海外 Top500；核心公司池覆盖 DeepSeek、MiniMax、月之暗面、阶跃星辰、智谱、零一万物、字节、阿里、百度、腾讯，二级池覆盖昆仑万维、爱诗科技、LoveArt、硅基流动等；华为作为条件补洞项。
+- 搜索策略已编译：`search-units.jsonl` 共 136 个 unit；`raw/search-live-runs/wave-plan.json` 共 9 个 wave，总计 408 页，单 wave 页数 `[48,48,48,48,48,48,48,48,24]`，低于每日搜索请求预算 500。
+- 当前 workflow 状态：`S2_offline_search_plan / ready_waiting_for_live_search_confirmation`，`allow_live_search=false`，等待负责人手动打开脉脉人才银行、完成登录和一次手动搜索后，再确认是否执行真实搜索。
+- 验证：UTF-8/乱码检查通过；关键字段检查通过；预算和 wave 上限检查通过；`tests/test_maimai_talent_search_campaign_skill.py tests/test_maimai_campaign_orchestrator.py tests/test_maimai_ai_infra_strategy.py -q` -> `64 passed`；`py_compile` 通过；`git diff --check` 通过。
+- 边界：本轮未启动浏览器、未触发真实脉脉请求、未抓详情、未写 campaign/main DB、未发布飞书。
+
+## 2026-05-20 LLM 大模型推理 campaign workflow 启动
+
+> 目标：将 `llm-inference-2026-05-20` campaign 从 skill 合同交接到 `agents/workflows/maimai-unattended-campaign/AGENT.md`，启动 S0/S1 安全阶段和浏览器 bootstrap；不执行真实搜索。
+
+- [x] 读取 workflow 状态与 continuation plan，确认当前停在离线计划完成。
+- [x] 检查/启动 `data/session/maimai-cdp-profile` + `--remote-debugging-port=9888` 的浏览器 bootstrap，并加载 `extensions/maimai-scraper`。
+- [x] 验证 CDP 端口和 session manifest，确认已进入人工交接状态。
+- [x] 写入 `state/stage-state.json`，标记等待负责人手动登录、进入人才银行、执行一次搜索。
+- [x] 回填 Review，说明下一步真实搜索确认口令。
+
+### Review
+
+- 已完成 workflow 交接：`python -m scripts.maimai_campaign_orchestrator status/resume --campaign-root data/campaigns/llm-inference-2026-05-20` 起始状态为 `S2_offline_search_plan / ready_waiting_for_live_search_confirmation`，无 continuation plan。
+- 已启动浏览器 bootstrap：`python -m scripts.maimai_cdp_browser_bootstrap --profile data/session/maimai-cdp-profile --remote-debugging-port 9888 --extension extensions/maimai-scraper --url https://maimai.cn/ --manifest-out data/session/maimai-cdp-browser-session.json`。
+- CDP 端口验证通过：`http://127.0.0.1:9888/json/version` 返回 Chrome `148.0.7778.168` 和 `webSocketDebuggerUrl`；session manifest 已写入 `data/session/maimai-cdp-browser-session.json`。
+- 当前状态已更新：`S1_browser_bootstrap / waiting_user_manual_login_talent_bank_search`，人工步骤为 `login_maimai -> enter_talent_bank -> execute_one_search`。
+- 修复并记录了本轮一个 PowerShell 中文编码问题：`next_confirmation_phrase` 读回已确认无 `?`、`U+FFFD`、`��`；经验追加到 `memory/error-log.md`。
+- 边界：本轮只启动浏览器到脉脉主页和本地 CDP 端口；未自动进入人才银行、未点击/刷新业务页面、未执行真实搜索、未抓详情、未写 DB、未发飞书。
+
+## 2026-05-20 LLM 大模型推理 search-wave-001 执行
+
+> 目标：在负责人已手动登录、进入人才银行并执行一次搜索后，按 workflow 执行 `search-wave-001` live gate；成功后只推进到标准化和导入 dry-run，不自动 apply。
+
+- [x] 预检 `S1_browser_bootstrap` 状态、CDP 端口和 `search-wave-001-plan.json`。
+- [x] 运行 `scripts.maimai_ai_infra_search_live_gate` 执行 `search-wave-001`。
+- [x] 检查 live run 是否 completed；如遇验证码/登录/安全页/429/非 JSON 等，写 interruption 和 continuation 后停止。
+- [x] 若 completed，标准化 live run 到 canonical `raw/search/unit-*/page-*.json`。
+- [x] 运行 `run-campaign` dry-run，确认不写 DB apply。
+- [x] 回填 Review，汇报产出、计数和下一步确认点。
+
+### Review
+
+- `search-wave-001` live gate 完成：16 个 batch、48 页，`status=completed`，`stopReason=null`，48 页 HTTP 200，前后健康检查均为 `hasLoginPrompt=false / hasCaptcha=false / hasTalentBank=true`。
+- 产出偏低：live run raw contacts 9；标准化后 canonical page raw 共 48 个文件，联系人分布为 `unit-000001/page-001=4`、`unit-000002/page-001=4`、`unit-000014/page-001=1`，其余页面为 0。
+- 标准化：`python -m scripts.maimai_search_live_standardize ... --wave-id search-wave-001` -> `written_pages=48`、`skipped_pages=[]`。
+- 导入 dry-run：`reports/import-list-search-wave-001-dry-run.json/.md`，去重后联系人 5，预计 `created=5 / merged=0 / pending=0 / errors=0`。
+- DB 边界：未执行 `--apply`；`data/campaigns/llm-inference-2026-05-20/talent.db` 不存在；`state/import-ledger.jsonl` 不存在。
+- 当前状态：`S6_search_import_dry_run / dry_run_clean_waiting_apply_confirmation`，下一步需要确认是否 apply `search-wave-001` 的 5 个联系人到 campaign DB，或先调整策略再继续后续 wave。
+
+## 2026-05-20 LLM 大模型推理无人值守策略修正
+
+> 目标：响应用户纠正“我需要无人值守，怎么还让我check”，将本 campaign 调整为 clean dry-run 自动 apply 到 campaign DB 并继续后续 wave；仅平台安全阻断、主库写入、飞书发布或策略异常需要停机。
+
+- [x] 更新 lessons，记录无人值守 campaign 不应在 clean dry-run 后反复要求人工 check。
+- [x] 更新 `run-policy.json`，允许 campaign DB clean dry-run 自动 apply，并保持主库/飞书边界为 false。
+- [x] apply `search-wave-001` 到 campaign DB，验证 ledger 和 DB 计数。
+- [x] 继续执行后续 search wave，直到 wave 结束、预算耗尽或平台阻断。
+- [x] 回填 Review，说明无人值守执行状态和停机原因。
+
+### Review
+
+- 已修正无人值守策略：`run-policy.json` 中 `allow_live_search=true`、`allow_campaign_db_auto_apply_after_clean_dry_run=true`、`preauthorized_by_current_request.real_maimai_search_requests=true`、`db_apply=true`；主库写入和飞书发布仍为 false。
+- `search-wave-001` 已补 apply 到 campaign DB：`created=5 / merged=0 / pending=0 / errors=0`。
+- `search-wave-002` 无人值守完成并自动 apply：live contacts 109，dry-run unique 45，apply `created=40 / merged=5 / pending=0 / errors=0`。
+- `search-wave-003` 无人值守完成并自动 apply：live contacts 175，dry-run unique 66，apply `created=32 / merged=34 / pending=0 / errors=0`。
+- `search-wave-004` 首次遇到 `Connection timed out`，页面健康 clean，按无人值守策略自动重试；重试后在第 2 页遇到 `captcha_api`，HTTP 429，触发硬停机。
+- 当前 continuation：`state/continuation-plan.json`，`reason=captcha_api`，`resume_from.wave_id=search-wave-004`，`completed_pages=2/48`，evidence 为 `raw/search-live-runs/search-wave-004-run-attempt-1-failed.json`。
+- 当前 campaign DB：`candidates=77`、`source_profiles=77`、`candidate_details=77`、`pending_merges=0`、`sync_conflicts=0`；主库未写。
+- 结论：无人值守执行没有再停在 clean dry-run check；本轮停机是平台验证码/429 安全边界，需要负责人处理验证码后才能继续。
+
+## 2026-05-20 LLM 大模型推理验证码后续跑
+
+> 目标：负责人已处理 `captcha_api` 后，从 `search-wave-004` 继续无人值守；clean dry-run 自动 apply，平台阻断再停。
+
+- [x] 预检 continuation、CDP 端口和 campaign DB 基线。
+- [x] 从 `search-wave-004` 重新执行完整 wave，避免导入验证码前 partial 结果。
+- [x] 对完成 wave 自动 standardize、dry-run、clean apply。
+- [x] 继续 `search-wave-005` 到 `search-wave-009`，直到完成或再次平台阻断。
+- [x] 回填 Review，汇报累计 DB 和恢复入口。
+
+### Review
+
+- 验证码后续跑从 `search-wave-004` 重新执行完整 wave，未导入验证码前 partial。
+- `search-wave-004` 完成并自动 apply：live contacts 14，dry-run unique 7，apply `created=7 / merged=0 / pending=0 / errors=0`。
+- `search-wave-005` 完成并自动 apply：live contacts 0，dry-run unique 0，apply `created=0 / merged=0 / pending=0 / errors=0`。
+- `search-wave-006` 完成并自动 apply：live contacts 2，dry-run unique 1，apply `created=1 / merged=0 / pending=0 / errors=0`。
+- `search-wave-007` 再次触发 `captcha_api`，第 2 个 batch 第 3 页 HTTP 429；已停机并写 `state/continuation-plan.json`。
+- 当前恢复入口：`resume_from.wave_id=search-wave-007`，`completed_pages=6/48`，evidence `raw/search-live-runs/search-wave-007-run-attempt-1-failed.json`。
+- 当前 campaign DB：`candidates=85`、`source_profiles=85`、`candidate_details=85`、`pending_merges=0`、`sync_conflicts=0`；主库未写。
+- `git diff --check` 通过。
+
+## 2026-05-20 LLM 大模型推理第二次验证码后续跑
+
+> 目标：负责人已处理 `search-wave-007` 的 `captcha_api` 后，继续无人值守；不导入验证码前 partial，clean dry-run 自动 apply。
+
+- [x] 预检 continuation、CDP 端口和 campaign DB 基线。
+- [x] 从 `search-wave-007` 重新执行完整 wave。
+- [x] 对完成 wave 自动 standardize、dry-run、clean apply。
+- [x] 继续 `search-wave-008` 和 `search-wave-009`，直到完成或再次平台阻断。
+- [x] 回填 Review，汇报累计 DB 和恢复入口。
+
+### Review
+
+- 已从 `search-wave-007` 重新执行完整 wave，未导入验证码前 partial。
+- `search-wave-007` 完成并自动 apply：live contacts 0，dry-run unique 0。
+- `search-wave-008` 完成并自动 apply：live contacts 3，dry-run unique 1，apply `created=1 / merged=0 / pending=0 / errors=0`。
+- `search-wave-009` 完成并自动 apply：live contacts 0，dry-run unique 0。
+- 全部 9 个 search wave 已 completed：总页数 408，全部 HTTP 200；最终状态 `S7_search_import_apply / all_search_waves_completed`。
+- Apply 汇总：各 wave dry-run unique 合计 125；apply created 合计 86，merged 合计 39，pending/errors 均为 0。
+- 当前 campaign DB：`candidates=86`、`source_profiles=86`、`candidate_details=86`、`pending_merges=0`、`sync_conflicts=0`；主库 `data/talent.db` 未写。
+- 已继续本地初筛和详情 pack 计划：list rank 分布 `A=12 / B=10 / C=24 / 淘汰=40`；基于 A/B 自动生成 review draft 22 人；detail targets `status=ready / unique_targets=22 / missing=0`，4 个 pack 分布 `6/6/5/5`。
+- 当前 workflow 状态：`S9_detail_pack_plan / ready_waiting_detail_live_policy`；真实详情请求尚未执行，主库和飞书仍未触发。
+- `git diff --check` 通过。
+
+## 2026-05-20 LLM 大模型推理全量详情无人值守
+
+> 目标：按负责人明确授权，对当前 campaign DB 内全部 86 人执行详情采集；health check clean 后继续 live run，detail dry-run clean 后自动 apply 到 campaign DB；主库和飞书仍不触发。
+
+- [x] 核验无遗留详情进程、campaign DB 基线和详情脚本契约。
+- [x] 生成 86 人全量 detail pack，替代原 A/B 22 人 pack 作为本轮执行入口。
+- [x] 更新 `run-policy.json` 和阶段状态，记录详情阶段已授权、主库/飞书未授权。
+- [x] 运行 detail health check；若出现登录/验证码/安全页/非 JSON/模板漂移则停机并写恢复入口。
+- [x] health clean 后执行 86 人详情 live run，保留 `raw/detail-live/<pack_id>/job-*.json` 作为恢复事实源。
+- [x] completed 后执行 detail dry-run；若 clean，自动 apply 到 campaign DB。
+- [x] 核验详情写入计数、`pending_merges=0`、`sync_conflicts=0`，回填 Review。
+
+### Review
+
+- 已生成 86 人全量详情 pack：`raw/detail-targets/detail-all-pack-001.json`，分布 `A=12 / B=10 / C=24 / 淘汰=40`，missing=0。
+- Detail health check 通过：`status=health_ok / hasLoginPrompt=false / hasCaptcha=false / hasTalentBank=true`。
+- 详情 live run 完成：`status=completed / completed_jobs=86 / total_contacts=86 / partial=false / stopReason=null`，job raw 文件 86 个。
+- Detail dry-run clean：`matched=86 / unmatched=0 / failed_jobs=0 / capture_blockers=0 / apply_blockers=0`。
+- 已自动 apply 到 campaign DB：`written=86 / verified_candidate_ids=86`。
+- 当前 campaign DB：`candidates=86`、`source_profiles=86`、`candidate_details=86`、`data_level=detailed 86`、`maimai_detail_capture=86`、`pending_merges=0`、`sync_conflicts=0`。
+- 主库 `data/talent.db` 未写，飞书未发布。
+- `git diff --check` 通过。
+
+## 2026-05-20 LLM 大模型推理主库同步与飞书推送
+
+> 目标：按负责人授权，将当前 campaign DB 安全同步到主库，并发布飞书交付包；主库同步必须先 dry-run 和 SQLite 一致性备份，飞书只发布 reports 下的摘要/候选人/外联队列，不上传 DB、zip 或 raw capture。
+
+- [x] 核验 campaign DB、主库基线、已完成详情状态和飞书 CLI 鉴权状态。
+- [x] 从 campaign DB 导出 sync bundle，执行 `verify-bundle` 和主库 import dry-run。
+- [x] 对 `data/talent.db` 做 SQLite 一致性备份。
+- [x] dry-run clean 后 apply sync bundle 到主库，并核验主库计数与冲突分布。
+- [x] 生成最终寻访报告、外联执行包、质量审计和飞书安全 source files。
+- [x] 创建飞书摘要云文档、候选人 Sheet、外联队列 Sheet，并写入数据。
+- [x] 读回飞书文档/表格验证行数和链接，更新 manifest/stage-state，并回填 Review。
+
+### Review
+
+- 主库同步已完成：bundle `reports/campaign-to-main-sync-llm-inference-2026-05-20.zip`；dry-run `created=44 / merged=42 / conflicts=0 / skipped=0`；apply `created=44 / merged=42 / skipped=0`。
+- 备份已完成：`data/backups/talent-main-before-llm-inference-sync-20260520-121217.db`，`PRAGMA integrity_check=ok`。
+- 主库 apply 后：`candidates=5497`、`source_profiles=5497`、`candidate_details=5497`、`maimai_detail_capture=977`、`pending_merges=0`、`sync_imports=2`。
+- 新增 sync conflict 16 条，均为 non-overwrite 保留主库既有值：`candidate_detail.raw_data.maimai_detail_capture=13`、`hunting_status=1`、`gender=1`、`education=1`。
+- 最终报告：`detail_completed=86/86`，推荐分布 `强推荐=6 / 推荐=13 / 观察=27 / 不推荐=40`，外联队列 `46` 人，`P0=6 / P1=13 / P2=27`。
+- 飞书摘要云文档：https://sq8org1v4k6.feishu.cn/docx/SqEgdl4b5oda9Xx5g23csPQLnx3
+- 飞书候选人 Sheet：https://sq8org1v4k6.feishu.cn/sheets/QfllsWYzNhPpPVtD83QcldnPnHh，读回 `A1:W87` 共 87 行（表头 + 86 人）。
+- 飞书外联队列 Sheet：https://sq8org1v4k6.feishu.cn/sheets/EgAvspfbrh8ZuRtRCjzcy3YJnQf，读回 `A1:V47` 共 47 行（表头 + 46 人）。
+- 飞书发布边界已验证：未上传 SQLite DB、sync zip、raw/search、raw/detail、raw capture 或 live execution payload。
+- 当前状态：`S13_delivery_published / main_db_synced_and_feishu_published`；`git diff --check` 通过。
+
+## 2026-05-20 主库 sync conflicts 审计处理
+
+> 目标：仅处理本轮主库同步新增冲突 `sync_conflicts.id=144-159`；李宇琨 3 条候选人字段冲突保留主库值；13 条 raw capture 冲突按人工审计结果分别保留主库或采用本轮 capture。
+
+- [x] 备份 `data/talent.db`，并执行写前 `PRAGMA integrity_check` 与基线计数核验。
+- [x] 在单个 SQLite 事务内处理 `144-159`：`144-146` 和人工选择 K 的 raw capture 标记保留主库，人工选择 R 的 raw capture 替换 `raw_data.maimai_detail_capture`。
+- [x] 执行写后验证：状态分布、总量计数、R 组 remote 等价、K 组 raw capture 未替换。
+- [x] 回填 Review，记录备份路径、处理分布和验证结果。
+
+### Review
+
+- 备份已完成：`data/backups/talent-db-before-conflict-resolution-20260520-131828.db`；源库与备份库 `PRAGMA integrity_check=ok`。
+- 写前基线符合预期：`candidates=5497`、`source_profiles=5497`、`candidate_details=5497`、`pending_merges=0`、`sync_imports=2`、`sync_conflicts=159`、`maimai_detail_capture=977`。
+- 已在单个 SQLite 事务内处理 `sync_conflicts.id=144-159`。
+- `resolved_keep_local=11`：李宇琨候选人字段 `144-146` 保留主库值；raw capture `149,150,152,155,156,157,158,159` 保留主库值。
+- `resolved_use_remote=5`：raw capture `147,148,151,153,154` 已将 `candidate_details.raw_data.maimai_detail_capture` 替换为对应 `remote_value`。
+- 写后验证通过：`144-159` 全部 `resolved_at IS NOT NULL`；R 组 5 条当前 capture 与 `remote_value` canonical JSON 等价；K 组 8 条 raw capture 与 `local_value` 等价；李宇琨 `gender=男`、`education=硕士`、`hunting_status=3`。
+- 写后总量未变：`candidates=5497`、`source_profiles=5497`、`candidate_details=5497`、`pending_merges=0`、`sync_imports=2`、`sync_conflicts=159`、`maimai_detail_capture=977`；剩余 open conflicts 为历史 `143` 条。
+- 最终验证：DB 断言脚本通过；`git diff --check` 通过；`python -m pytest tests/test_talent_sync.py -q` 通过，结果 `37 passed`。
+
+## 2026-05-20 主库历史 sync conflicts 分类处理
+
+> 目标：处理剩余历史 open 冲突 `sync_conflicts.id=1-143`。低风险信息降级/格式差异保留主库；语义等价枚举标准化；自然时间变化和较新的 raw capture 活跃/年龄变化采用 remote；高风险身份/履历冲突保留主库。
+
+- [x] 备份 `data/talent.db`，并核验 `id=1-143` 分组仍符合预期。
+- [x] 在单个 SQLite 事务内处理候选人字段冲突：低风险保留主库，语义等价 `hunting_status` 标准化为文本，自然时间字段采用 remote。
+- [x] 在同一事务内处理 raw capture 冲突：核心一致保留主库；仅活跃状态或活跃+年龄变化采用 remote。
+- [x] 执行写后验证：`id=1-143` 全部 resolved、字段/JSON 等价、总量计数不变。
+- [x] 回填 Review，记录备份路径、处理分布和验证结果。
+
+### Review
+
+- 备份已完成：`data/backups/talent-db-before-history-conflict-resolution-20260520-133556.db`；源库与备份库 `PRAGMA integrity_check=ok`。
+- 写前历史 open 冲突分组符合预期：候选人字段 `63` 条，raw capture `80` 条；写前全库 open conflicts 为 `143`。
+- 已处理 `sync_conflicts.id=1-143`：`resolved_keep_local=72`、`resolved_standardized_remote=13`、`resolved_use_remote=55`、`resolved_superseded_by_newer=3`。
+- 候选人字段处理：`gender/education/expected_city/expected_title/identity/profile` 与真冲突 `hunting_status id=32` 保留主库；13 条语义等价 `hunting_status` 从数字枚举标准化为文本；`age/work_years` 4 条采用 remote 自然时间值。
+- Raw capture 处理：核心一致且无新冲突覆盖的 26 条保留主库；活跃状态或活跃+年龄变化且无新冲突覆盖的 51 条采用 remote。
+- 新旧冲突重叠修正：历史 `64/111/123` 分别被较新的 `147/153/158` 决策覆盖，已恢复到较新决策并将历史冲突标记为 `resolved_superseded_by_newer`。
+- 写后验证通过：全库 `open_conflicts=0`；全库状态分布为 `resolved_keep_local=83`、`resolved_standardized_remote=13`、`resolved_superseded_by_newer=3`、`resolved_use_remote=60`。
+- 写后总量未变：`candidates=5497`、`source_profiles=5497`、`candidate_details=5497`、`pending_merges=0`、`sync_imports=2`、`sync_conflicts=159`、`maimai_detail_capture=977`。
+- 最终验证：DB 断言脚本通过；`git diff --check` 通过；`python -m pytest tests/test_talent_sync.py -q` 通过，结果 `37 passed`。
+
+## 2026-05-20 maimai-talent-search-campaign 无人值守断点优化
+
+> 目标：优化 `maimai-talent-search-campaign` 与 `agents/workflows/maimai-unattended-campaign` 的契约，消除计划确认后、列表抓取后、详情后、飞书发布前的多余人工断点；主库整合仍保留人工手动边界。
+
+- [x] 用契约测试锁定新的无人值守行为：计划确认后自动进入 workflow 并启动浏览器交接；列表全批次后自动粗筛和详情；详情后自动详评/精排/飞书发布；主库写入保持人工。
+- [x] 更新 `skills/maimai-talent-search-campaign/SKILL.md` 的默认值、run-policy 合同和自动交接说明。
+- [x] 更新 `agents/workflows/maimai-unattended-campaign/AGENT.md` 的阶段合同、自动 apply/发布边界和中文交付要求。
+- [x] 必要时同步 `scripts/maimai_campaign_orchestrator.py` 的默认 policy 文案/字段。
+- [x] 运行聚焦测试和相关回归，回填 Review。
+
+### Review
+
+- 已新增/更新契约测试覆盖无人值守断点：计划确认后自动交接 workflow 和浏览器 bootstrap、列表粗筛 A/B/C/淘汰漏斗、详情抓取范围、详情后自动详评/精排/飞书发布、主库手动整合边界。
+- `skills/maimai-talent-search-campaign/SKILL.md` 已改为无人值守合同口径：搜索计划确认后自动进入 `agents/workflows/maimai-unattended-campaign/AGENT.md`，不再提示负责人手动启动浏览器；`run-policy.json` 增加自动推进、详情 C 档阈值、中文交付、飞书发布和主库手动边界字段。
+- `agents/workflows/maimai-unattended-campaign/AGENT.md` 已明确无人值守推进规则：clean dry-run 自动 apply 到 Campaign DB，列表全批次后自动粗筛，详情默认 A+B、当 A+B+C 不超过 100 时抓 A+B+C，详情后自动详评/精排/飞书推送；主库整合仍由人工手动执行。
+- `scripts/maimai_campaign_orchestrator.py` 已同步默认 policy 和阶段计划元数据，新增 `detailed_rank`、`delivery_report`、`outreach_package`、`delivery_package` 自动后续阶段；飞书交付包要求中文，且 `main_db_sync_mode=manual_only`。
+- `scripts/maimai_ai_infra_detail_plan.py` 已支持 `--include-c-when-abc-total-lte`，当 A+B+C 去重总数不超过阈值时将 C 档纳入详情 pack，否则保持默认 A+B。
+- 验证：先跑 RED 聚焦测试，失败 8 个符合预期；实现后聚焦测试 `13 passed`，相关回归 `59 passed`，全量 `python -m pytest tests scripts -q` 通过 `739 passed, 1 warning`；`python -m py_compile scripts/maimai_campaign_orchestrator.py scripts/maimai_ai_infra_detail_plan.py` 通过；`git diff --check` 通过。

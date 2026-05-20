@@ -19,13 +19,45 @@ def test_skill_extracts_first_and_asks_only_missing_fields():
     assert "停止阈值" in text
 
 
+def test_skill_supports_semantic_maimai_search_invocations():
+    text = SKILL.read_text(encoding="utf-8")
+    assert "description: Use when" in text
+    for token in [
+        "根据 AI Infra JD 搜索脉脉",
+        "按需求搜索脉脉，需求如下",
+        "根据下面 JD 做脉脉寻访",
+        "搜素脉脉",
+        "场景语义调用",
+    ]:
+        assert token in text
+
+
+def test_skill_hands_off_to_unattended_workflow_after_contract_generation():
+    text = SKILL.read_text(encoding="utf-8")
+    for token in [
+        "合同文件全部写入后",
+        "自动交接",
+        "agents/workflows/maimai-unattended-campaign/AGENT.md",
+        "不要停在只生成文件的状态",
+        "下一步读取 canonical workflow",
+        "maimai_campaign_orchestrator status",
+    ]:
+        assert token in text
+    assert "搜索计划生成完毕后与用户确认" in text
+    assert "确认后自动进入" in text
+    assert "不用提示让用户手动启动浏览器" in text
+    assert "自动启动 CDP 浏览器" in text
+    assert "不得在 Skill 阶段直接启动浏览器" not in text
+
+
 def test_skill_bakes_in_confirmed_defaults():
     text = SKILL.read_text(encoding="utf-8")
     assert "每日搜索请求预算：500" in text
     assert "不包括详情请求" in text
     assert "搜索 wave 每组不超过 50 页" in text
     assert "详情 pack 每组上限 100 人" in text
-    assert "只对 A/B 档人选抓详情" in text
+    assert "默认只抓取 A+B 档" in text
+    assert "A+B+C 总数不超过 100" in text
     assert "本地 Markdown 报告、CSV、飞书云文档、飞书多维表格" in text
 
 
@@ -37,7 +69,13 @@ def test_skill_declares_output_root_and_run_policy_contract():
         "search_wave_max_pages=50",
         "detail_pack_max_contacts=100",
         'detail_target_grades=["A","B"]',
+        "detail_include_c_when_abc_total_lte=100",
+        "allow_campaign_db_auto_apply_after_clean_dry_run=true",
+        "allow_detail_campaign_db_auto_apply_after_clean_dry_run=true",
+        "allow_feishu_delivery_publish=true",
         'notify_channel="feishu_im"',
+        'delivery_language="zh-CN"',
+        'main_db_sync_mode="manual_only"',
         "allow_main_db_write=false",
     ]:
         assert token in text
@@ -72,6 +110,25 @@ def test_workflow_declares_stop_conditions_and_status_outputs():
         "scripts/campaign_notify.py",
     ]:
         assert token in text
+
+
+def test_workflow_defines_unattended_progression_after_plan_confirmation():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    for token in [
+        "搜索计划生成完毕后只在计划确认点停一次",
+        "确认后自动启动 CDP 浏览器",
+        "不再提示负责人手动启动浏览器",
+        "列表全批次抓取完成后自动进入粗筛",
+        "生成 A/B/C/淘汰漏斗",
+        "默认只抓取 A+B",
+        "A+B+C 总数不超过 100 时抓取 A+B+C",
+        "详情抓取完成后自动进入详评和精排",
+        "自动生成交付包并推送飞书",
+        "摘要内容和表格标题必须使用中文",
+        "Campaign DB 之后由人工手动整合进主 DB",
+    ]:
+        assert token in text
+    assert "涉及飞书云文档或多维表格发布时必须另行确认" not in text
 
 
 def test_outreach_template_has_execution_fields():

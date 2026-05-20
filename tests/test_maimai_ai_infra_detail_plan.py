@@ -134,14 +134,51 @@ def test_build_ab_detail_packs_dedupes_and_splits_round_robin(tmp_path: Path):
     )
 
     assert result["metadata"]["status"] == "ready"
-    assert result["metadata"]["input_rows"] == 8
-    assert result["metadata"]["unique_targets"] == 7
+    assert result["metadata"]["input_rows"] == 9
+    assert result["metadata"]["unique_targets"] == 8
+    assert result["metadata"]["source_grades"] == ["A", "B", "C"]
+    assert result["metadata"]["selection_reason"] == "abc_total_lte_threshold"
     assert result["metadata"]["missing"] == 0
-    assert [pack["count"] for pack in result["packs"]] == [2, 2, 2, 1]
+    assert [pack["count"] for pack in result["packs"]] == [2, 2, 2, 2]
     assert result["packs"][0]["contacts"][0]["candidate_id"] == 3
     assert result["packs"][1]["contacts"][0]["candidate_id"] == 1
+    assert any(contact["grade"] == "C" for contact in result["contacts"])
     assert (out_dir / "detail-targets-ab-all.json").exists()
     assert (out_dir / "detail-ab-pack-001.json").exists()
+
+
+def test_build_ab_detail_packs_excludes_c_when_abc_total_exceeds_threshold(tmp_path: Path):
+    root = tmp_path / "campaign"
+    review_dir = root / "review"
+    out_dir = root / "raw" / "detail-targets"
+    review_dir.mkdir(parents=True)
+    db_path = root / "talent.db"
+    for candidate_id in range(1, 104):
+        seed_source_profile(db_path, candidate_id, f"u{candidate_id}", f"t{candidate_id}")
+    write_review(
+        review_dir / "initial-human-review-draft-wave-001.json",
+        "wave-001",
+        [
+            {"candidate_id": candidate_id, "grade": "A" if candidate_id <= 2 else "C", "score": 1000 - candidate_id}
+            for candidate_id in range(1, 104)
+        ],
+    )
+
+    result = build_ab_detail_packs(
+        campaign_root=root,
+        db_path=db_path,
+        waves=["wave-001"],
+        out_dir=out_dir,
+        pack_count=1,
+        pack_size=100,
+    )
+
+    assert result["metadata"]["status"] == "ready"
+    assert result["metadata"]["source_grades"] == ["A", "B"]
+    assert result["metadata"]["selection_reason"] == "ab_default"
+    assert result["metadata"]["abc_total"] == 103
+    assert result["metadata"]["unique_targets"] == 2
+    assert [contact["grade"] for contact in result["contacts"]] == ["A", "A"]
 
 
 def test_build_ab_detail_packs_caps_ready_targets_by_pack_size(tmp_path: Path):

@@ -8,9 +8,17 @@ description: 脉脉 unattended campaign 的 canonical workflow，约束搜索、
 ## 安全边界
 
 - 真实执行阶段不自动导航、刷新、点击已进入执行态的脉脉业务页面。
-- 不绕过登录、验证码、权限、风控或用户确认。
-- 不在未确认 dry-run 结果前写 campaign DB 或主人才库。
-- 不发布飞书消息、云文档或多维表格，除非当前任务明确授权。
+- 不绕过登录、验证码、权限、风控或搜索计划确认。
+- 不在 clean dry-run 之外写 campaign DB；主人才库永远不在无人值守 workflow 内写入。
+- 计划确认后允许按 `run-policy.json` 自动发布飞书消息、云文档和多维表格；摘要内容和表格标题必须使用中文。
+
+## 无人值守推进规则
+
+- 搜索计划生成完毕后只在计划确认点停一次；确认后自动启动 CDP 浏览器，加载 `data/session/maimai-cdp-profile` 和 `extensions/maimai-scraper`，不再提示负责人手动启动浏览器。
+- 确认进入无人值守后，搜索 clean dry-run 自动 apply 到 Campaign DB，列表全批次抓取完成后自动进入粗筛，生成 A/B/C/淘汰漏斗。
+- 详情默认只抓取 A+B；当 A+B+C 总数不超过 100 时抓取 A+B+C。详情健康检查通过、详情 dry-run clean 后自动 apply 到 Campaign DB。
+- 详情抓取完成后自动进入详评和精排，自动生成交付包并推送飞书；摘要内容和表格标题必须使用中文。
+- Campaign DB 之后由人工手动整合进主 DB；本 workflow 只记录同步包/报告和人工整合入口，不自动写主库。
 
 ## 停机条件
 
@@ -33,11 +41,11 @@ description: 脉脉 unattended campaign 的 canonical workflow，约束搜索、
 
 ### S0 需求合同
 
-读取 Skill 产出的 `requirements.json`、`strategy.json`、`run-policy.json`、`search-implementation-plan.md` 和 `campaign-manifest.json`，确认 campaign root、输入范围、预算、停止阈值和人工确认点。
+读取 Skill 产出的 `requirements.json`、`strategy.json`、`run-policy.json`、`search-implementation-plan.md` 和 `campaign-manifest.json`，确认 campaign root、输入范围、预算、停止阈值、自动推进策略和主库手动边界。
 
 ### S1 预检
 
-检查目录、配置、登录态只读可用性、既有 raw/state/reports，以及是否存在未完成或冲突的历史运行。
+检查目录、配置、登录态只读可用性、既有 raw/state/reports，以及是否存在未完成或冲突的历史运行。若搜索计划已确认且 `auto_bootstrap_browser_after_plan_confirmation=true`，自动启动 CDP 浏览器并加载扩展；只等待登录/验证码/人才银行页健康条件，不要求负责人手动启动浏览器。
 
 ### S2 搜索计划展开
 
@@ -61,15 +69,15 @@ description: 脉脉 unattended campaign 的 canonical workflow，约束搜索、
 
 ### S7 搜索导入 apply
 
-在 dry-run 干净且得到明确确认后写入 campaign DB，并追加 `state/import-ledger.jsonl` 防重记录。
+在 dry-run 干净且 `allow_campaign_db_auto_apply_after_clean_dry_run=true` 时自动写入 Campaign DB，并追加 `state/import-ledger.jsonl` 防重记录；不再要求额外人工确认。
 
 ### S8 初筛与 A/B 分档
 
-基于岗位画像、关键词命中、经历质量、公司/行业匹配度和排除规则生成 A/B/C/D 档。
+基于岗位画像、关键词命中、经历质量、公司/行业匹配度和排除规则生成 A/B/C/淘汰漏斗。列表全批次抓取完成后自动进入粗筛，粗筛完成后自动进入详情 pack 计划。
 
 ### S9 详情 pack 计划
 
-只对 A/B 档人选抓详情，按每组上限 100 人拆分 detail pack，写明 pack id、候选人 id、profile url 和恢复路径。
+默认只抓取 A+B；当 A+B+C 总数不超过 100 时抓取 A+B+C。按每组上限 100 人拆分 detail pack，写明 pack id、候选人 id、profile url 和恢复路径。
 
 ### S10 详情执行与恢复
 
@@ -77,18 +85,19 @@ description: 脉脉 unattended campaign 的 canonical workflow，约束搜索、
 
 ### S11 详情 dry-run 与 apply
 
-先 dry-run 校验 matched/unmatched/failed/capture blockers；得到明确确认后 apply，并使用 `state/import-ledger.jsonl` 防止重复写入。
+先 dry-run 校验 matched/unmatched/failed/capture blockers；dry-run clean 且 `allow_detail_campaign_db_auto_apply_after_clean_dry_run=true` 时自动 apply 到 Campaign DB，并使用 `state/import-ledger.jsonl` 防止重复写入。
 
 ### S12 报告与交付包
 
-生成本地 Markdown 报告、CSV、候选人 Sheet 数据和 outreach queue 数据；涉及飞书云文档或多维表格发布时必须另行确认。
+详情 apply 后自动进入详评和精排，生成本地 Markdown 报告、CSV、候选人 Sheet 数据和 outreach queue 数据。`allow_feishu_delivery_publish=true` 时自动生成交付包并推送飞书；摘要内容和表格标题必须使用中文。
 
 ### S13 通知与关闭
 
-记录最终状态、剩余风险、恢复入口和下一步动作。通知发送失败时状态写为 `blocked_notification_failed`，不得把通知失败误报为 campaign 执行成功。
+记录最终状态、剩余风险、恢复入口和下一步动作。通知发送失败时状态写为 `blocked_notification_failed`，不得把通知失败误报为 campaign 执行成功。Campaign DB 之后由人工手动整合进主 DB；不得自动执行主库同步或主库写入。
 
 ## 验收
 
 - 任一阶段失败都必须留下可恢复的事实来源和明确状态。
 - apply 类阶段必须能从 `state/import-ledger.jsonl` 判断是否重复执行。
-- 真实脉脉请求、浏览器动作、飞书发布和主库写入都必须有单独授权。
+- 真实脉脉请求、浏览器动作和飞书发布由搜索计划确认后的无人值守授权覆盖；登录/验证码/安全页等平台阻断仍必须停止。
+- 主库写入不包含在无人值守授权内，必须人工手动整合。

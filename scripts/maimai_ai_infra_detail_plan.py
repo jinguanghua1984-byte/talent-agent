@@ -1,4 +1,4 @@
-"""生成 AI Infra V2 A/B 档脉脉详情抓取任务包。"""
+"""生成 AI Infra V2 脉脉详情抓取任务包。"""
 
 from __future__ import annotations
 
@@ -17,9 +17,11 @@ if __package__ in {None, ""}:
 from scripts.maimai_detail_targets import parse_maimai_profile_url
 
 
-SOURCE_GRADES = ("A", "B")
+DEFAULT_SOURCE_GRADES = ("A", "B")
+EXTENDED_SOURCE_GRADES = ("A", "B", "C")
+DEFAULT_INCLUDE_C_THRESHOLD = 100
 DEFAULT_WAVES = [f"wave-{index:03d}" for index in range(1, 13)]
-GRADE_RANK = {"A": 0, "B": 1}
+GRADE_RANK = {"A": 0, "B": 1, "C": 2}
 
 
 def compute_pack_count(total_contacts: int, pack_size: int) -> int:
@@ -322,6 +324,7 @@ def _pack_document(
     pack_index: int,
     pack_count: int,
     contacts: list[dict[str, Any]],
+    source_grades: tuple[str, ...],
 ) -> dict[str, Any]:
     return {
         "metadata": {
@@ -330,7 +333,7 @@ def _pack_document(
             "pack_id": pack_id,
             "pack_index": pack_index,
             "pack_count": pack_count,
-            "source_grades": list(SOURCE_GRADES),
+            "source_grades": list(source_grades),
             "count": len(contacts),
         },
         "count": len(contacts),
@@ -351,8 +354,9 @@ def build_ab_detail_packs(
     out_dir: str | Path | None = None,
     pack_count: int = 4,
     pack_size: int | None = None,
+    include_c_when_abc_total_lte: int | None = DEFAULT_INCLUDE_C_THRESHOLD,
 ) -> dict[str, Any]:
-    """Write the A/B target manifest and pack files, then return the summary."""
+    """Write target manifest and pack files, then return the summary."""
 
     if pack_count <= 0:
         raise ValueError("pack_count must be positive")
@@ -372,8 +376,19 @@ def build_ab_detail_packs(
             }
         )
 
-    review_items = collect_review_items(review_dir, wave_ids, set(SOURCE_GRADES))
-    unique_items = dedupe_review_items(review_items)
+    abc_review_items = collect_review_items(review_dir, wave_ids, set(EXTENDED_SOURCE_GRADES))
+    abc_unique_items = dedupe_review_items(abc_review_items)
+    include_c_threshold = include_c_when_abc_total_lte
+    if include_c_threshold is not None and len(abc_unique_items) <= int(include_c_threshold):
+        source_grades = EXTENDED_SOURCE_GRADES
+        selection_reason = "abc_total_lte_threshold"
+        review_items = abc_review_items
+        unique_items = abc_unique_items
+    else:
+        source_grades = DEFAULT_SOURCE_GRADES
+        selection_reason = "ab_default"
+        review_items = collect_review_items(review_dir, wave_ids, set(source_grades))
+        unique_items = dedupe_review_items(review_items)
 
     resolver = ReadOnlyContactResolver(db_file)
     try:
@@ -396,14 +411,17 @@ def build_ab_detail_packs(
     for pack_index in range(pack_count):
         pack_contacts = contacts[pack_index::pack_count] if status == "ready" else []
         pack_id = f"detail-ab-pack-{pack_index + 1:03d}"
-        packs.append(_pack_document(root, pack_id, pack_index + 1, pack_count, pack_contacts))
+        packs.append(_pack_document(root, pack_id, pack_index + 1, pack_count, pack_contacts, source_grades))
 
     metadata = {
         "export_type": "maimai_ai_infra_detail_targets",
         "status": status,
         "campaign_root": str(root),
         "db_path": str(db_file),
-        "source_grades": list(SOURCE_GRADES),
+        "source_grades": list(source_grades),
+        "selection_reason": selection_reason,
+        "abc_total": len(abc_unique_items),
+        "detail_include_c_when_abc_total_lte": include_c_threshold,
         "waves": wave_ids,
         "input_rows": len(review_items),
         "unique_targets": len(unique_items),
@@ -431,7 +449,7 @@ def build_ab_detail_packs(
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="生成 AI Infra V2 A/B 档脉脉详情任务包")
+    parser = argparse.ArgumentParser(description="生成 AI Infra V2 脉脉详情任务包")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     build = subparsers.add_parser("build-ab-packs")
@@ -440,6 +458,7 @@ def _build_parser() -> argparse.ArgumentParser:
     build.add_argument("--out-dir")
     build.add_argument("--pack-count", type=int, default=4)
     build.add_argument("--pack-size", type=int)
+    build.add_argument("--include-c-when-abc-total-lte", type=int, default=DEFAULT_INCLUDE_C_THRESHOLD)
     build.add_argument("--waves", nargs="*", help="默认 wave-001 到 wave-012")
     return parser
 
@@ -455,6 +474,7 @@ def main(argv: list[str] | None = None) -> int:
             out_dir=args.out_dir,
             pack_count=args.pack_count,
             pack_size=args.pack_size,
+            include_c_when_abc_total_lte=args.include_c_when_abc_total_lte,
         )
         metadata = result["metadata"]
         pack_counts = ",".join(str(pack["metadata"]["count"]) for pack in result["packs"])

@@ -43,6 +43,14 @@ def test_default_policy_counts_search_budget_only():
     assert DEFAULT_RUN_POLICY["search_wave_max_pages"] == 50
     assert DEFAULT_RUN_POLICY["detail_pack_max_contacts"] == 100
     assert DEFAULT_RUN_POLICY["detail_target_grades"] == ["A", "B"]
+    assert DEFAULT_RUN_POLICY["detail_include_c_when_abc_total_lte"] == 100
+    assert DEFAULT_RUN_POLICY["auto_bootstrap_browser_after_plan_confirmation"] is True
+    assert DEFAULT_RUN_POLICY["auto_continue_after_search_plan_confirmation"] is True
+    assert DEFAULT_RUN_POLICY["auto_run_detail_after_list_funnel"] is True
+    assert DEFAULT_RUN_POLICY["auto_publish_feishu_delivery_after_detail_rank"] is True
+    assert DEFAULT_RUN_POLICY["delivery_language"] == "zh-CN"
+    assert DEFAULT_RUN_POLICY["main_db_sync_mode"] == "manual_only"
+    assert DEFAULT_RUN_POLICY["allow_feishu_delivery_publish"] is True
     assert DEFAULT_RUN_POLICY["notify_channel"] == "feishu_im"
     assert DEFAULT_RUN_POLICY["allow_main_db_write"] is False
 
@@ -426,6 +434,30 @@ def test_build_stage_command_plan_links_wave_plan_producer_to_live_gate_consumer
     assert standardize_argv[standardize_argv.index("--wave-id") + 1] == "search-wave-001"
     assert import_argv[import_argv.index("--wave") + 1] == "search-wave-001"
     assert Path(standardize_argv[standardize_argv.index("--run") + 1]).name == "search-wave-001-run.json"
+
+
+def test_build_stage_command_plan_carries_unattended_policy_metadata():
+    plan = build_stage_command_plan(
+        campaign_root="data/campaigns/demo",
+        strategy="data/campaigns/demo/strategy.json",
+        policy=DEFAULT_RUN_POLICY,
+    )
+    by_stage = {command["stage"]: command for command in plan}
+
+    detail_pack = by_stage["detail_pack"]
+    assert detail_pack["detail_target_grades"] == ["A", "B"]
+    assert detail_pack["detail_include_c_when_abc_total_lte"] == 100
+    assert "A/B" in detail_pack["description"]
+    assert "C" in detail_pack["description"]
+
+    list_rank = by_stage["list_rank"]
+    assert list_rank["auto_next_stage"] == "detail_pack"
+    assert list_rank["funnel_labels"] == ["A", "B", "C", "淘汰"]
+
+    delivery = by_stage["delivery_package"]
+    assert delivery["requires_policy_gate"] == "allow_feishu_delivery_publish"
+    assert delivery["delivery_language"] == "zh-CN"
+    assert delivery["main_db_sync_mode"] == "manual_only"
 
 
 def test_live_gate_command_requires_explicit_policy_gate_metadata():
