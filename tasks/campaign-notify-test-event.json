@@ -1,0 +1,11 @@
+{
+  "campaign_id": "notify-test-2026-05-20",
+  "blocked_stage": "search_live",
+  "reason": "manual_notification_dry_run",
+  "completed": 0,
+  "total": 1,
+  "evidence_file": "tasks/campaign-notify-test-event.json",
+  "operator_action": "Test event only. No platform action is required.",
+  "resume_command": "python -m scripts.maimai_campaign_orchestrator resume --campaign-root data/campaigns/notify-test-2026-05-20",
+  "blocked_event_id": "blocked-notify-test-2026-05-20-search_live-dry-run"
+}

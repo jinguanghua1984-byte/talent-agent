@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.campaign_notify import build_idempotency_key, build_message_text, build_send_argv, main
+from scripts.campaign_notify import build_idempotency_key, build_message_text, build_send_argv, main, resolve_lark_cli_argv
 
 
 def _event() -> dict[str, object]:
@@ -160,6 +160,21 @@ def test_build_send_argv_supports_user_id_target():
     assert "--dry-run" not in argv
 
 
+def test_resolve_lark_cli_argv_prefers_windows_cmd_shim(monkeypatch):
+    monkeypatch.delenv("LARK_CLI", raising=False)
+
+    def fake_which(name: str) -> str | None:
+        if name == "lark-cli.cmd":
+            return r"C:\Users\Administrator\AppData\Roaming\npm\lark-cli.cmd"
+        return None
+
+    monkeypatch.setattr("scripts.campaign_notify.shutil.which", fake_which)
+
+    argv = resolve_lark_cli_argv(["lark-cli", "im", "+messages-send"])
+
+    assert argv == [r"C:\Users\Administrator\AppData\Roaming\npm\lark-cli.cmd", "im", "+messages-send"]
+
+
 @pytest.mark.parametrize(
     ("identity", "chat_id", "user_id"),
     [
@@ -221,6 +236,44 @@ def test_cli_dry_run_prints_preview_without_subprocess(tmp_path: Path, monkeypat
     assert preview["argv"][:3] == ["lark-cli", "im", "+messages-send"]
     assert preview["text"] == build_message_text(sensitive_event)
     assert preview["idempotency_key"] == "ai-infra-demo-detail_live-evt-001"
+
+
+def test_cli_real_send_resolves_lark_cli_before_subprocess(tmp_path: Path, monkeypatch, capsys):
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps({**_event(), "event_id": "evt-001"}, ensure_ascii=False), encoding="utf-8")
+    seen: dict[str, list[str]] = {}
+
+    def fake_which(name: str) -> str | None:
+        if name == "lark-cli.cmd":
+            return r"C:\Users\Administrator\AppData\Roaming\npm\lark-cli.cmd"
+        return None
+
+    def fake_run(cmd: list[str], **kwargs):
+        seen["cmd"] = cmd
+
+        class Completed:
+            stdout = "sent\n"
+            stderr = ""
+            returncode = 0
+
+        return Completed()
+
+    monkeypatch.delenv("LARK_CLI", raising=False)
+    monkeypatch.setattr("scripts.campaign_notify.shutil.which", fake_which)
+    monkeypatch.setattr("scripts.campaign_notify.subprocess.run", fake_run)
+
+    code = main([
+        "--event",
+        str(event_path),
+        "--identity",
+        "bot",
+        "--chat-id",
+        "oc_xxx",
+    ])
+
+    assert code == 0
+    assert seen["cmd"][:3] == [r"C:\Users\Administrator\AppData\Roaming\npm\lark-cli.cmd", "im", "+messages-send"]
+    assert capsys.readouterr().out == "sent\n"
 
 
 def test_cli_reports_missing_event_without_traceback_or_subprocess(tmp_path: Path, monkeypatch, capsys):

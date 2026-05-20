@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -95,6 +97,22 @@ def build_send_argv(
     return argv
 
 
+def resolve_lark_cli_argv(argv: list[str]) -> list[str]:
+    if not argv or argv[0] != "lark-cli":
+        return argv
+
+    configured = (os.environ.get("LARK_CLI") or "").strip()
+    candidates = [configured] if configured else []
+    candidates.extend(["lark-cli.cmd", "lark-cli.exe", "lark-cli", "lark-cli.ps1"])
+
+    for candidate in candidates:
+        resolved = shutil.which(candidate)
+        if resolved:
+            return [resolved, *argv[1:]]
+
+    raise FileNotFoundError("lark-cli executable not found; install @larksuite/cli or set LARK_CLI")
+
+
 def load_json(path: str | Path) -> dict[str, Any]:
     data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     if not isinstance(data, dict):
@@ -164,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
 
-        completed = subprocess.run(cmd, check=False, text=True, capture_output=True)
+        completed = subprocess.run(resolve_lark_cli_argv(cmd), check=False, text=True, capture_output=True)
         if completed.stdout:
             print(completed.stdout, end="")
         if completed.stderr:
