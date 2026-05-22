@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import subprocess
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 
 SCHEMA = "jd_talent_delivery_feishu_manifest_v1"
+PUBLISH_RESULT_SCHEMA = "jd_talent_delivery_feishu_publish_result_v1"
 DEFAULT_WIKI_SPACE_ID = "7642607697183001542"
 ARTIFACT_MARKERS = (
     "talent.db",
@@ -28,6 +31,7 @@ REQUIRED_SOURCE_FILES: dict[str, str] = {
     "recommendation": "reports/talent-recommendation.md",
     "outreach": "reports/outreach-queue.csv",
 }
+Runner = Callable[[list[str], str | None], subprocess.CompletedProcess]
 
 
 def _normalize_text(value: str | Path) -> str:
@@ -158,7 +162,13 @@ def _drive_import_command(source_file: str, import_type: str, title: str, dry_ru
     )
 
 
-def _wiki_move_command(obj_type: str, obj_token: str, wiki_space_id: str, dry_run: bool) -> list[str]:
+def _wiki_move_command(
+    obj_type: str,
+    obj_token: str,
+    wiki_space_id: str,
+    dry_run: bool,
+    target_parent_token: str = "<jd_delivery_parent_node_token>",
+) -> list[str]:
     return _maybe_dry_run(
         [
             "lark-cli",
@@ -173,7 +183,7 @@ def _wiki_move_command(obj_type: str, obj_token: str, wiki_space_id: str, dry_ru
             "--target-space-id",
             wiki_space_id,
             "--target-parent-token",
-            "<jd_delivery_parent_node_token>",
+            target_parent_token,
         ],
         dry_run,
     )
@@ -272,6 +282,137 @@ def build_publish_manifest(
     }
     _assert_safe_manifest(manifest)
     return manifest
+
+
+def default_runner(argv: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(argv, cwd=cwd, text=True, capture_output=True, check=False)
+
+
+def _run(argv: list[str], runner: Runner, cwd: str | None = None) -> dict[str, Any]:
+    completed = runner(argv, cwd)
+    result = {
+        "argv": argv,
+        "returncode": completed.returncode,
+        "stdout": completed.stdout or "",
+        "stderr": completed.stderr or "",
+    }
+    if completed.returncode != 0:
+        raise RuntimeError(f"command failed: {' '.join(argv)}: {result['stderr']}")
+    return result
+
+
+def _stdout_json(result: dict[str, Any]) -> dict[str, Any]:
+    text = str(result.get("stdout") or "").strip() or "{}"
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        snippet = text[:120].replace("\r", "\\r").replace("\n", "\\n")
+        raise ValueError(f"command stdout is not valid JSON: {snippet}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("command stdout JSON must be an object")
+    return data
+
+
+def _token(data: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            return value
+
+    nested = data.get("data")
+    if isinstance(nested, dict):
+        for key in keys:
+            value = nested.get(key)
+            if isinstance(value, str) and value:
+                return value
+
+    raise ValueError(f"missing token keys: {keys}")
+
+
+def _without_dry_run(argv: list[str]) -> list[str]:
+    if argv and argv[-1] == "--dry-run":
+        return argv[:-1]
+    return list(argv)
+
+
+def publish_output(
+    output_root: str | Path,
+    jd_title: str,
+    wiki_space_id: str,
+    runner: Runner = default_runner,
+) -> dict[str, Any]:
+    root = Path(output_root)
+    manifest = build_publish_manifest(root, jd_title=jd_title, wiki_space_id=wiki_space_id, dry_run=True)
+    command_results: list[dict[str, Any]] = []
+    cwd = str(root)
+
+    def run(argv: list[str]) -> dict[str, Any]:
+        result = _run(argv, runner, cwd=cwd)
+        command_results.append(result)
+        return result
+
+    for step in manifest["preflight"]:
+        run(step["argv"])
+
+    parent_dry_run = _wiki_parent_create_command(jd_title, wiki_space_id, dry_run=True)
+    run(parent_dry_run)
+    parent_real = run(_without_dry_run(parent_dry_run))
+    parent_node_token = _token(_stdout_json(parent_real), "node_token", "wiki_token")
+
+    source_files = manifest["source_files"]
+    publish_items = [
+        ("jd", "docx", source_files["jd"], f"{jd_title} JD"),
+        ("profile", "docx", source_files["profile"], f"{jd_title} role profile"),
+        ("recommendation", "docx", source_files["recommendation"], f"{jd_title} recommendation report"),
+        ("outreach", "sheet", source_files["outreach"], f"{jd_title} outreach queue"),
+    ]
+    published: list[dict[str, Any]] = []
+    for name, obj_type, source_file, title in publish_items:
+        import_dry_run = _drive_import_command(source_file, obj_type, title, dry_run=True)
+        run(import_dry_run)
+        import_real = run(_without_dry_run(import_dry_run))
+        obj_token = _token(
+            _stdout_json(import_real),
+            "obj_token",
+            "token",
+            "file_token",
+            "doc_token",
+            "spreadsheet_token",
+        )
+
+        move_dry_run = _wiki_move_command(
+            obj_type,
+            obj_token,
+            wiki_space_id,
+            dry_run=True,
+            target_parent_token=parent_node_token,
+        )
+        run(move_dry_run)
+        move_real = run(_without_dry_run(move_dry_run))
+
+        published.append(
+            {
+                "name": name,
+                "title": title,
+                "obj_type": obj_type,
+                "source_file": source_file,
+                "obj_token": obj_token,
+                "move": _stdout_json(move_real),
+            }
+        )
+
+    result = {
+        "schema": PUBLISH_RESULT_SCHEMA,
+        "status": "published",
+        "wiki_space_id": wiki_space_id,
+        "parent_node_token": parent_node_token,
+        "published": published,
+        "command_results": command_results,
+    }
+    out = root / "feishu" / "publish-results.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8-sig")
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
