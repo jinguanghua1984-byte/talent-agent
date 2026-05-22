@@ -31,6 +31,11 @@ def _template_body():
             "search_query": "old",
             "positions": "",
             "allcompanies": "一线互联网公司",
+            "cities": "重庆",
+            "provinces": "重庆",
+            "ht_cities": "重庆",
+            "ht_provinces": "重庆",
+            "region_scope": "0",
             "degrees": "2,3",
             "degrees_min": "",
             "degrees_max": "",
@@ -80,7 +85,12 @@ def test_patch_search_body_preserves_session_fields_and_patches_verified_fields(
     assert patched["search"]["page"] == 1
     assert patched["search"]["size"] == 30
     assert patched["search"]["positions"] == ""
-    assert patched["search"]["allcompanies"] == "一线互联网公司"
+    assert patched["search"]["allcompanies"] == ""
+    assert patched["search"]["cities"] == ""
+    assert patched["search"]["provinces"] == ""
+    assert patched["search"]["ht_cities"] == ""
+    assert patched["search"]["ht_provinces"] == ""
+    assert patched["search"]["region_scope"] == "0,1"
     assert patched["search"]["degrees"] == "2,3"
     assert patched["search"]["sid"] == "sid-search"
     assert patched["search"]["sessionid"] == "session-search"
@@ -96,6 +106,11 @@ def test_patch_search_body_applies_explicit_confirmed_filters_only():
         "search_filters": {
             "allcompanies": "字节跳动,阿里",
             "positions": "模型训练,推理引擎",
+            "cities": "",
+            "provinces": "",
+            "ht_cities": "",
+            "ht_provinces": "",
+            "region_scope": "0,1",
             "degrees": "1,2,3",
             "only_bachelor_degree": 1,
             "worktimes_min": "4",
@@ -112,6 +127,11 @@ def test_patch_search_body_applies_explicit_confirmed_filters_only():
     assert patched["search"]["query_relation"] == 1
     assert patched["search"]["allcompanies"] == "字节跳动,阿里"
     assert patched["search"]["positions"] == "模型训练,推理引擎"
+    assert patched["search"]["cities"] == ""
+    assert patched["search"]["provinces"] == ""
+    assert patched["search"]["ht_cities"] == ""
+    assert patched["search"]["ht_provinces"] == ""
+    assert patched["search"]["region_scope"] == "0,1"
     assert patched["search"]["degrees"] == "1,2,3"
     assert patched["search"]["only_bachelor_degree"] == 1
     assert patched["search"]["worktimes_min"] == "4"

@@ -64,6 +64,11 @@ CONFIRMED_SEARCH_FILTER_FIELDS = {
     "min_only_bachelor_degree",
     "max_only_bachelor_degree",
     "positions",
+    "cities",
+    "provinces",
+    "ht_cities",
+    "ht_provinces",
+    "region_scope",
     "worktimes",
     "worktimes_min",
     "worktimes_max",
@@ -72,6 +77,16 @@ CONFIRMED_SEARCH_FILTER_FIELDS = {
     "schools",
     "major",
     "query_relation",
+}
+
+HIGH_RISK_SEARCH_FILTER_DEFAULTS: dict[str, Any] = {
+    "allcompanies": "",
+    "positions": "",
+    "cities": "",
+    "provinces": "",
+    "ht_cities": "",
+    "ht_provinces": "",
+    "region_scope": "0,1",
 }
 
 
@@ -152,6 +167,10 @@ def confirmed_search_filters_from_batch(batch: dict[str, Any]) -> dict[str, Any]
 
 def _apply_confirmed_search_filters(search: dict[str, Any], batch: dict[str, Any]) -> None:
     filters = confirmed_search_filters_from_batch(batch)
+    if batch.get("preserve_template_filters") is not True:
+        for field_name, value in HIGH_RISK_SEARCH_FILTER_DEFAULTS.items():
+            if field_name not in filters:
+                search[field_name] = value
     if "min_age" in filters or "max_age" in filters:
         search.pop("age", None)
     for field_name, value in filters.items():

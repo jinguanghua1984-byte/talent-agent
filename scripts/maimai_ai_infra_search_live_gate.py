@@ -380,10 +380,25 @@ def search_expression(
     return body;
   }}
 
+  const HIGH_RISK_FILTER_DEFAULTS = {{
+    "allcompanies": "",
+    "positions": "",
+    "cities": "",
+    "provinces": "",
+    "ht_cities": "",
+    "ht_provinces": "",
+    "region_scope": "0,1"
+  }};
+
   function applyConfirmedSearchFilters(body, filters) {{
     const target = body && body.search && typeof body.search === "object"
       ? body.search
       : body;
+    for (const [key, value] of Object.entries(HIGH_RISK_FILTER_DEFAULTS)) {{
+      if (!Object.prototype.hasOwnProperty.call(filters || {{}}, key)) {{
+        target[key] = value;
+      }}
+    }}
     if (Object.prototype.hasOwnProperty.call(filters || {{}}, "min_age") ||
         Object.prototype.hasOwnProperty.call(filters || {{}}, "max_age")) {{
       delete target.age;

@@ -407,6 +407,39 @@ def test_build_stage_commands_uses_existing_scripts_and_standardizer():
     )
 
 
+def test_build_stage_commands_routes_jd_strategy_to_generic_modules(tmp_path: Path):
+    strategy_path = tmp_path / "strategy.json"
+    strategy_path.write_text(
+        json.dumps(
+            {
+                "strategy_version": "hunyuan-data-strategy-lead-v1",
+                "keyword_packages": [{"id": "p0", "priority": "P0", "keywords": ["数据策略"]}],
+                "company_pools": {"p0_direct": ["字节 DMC"]},
+                "position_aliases": ["数据策略负责人"],
+                "screening_rules": {"淘汰": ["纯算法"]},
+                "delivery_targets": {
+                    "report_title": "混元大模型数据策略负责人最终寻访报告",
+                    "direction_rules": {"后训练数据策略": ["数据策略"]},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    commands = build_stage_commands(
+        campaign_root="data/campaigns/demo",
+        strategy=str(strategy_path),
+        policy={},
+    )
+
+    flattened = [" ".join(command) for command in commands]
+    assert any("python -m scripts.maimai_campaign_search_plan" in command for command in flattened)
+    assert any("python -m scripts.maimai_campaign_rank" in command and "--mode list" in command for command in flattened)
+    assert any("python -m scripts.maimai_campaign_delivery_report" in command for command in flattened)
+    assert not any("python -m scripts.maimai_ai_infra_search_plan" in command for command in flattened)
+
+
 def test_build_stage_command_plan_links_wave_plan_producer_to_live_gate_consumer():
     plan = build_stage_command_plan(
         campaign_root="data/campaigns/demo",

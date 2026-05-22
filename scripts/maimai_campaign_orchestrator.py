@@ -281,6 +281,14 @@ def _command_entry(
     return entry
 
 
+def _is_legacy_ai_infra_strategy(strategy_path: str | Path) -> bool:
+    try:
+        data = json.loads(Path(strategy_path).read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return True
+    return isinstance(data, dict) and "company_tiers" in data and "title_batches" in data and "v2" in data
+
+
 def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str, Any]) -> list[dict[str, Any]]:
     root = Path(campaign_root)
     pack_size = policy.get("detail_pack_max_contacts")
@@ -307,6 +315,21 @@ def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str
     outreach_audit_json = reports / "outreach-quality-audit.json"
     outreach_audit_md = reports / "outreach-quality-audit.md"
     feishu_manifest = reports / "feishu-delivery-manifest.json"
+    search_plan_module = (
+        "scripts.maimai_ai_infra_search_plan"
+        if _is_legacy_ai_infra_strategy(strategy)
+        else "scripts.maimai_campaign_search_plan"
+    )
+    rank_module = (
+        "scripts.maimai_ai_infra_rank"
+        if _is_legacy_ai_infra_strategy(strategy)
+        else "scripts.maimai_campaign_rank"
+    )
+    delivery_module = (
+        "scripts.maimai_ai_infra_delivery_report"
+        if _is_legacy_ai_infra_strategy(strategy)
+        else "scripts.maimai_campaign_delivery_report"
+    )
 
     commands = [
         _command_entry(
@@ -315,7 +338,7 @@ def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str
             argv=[
                 "python",
                 "-m",
-                "scripts.maimai_ai_infra_search_plan",
+                search_plan_module,
                 "--config",
                 strategy,
                 "--out",
@@ -403,7 +426,7 @@ def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str
             argv=[
                 "python",
                 "-m",
-                "scripts.maimai_ai_infra_rank",
+                rank_module,
                 "--db",
                 str(campaign_db),
                 "--config",
@@ -452,7 +475,7 @@ def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str
             argv=[
                 "python",
                 "-m",
-                "scripts.maimai_ai_infra_rank",
+                rank_module,
                 "--db",
                 str(campaign_db),
                 "--config",
@@ -475,7 +498,7 @@ def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str
             argv=[
                 "python",
                 "-m",
-                "scripts.maimai_ai_infra_delivery_report",
+                delivery_module,
                 "--campaign-root",
                 campaign_root,
                 "--db-path",

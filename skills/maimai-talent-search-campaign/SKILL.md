@@ -90,10 +90,12 @@ description: Use when the user asks to search Maimai from a JD or talent-search 
 - `keyword_packages`
 - `search_dimensions`
 - `company_pools`
+- `company_product_mappings`：JD 中公司+部门/产品线缩写的结构化映射，例如 `字节 DMC -> 字节跳动 + DMC/Data Management Center/数据管理中心`。
 - `position_aliases`
 - `screening_rules`
 - `stop_thresholds`
 - `delivery_targets`
+- `delivery_feedback_contract`：交付后用户评价字段、原因码和下一轮策略调整入口。
 
 `run-policy.json` 必须显式写入以下键和值，作为 workflow 执行、恢复和无人值守推进的 source of truth：
 

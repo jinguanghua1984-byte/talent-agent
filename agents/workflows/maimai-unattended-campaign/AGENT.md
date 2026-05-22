@@ -95,6 +95,16 @@ description: 脉脉 unattended campaign 的 canonical workflow，约束搜索、
 
 记录最终状态、剩余风险、恢复入口和下一步动作。通知发送失败时状态写为 `blocked_notification_failed`，不得把通知失败误报为 campaign 执行成功。Campaign DB 之后由人工手动整合进主 DB；不得自动执行主库同步或主库写入。
 
+### S14 交付反馈与下一轮策略调整
+
+交付包发布后，若用户提供评价，必须落为 `feedback/delivery-feedback-<date>.json`，再运行：
+
+```powershell
+python -m scripts.maimai_campaign_feedback --feedback data/campaigns/<campaign_id>/feedback/delivery-feedback-<date>.json --out data/campaigns/<campaign_id>/feedback/strategy-adjustment-<date>.json
+```
+
+反馈至少包含候选人级 `good/maybe/bad`、原因码、缺失画像、公司池调整和 query/unit 调整。下一轮搜索必须先读取 `strategy-adjustment-*.json`，不得只根据聊天文字临时改关键词。
+
 ## 验收
 
 - 任一阶段失败都必须留下可恢复的事实来源和明确状态。

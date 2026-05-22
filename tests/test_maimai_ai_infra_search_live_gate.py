@@ -129,6 +129,11 @@ def test_live_gate_search_expression_applies_confirmed_filters_only():
         30,
         {
             "positions": "模型训练,推理引擎",
+            "cities": "",
+            "provinces": "",
+            "ht_cities": "",
+            "ht_provinces": "",
+            "region_scope": "0,1",
             "schools": "浙大",
             "major": "软件工程",
             "min_age": "16",
@@ -138,7 +143,13 @@ def test_live_gate_search_expression_applies_confirmed_filters_only():
     )
 
     assert "applyConfirmedSearchFilters" in expression
+    assert "HIGH_RISK_FILTER_DEFAULTS" in expression
     assert '"positions": "模型训练,推理引擎"' in expression
+    assert '"cities": ""' in expression
+    assert '"provinces": ""' in expression
+    assert '"ht_cities": ""' in expression
+    assert '"ht_provinces": ""' in expression
+    assert '"region_scope": "0,1"' in expression
     assert '"schools": "浙大"' in expression
     assert '"major": "软件工程"' in expression
     assert '"min_age": "16"' in expression

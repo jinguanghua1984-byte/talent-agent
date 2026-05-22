@@ -1,0 +1,41 @@
+{
+  "strategy_version": "hunyuan-data-strategy-lead-v1-fixture",
+  "keyword_packages": [
+    {
+      "id": "p0-llm-data-strategy",
+      "priority": "P0",
+      "position_terms": ["大模型数据策略负责人", "数据策略负责人", "AI 数据负责人"],
+      "keywords": ["大模型", "后训练", "数据策略", "数据质量"]
+    },
+    {
+      "id": "p0-data-delivery-quality",
+      "priority": "P0",
+      "position_terms": ["数据交付负责人", "数据质检负责人", "数据运营负责人"],
+      "keywords": ["数据标注", "数据质检", "数据交付", "质量评估"]
+    }
+  ],
+  "company_pools": {
+    "p0_direct": ["字节 DMC", "字节 Global Data", "字节 AIDP", "阿里千问", "快手可灵", "美团", "小红书", "Scale AI", "Surge AI"]
+  },
+  "position_aliases": [
+    "大模型数据策略负责人",
+    "大模型数据负责人",
+    "AI 数据负责人",
+    "后训练数据负责人",
+    "数据交付负责人",
+    "数据质检负责人",
+    "数据运营负责人"
+  ],
+  "screening_rules": {
+    "A": ["负责后训练数据策略、数据交付、标注质检、数据合成或数据运营团队"],
+    "淘汰": ["纯算法研究且无数据生产、质量体系或团队管理"]
+  },
+  "delivery_targets": {
+    "report_title": "混元大模型数据策略负责人最终寻访报告",
+    "direction_rules": {
+      "后训练数据策略": ["后训练", "数据策略", "Topic 数据"],
+      "数据交付质量": ["数据标注", "数据质检", "数据交付", "质量评估"],
+      "数据平台产品": ["标注平台", "质检平台", "数据管理"]
+    }
+  }
+}

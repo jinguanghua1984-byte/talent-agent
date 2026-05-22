@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "term": "字节 DMC",
+      "canonical_company": "字节跳动",
+      "company_aliases": ["字节", "ByteDance"],
+      "org_product_terms": ["DMC", "Data Management Center", "数据管理中心"],
+      "preferred_search_mode": "hybrid",
+      "confidence": "curated"
+    },
+    {
+      "term": "字节 Global Data",
+      "canonical_company": "字节跳动",
+      "company_aliases": ["字节", "ByteDance", "TikTok"],
+      "org_product_terms": ["Global Data", "国际化数据", "TikTok 数据"],
+      "preferred_search_mode": "hybrid",
+      "confidence": "curated"
+    },
+    {
+      "term": "字节 AIDP",
+      "canonical_company": "字节跳动",
+      "company_aliases": ["字节", "ByteDance"],
+      "org_product_terms": ["AIDP", "AI Data Platform", "字节数据平台"],
+      "preferred_search_mode": "hybrid",
+      "confidence": "curated"
+    },
+    {
+      "term": "字节 Seed",
+      "canonical_company": "字节跳动",
+      "company_aliases": ["字节", "ByteDance"],
+      "org_product_terms": ["Seed", "豆包", "火山引擎"],
+      "preferred_search_mode": "hybrid",
+      "confidence": "curated"
+    },
+    {
+      "term": "阿里千问",
+      "canonical_company": "阿里巴巴",
+      "company_aliases": ["阿里", "阿里云", "Alibaba"],
+      "org_product_terms": ["通义千问", "通义", "Qwen", "千问"],
+      "preferred_search_mode": "hybrid",
+      "confidence": "curated"
+    },
+    {
+      "term": "阿里通义",
+      "canonical_company": "阿里巴巴",
+      "company_aliases": ["阿里", "阿里云", "Alibaba"],
+      "org_product_terms": ["通义", "通义千问", "Qwen", "达摩院"],
+      "preferred_search_mode": "hybrid",
+      "confidence": "curated"
+    },
+    {
+      "term": "百度千帆",
+      "canonical_company": "百度",
+      "company_aliases": ["百度", "Baidu"],
+      "org_product_terms": ["千帆", "文心", "ERNIE"],
+      "preferred_search_mode": "hybrid",
+      "confidence": "curated"
+    },
+    {
+      "term": "腾讯混元",
+      "canonical_company": "腾讯",
+      "company_aliases": ["腾讯", "Tencent"],
+      "org_product_terms": ["混元", "Hunyuan", "腾讯云", "TEG", "AI Lab"],
+      "preferred_search_mode": "hybrid",
+      "confidence": "curated"
+    },
+    {
+      "term": "快手可灵",
+      "canonical_company": "快手",
+      "company_aliases": ["快手", "Kuaishou"],
+      "org_product_terms": ["可灵", "Kling", "快手 AI"],
+      "preferred_search_mode": "hybrid",
+      "confidence": "curated"
+    },
+    {
+      "term": "Scale AI",
+      "canonical_company": "Scale AI",
+      "company_aliases": ["Scale", "scale ai"],
+      "org_product_terms": ["RLHF", "data labeling", "data quality"],
+      "preferred_search_mode": "query_only",
+      "confidence": "curated"
+    },
+    {
+      "term": "Surge AI",
+      "canonical_company": "Surge AI",
+      "company_aliases": ["Surge", "surge ai"],
+      "org_product_terms": ["RLHF", "data labeling", "data quality"],
+      "preferred_search_mode": "query_only",
+      "confidence": "curated"
+    }
+  ]
+}
