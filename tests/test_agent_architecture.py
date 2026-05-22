@@ -9,6 +9,7 @@ WORKFLOWS = [
     "report",
     "talent-library",
     "wechat-chat-sync",
+    "jd-talent-delivery",
 ]
 
 
