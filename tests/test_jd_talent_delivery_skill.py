@@ -28,6 +28,9 @@ def test_skill_declares_output_root_and_artifacts() -> None:
 
     for token in [
         "data/output/<jd-slug>-<YYYY-MM-DD>/",
+        "data/output/<jd-slug>-<YYYY-MM-DD>-run-NNN/",
+        "run-manifest.json",
+        "output_dir",
         "source/jd.md",
         "profile/role-deep-dive.md",
         "profile/role-profile.json",
@@ -53,6 +56,15 @@ def test_skill_declares_defaults_and_handoff() -> None:
         "docs/business-requirements/2026-05-21-llm-inference-role-deep-dive.md",
     ]:
         assert token in text
+
+
+def test_skill_includes_prepare_command_example() -> None:
+    text = _text()
+
+    assert (
+        "python -m scripts.jd_talent_delivery prepare --jd-path <jd_path> "
+        "--output-base data/output --top-n 30"
+    ) in text
 
 
 def test_skill_requires_scorecard_consistency_and_read_only_db() -> None:

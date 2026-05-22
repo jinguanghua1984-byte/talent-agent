@@ -24,12 +24,14 @@ description: Use when the user asks to turn a JD into a local talent-library rec
 - `top_n=30`
 - `publish_feishu=true`
 - `wiki_space_id=7642607697183001542`
-- 输出目录：`data/output/<jd-slug>-<YYYY-MM-DD>/`
+- 输出目录：首次运行使用 `data/output/<jd-slug>-<YYYY-MM-DD>/`；如果该目录已经存在且非空，必须分配 `data/output/<jd-slug>-<YYYY-MM-DD>-run-NNN/`。
+- 后续所有产物必须使用 `run-manifest.json` 中的实际 `output_dir`，不得假设固定目录名。
 
 ## 输出产物
 
 每次执行必须创建独立输出目录，并至少写入这些产物：
 
+- `run-manifest.json`
 - `source/jd.md`
 - `profile/role-deep-dive.md`
 - `profile/role-profile.json`
@@ -62,3 +64,9 @@ description: Use when the user asks to turn a JD into a local talent-library rec
 ## 自动交接
 
 确认输入和默认值后，读取并执行 `agents/workflows/jd-talent-delivery/AGENT.md`。不要把真实执行逻辑写在 Skill 中。
+
+首个运行时检查命令：
+
+```powershell
+python -m scripts.jd_talent_delivery prepare --jd-path <jd_path> --output-base data/output --top-n 30
+```

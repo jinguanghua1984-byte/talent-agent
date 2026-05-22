@@ -44,12 +44,20 @@ description: "JD 本地人才库推荐和飞书知识库交付。用于读取 JD
 
 ### S1：建立输出目录
 
-创建 `data/output/<jd-slug>-<YYYY-MM-DD>/`，并写入：
+运行 `prepare` 入口创建独立输出目录。首次运行使用 `data/output/<jd-slug>-<YYYY-MM-DD>/`；如果该目录已经存在且非空，必须分配 `data/output/<jd-slug>-<YYYY-MM-DD>-run-NNN/`，不得复用非空目录。
+
+运行时入口：
+
+```powershell
+python -m scripts.jd_talent_delivery prepare --jd-path <jd_path> --output-base data/output --top-n <N>
+```
+
+命令完成后必须读取 `run-manifest.json` 的实际 `output_dir`，并把它作为本次运行根目录。所有后续过程输出都必须写在该 `output_dir` 下，不得假设固定目录名，也不得把临时文件写到运行时私有目录。
+
+S1 至少写入：
 
 - `source/jd.md`
 - `run-manifest.json`
-
-所有后续过程输出都必须在该目录下。不得把临时文件写到运行时私有目录。
 
 ### S2：岗位画像
 

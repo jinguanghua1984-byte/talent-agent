@@ -36,8 +36,20 @@ def test_workflow_declares_stage_artifacts() -> None:
         "S6：报告和外联表",
         "S7：飞书发布",
         "data/output/<jd-slug>-<YYYY-MM-DD>/",
+        "data/output/<jd-slug>-<YYYY-MM-DD>-run-NNN/",
+        "run-manifest.json",
+        "output_dir",
     ]:
         assert token in text
+
+
+def test_workflow_includes_prepare_command_example() -> None:
+    text = _text()
+
+    assert (
+        "python -m scripts.jd_talent_delivery prepare --jd-path <jd_path> "
+        "--output-base data/output --top-n <N>"
+    ) in text
 
 
 def test_workflow_enforces_scorecard_consistency() -> None:
