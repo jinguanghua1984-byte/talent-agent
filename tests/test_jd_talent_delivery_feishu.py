@@ -4,11 +4,14 @@ from pathlib import Path
 
 import pytest
 
+from scripts import jd_talent_delivery_feishu as feishu
 from scripts.jd_talent_delivery_feishu import (
+    _resolve_lark_cli_argv,
     _stdout_json,
     _token,
     _without_dry_run,
     build_publish_manifest,
+    default_runner,
     main,
     publish_output,
 )
@@ -54,6 +57,19 @@ class FakeRunner:
             return subprocess.CompletedProcess(argv, 0, '{"ok":true,"dry_run":true}', "")
         if "wiki +move" in joined:
             return subprocess.CompletedProcess(argv, 0, '{"node_token":"moved_node","ready":true}', "")
+        if "wiki +node-list" in joined:
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                '{"items":[{"title":"Demo Role JD","obj_type":"docx"},{"title":"Demo Role outreach queue","obj_type":"sheet"}]}',
+                "",
+            )
+        if "wiki +node-get" in joined:
+            return subprocess.CompletedProcess(argv, 0, '{"node":{"title":"readback","obj_type":"docx"}}', "")
+        if "docs +fetch" in joined:
+            return subprocess.CompletedProcess(argv, 0, '{"outline":[{"text":"Heading 1","level":1}]}', "")
+        if "sheets +read" in joined:
+            return subprocess.CompletedProcess(argv, 0, '{"values":[["name","email"],["A","a@example.com"]]}', "")
         return subprocess.CompletedProcess(argv, 1, "", "unexpected command")
 
 
@@ -204,12 +220,25 @@ def test_publish_output_runs_preflight_dry_run_then_real_publish(tmp_path: Path)
     assert result["status"] == "published"
     assert result["parent_node_token"] == "parent_node"
     assert (root / "feishu" / "publish-results.json").exists()
+    assert (root / "feishu" / "dry-run-results.json").exists()
+
+    dry_run_results = json.loads((root / "feishu" / "dry-run-results.json").read_text(encoding="utf-8-sig"))
+    assert dry_run_results["schema"] == "jd_talent_delivery_feishu_dry_run_results_v1"
+    assert all("--dry-run" in item["argv"] for item in dry_run_results["results"])
+    assert result["readback"]["wiki_children"]["items"][0]["title"] == "Demo Role JD"
+    assert len(result["readback"]["doc_outlines"]) == 3
+    assert result["readback"]["sheet_previews"][0]["values"][0] == ["name", "email"]
+
     calls = [" ".join(call) for call in runner.calls]
     assert calls[0] == "lark-cli doctor"
     assert calls[1] == "lark-cli auth status"
     assert any("wiki +node-create" in call and "--dry-run" in call for call in calls)
     assert any("drive +import" in call and "--dry-run" in call for call in calls)
     assert any("wiki +move" in call and "--target-parent-token parent_node" in call for call in calls)
+    assert any("wiki +node-list --as user --space-id 7642607697183001542 --parent-node-token parent_node --page-size 50 --format json" in call for call in calls)
+    assert any("wiki +node-get --as user --token moved_node --obj-type docx --space-id 7642607697183001542 --format json" in call for call in calls)
+    assert any("docs +fetch --as user --api-version v2 --doc doc_" in call and "--format json --limit 20" in call for call in calls)
+    assert any("sheets +read --as user --spreadsheet-token sheet_token --range A1:Z5" in call for call in calls)
 
 
 def test_publish_output_raises_when_command_fails(tmp_path: Path) -> None:
@@ -249,3 +278,70 @@ def test_stdout_json_rejects_non_object_json() -> None:
 
 def test_token_reads_nested_data_dict() -> None:
     assert _token({"data": {"node_token": "nested"}}, "node_token") == "nested"
+
+
+def test_resolve_lark_cli_argv_prefers_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("LARK_CLI", r"C:\tools\lark-cli.cmd")
+
+    assert _resolve_lark_cli_argv(["lark-cli", "doctor"]) == [r"C:\tools\lark-cli.cmd", "doctor"]
+    assert _resolve_lark_cli_argv(["node", "run.js"]) == ["node", "run.js"]
+
+
+def test_resolve_lark_cli_argv_uses_cmd_shim_before_other_names(monkeypatch) -> None:
+    monkeypatch.delenv("LARK_CLI", raising=False)
+    checked: list[str] = []
+
+    def fake_which(name: str) -> str | None:
+        checked.append(name)
+        return r"C:\npm\lark-cli.cmd" if name == "lark-cli.cmd" else None
+
+    monkeypatch.setattr(feishu.shutil, "which", fake_which)
+
+    assert _resolve_lark_cli_argv(["lark-cli", "auth", "status"]) == [
+        r"C:\npm\lark-cli.cmd",
+        "auth",
+        "status",
+    ]
+    assert checked == ["lark-cli.cmd"]
+
+
+def test_default_runner_passes_resolved_argv_to_subprocess(monkeypatch) -> None:
+    monkeypatch.setenv("LARK_CLI", r"C:\tools\lark-cli.cmd")
+    seen: dict[str, object] = {}
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        seen["kwargs"] = kwargs
+        return subprocess.CompletedProcess(argv, 0, "{}", "")
+
+    monkeypatch.setattr(feishu.subprocess, "run", fake_run)
+
+    completed = default_runner(["lark-cli", "doctor"], cwd="demo")
+
+    assert completed.args == [r"C:\tools\lark-cli.cmd", "doctor"]
+    assert seen["argv"] == [r"C:\tools\lark-cli.cmd", "doctor"]
+    assert seen["kwargs"] == {"cwd": "demo", "text": True, "capture_output": True, "check": False}
+
+
+def test_main_help_mentions_publish_entry(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+
+    assert exc.value.code == 0
+    assert "--publish" in capsys.readouterr().out
+
+
+def test_main_publish_invokes_publish_output(tmp_path: Path, monkeypatch) -> None:
+    root = _safe_output_root(tmp_path)
+    calls: list[tuple[str, str, str]] = []
+
+    def fake_publish_output(output_root, jd_title, wiki_space_id):
+        calls.append((str(output_root), jd_title, wiki_space_id))
+        return {"status": "published"}
+
+    monkeypatch.setattr(feishu, "publish_output", fake_publish_output)
+
+    code = main(["--output-root", str(root), "--jd-title", "Demo Role", "--publish"])
+
+    assert code == 0
+    assert calls == [(str(root), "Demo Role", "7642607697183001542")]

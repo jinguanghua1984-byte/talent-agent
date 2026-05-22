@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
+import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -11,6 +13,7 @@ from typing import Any
 
 SCHEMA = "jd_talent_delivery_feishu_manifest_v1"
 PUBLISH_RESULT_SCHEMA = "jd_talent_delivery_feishu_publish_result_v1"
+DRY_RUN_RESULT_SCHEMA = "jd_talent_delivery_feishu_dry_run_results_v1"
 DEFAULT_WIKI_SPACE_ID = "7642607697183001542"
 ARTIFACT_MARKERS = (
     "talent.db",
@@ -189,6 +192,74 @@ def _wiki_move_command(
     )
 
 
+def _wiki_node_list_command(wiki_space_id: str, parent_node_token: str) -> list[str]:
+    return [
+        "lark-cli",
+        "wiki",
+        "+node-list",
+        "--as",
+        "user",
+        "--space-id",
+        wiki_space_id,
+        "--parent-node-token",
+        parent_node_token,
+        "--page-size",
+        "50",
+        "--format",
+        "json",
+    ]
+
+
+def _wiki_node_get_command(token: str, obj_type: str, wiki_space_id: str) -> list[str]:
+    return [
+        "lark-cli",
+        "wiki",
+        "+node-get",
+        "--as",
+        "user",
+        "--token",
+        token,
+        "--obj-type",
+        obj_type,
+        "--space-id",
+        wiki_space_id,
+        "--format",
+        "json",
+    ]
+
+
+def _docs_fetch_command(doc_token: str) -> list[str]:
+    return [
+        "lark-cli",
+        "docs",
+        "+fetch",
+        "--as",
+        "user",
+        "--api-version",
+        "v2",
+        "--doc",
+        doc_token,
+        "--format",
+        "json",
+        "--limit",
+        "20",
+    ]
+
+
+def _sheets_read_command(spreadsheet_token: str) -> list[str]:
+    return [
+        "lark-cli",
+        "sheets",
+        "+read",
+        "--as",
+        "user",
+        "--spreadsheet-token",
+        spreadsheet_token,
+        "--range",
+        "A1:Z5",
+    ]
+
+
 def _publish_steps(
     source_files: dict[str, str],
     jd_title: str,
@@ -284,8 +355,24 @@ def build_publish_manifest(
     return manifest
 
 
+def _resolve_lark_cli_argv(argv: list[str]) -> list[str]:
+    resolved = list(argv)
+    if not resolved or resolved[0] != "lark-cli":
+        return resolved
+
+    override = os.environ.get("LARK_CLI")
+    if override:
+        return [override, *resolved[1:]]
+
+    for name in ("lark-cli.cmd", "lark-cli.exe", "lark-cli", "lark-cli.ps1"):
+        found = shutil.which(name)
+        if found:
+            return [found, *resolved[1:]]
+    return resolved
+
+
 def default_runner(argv: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(argv, cwd=cwd, text=True, capture_output=True, check=False)
+    return subprocess.run(_resolve_lark_cli_argv(argv), cwd=cwd, text=True, capture_output=True, check=False)
 
 
 def _run(argv: list[str], runner: Runner, cwd: str | None = None) -> dict[str, Any]:
@@ -313,19 +400,24 @@ def _stdout_json(result: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def _token(data: dict[str, Any], *keys: str) -> str:
-    for key in keys:
-        value = data.get(key)
-        if isinstance(value, str) and value:
-            return value
-
-    nested = data.get("data")
-    if isinstance(nested, dict):
+def _optional_token(data: dict[str, Any], *keys: str) -> str | None:
+    containers: list[dict[str, Any]] = [data]
+    for nested_key in ("data", "node"):
+        nested = data.get(nested_key)
+        if isinstance(nested, dict):
+            containers.append(nested)
+    for container in containers:
         for key in keys:
-            value = nested.get(key)
+            value = container.get(key)
             if isinstance(value, str) and value:
                 return value
+    return None
 
+
+def _token(data: dict[str, Any], *keys: str) -> str:
+    token = _optional_token(data, *keys)
+    if token:
+        return token
     raise ValueError(f"missing token keys: {keys}")
 
 
@@ -344,11 +436,14 @@ def publish_output(
     root = Path(output_root)
     manifest = build_publish_manifest(root, jd_title=jd_title, wiki_space_id=wiki_space_id, dry_run=True)
     command_results: list[dict[str, Any]] = []
+    dry_run_results: list[dict[str, Any]] = []
     cwd = str(root)
 
     def run(argv: list[str]) -> dict[str, Any]:
         result = _run(argv, runner, cwd=cwd)
         command_results.append(result)
+        if "--dry-run" in argv:
+            dry_run_results.append(result)
         return result
 
     for step in manifest["preflight"]:
@@ -389,6 +484,8 @@ def publish_output(
         )
         run(move_dry_run)
         move_real = run(_without_dry_run(move_dry_run))
+        move_data = _stdout_json(move_real)
+        node_token = _optional_token(move_data, "node_token", "wiki_token") or obj_token
 
         published.append(
             {
@@ -397,9 +494,32 @@ def publish_output(
                 "obj_type": obj_type,
                 "source_file": source_file,
                 "obj_token": obj_token,
-                "move": _stdout_json(move_real),
+                "node_token": node_token,
+                "move": move_data,
             }
         )
+
+    wiki_children = _stdout_json(run(_wiki_node_list_command(wiki_space_id, parent_node_token)))
+    node_details: list[dict[str, Any]] = []
+    doc_outlines: list[dict[str, Any]] = []
+    sheet_previews: list[dict[str, Any]] = []
+    for item in published:
+        node_token = str(item.get("node_token") or item["obj_token"])
+        obj_type = str(item["obj_type"])
+        node_details.append(_stdout_json(run(_wiki_node_get_command(node_token, obj_type, wiki_space_id))))
+        if obj_type == "docx":
+            doc_outlines.append(_stdout_json(run(_docs_fetch_command(str(item["obj_token"])))))
+        elif obj_type == "sheet":
+            sheet_previews.append(_stdout_json(run(_sheets_read_command(str(item["obj_token"])))))
+
+    dry_run_result = {
+        "schema": DRY_RUN_RESULT_SCHEMA,
+        "status": "dry_run_ok",
+        "results": dry_run_results,
+    }
+    dry_run_out = root / "feishu" / "dry-run-results.json"
+    dry_run_out.parent.mkdir(parents=True, exist_ok=True)
+    dry_run_out.write_text(json.dumps(dry_run_result, ensure_ascii=False, indent=2), encoding="utf-8-sig")
 
     result = {
         "schema": PUBLISH_RESULT_SCHEMA,
@@ -407,6 +527,12 @@ def publish_output(
         "wiki_space_id": wiki_space_id,
         "parent_node_token": parent_node_token,
         "published": published,
+        "readback": {
+            "wiki_children": wiki_children,
+            "node_details": node_details,
+            "doc_outlines": doc_outlines,
+            "sheet_previews": sheet_previews,
+        },
         "command_results": command_results,
     }
     out = root / "feishu" / "publish-results.json"
@@ -416,13 +542,23 @@ def publish_output(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build a JD talent delivery Feishu publish manifest")
+    parser = argparse.ArgumentParser(description="Build or publish a JD talent delivery Feishu package")
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--jd-title", required=True)
     parser.add_argument("--wiki-space-id", default=DEFAULT_WIKI_SPACE_ID)
-    parser.add_argument("--manifest-out", required=True)
+    parser.add_argument("--manifest-out")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--publish", action="store_true", help="run lark-cli publish workflow after internal dry-runs")
     args = parser.parse_args(argv)
+
+    if args.publish:
+        if args.dry_run:
+            parser.error("--dry-run only applies to manifest generation; publish runs its own dry-run prechecks")
+        publish_output(args.output_root, args.jd_title, args.wiki_space_id)
+        return 0
+
+    if not args.manifest_out:
+        parser.error("--manifest-out is required unless --publish is set")
 
     manifest = build_publish_manifest(
         args.output_root,

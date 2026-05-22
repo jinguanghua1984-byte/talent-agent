@@ -111,6 +111,8 @@ def test_run_match_outputs_reports_and_outreach(tmp_path: Path, monkeypatch) -> 
     assert result["top_n"] == 1
     assert (out_dir / "scoring" / "coarse-screen.json").exists()
     assert (out_dir / "scoring" / "detailed-rank.json").exists()
+    assert (out_dir / "scoring" / "coarse-screen.md").exists()
+    assert (out_dir / "scoring" / "detailed-rank.md").exists()
     assert (out_dir / "reports" / "talent-recommendation.md").exists()
     assert (out_dir / "reports" / "talent-recommendation.json").exists()
     assert (out_dir / "reports" / "outreach-queue.csv").exists()
@@ -131,6 +133,8 @@ def test_run_match_outputs_reports_and_outreach(tmp_path: Path, monkeypatch) -> 
     )
     assert "strong_recommend" in report
     assert "82" in report
+    assert "101" in (out_dir / "scoring" / "coarse-screen.md").read_text(encoding="utf-8-sig")
+    assert "101" in (out_dir / "scoring" / "detailed-rank.md").read_text(encoding="utf-8-sig")
 
 
 def test_coarse_and_detailed_share_dimension_ids() -> None:

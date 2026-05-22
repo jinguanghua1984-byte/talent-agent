@@ -527,6 +527,8 @@ def run_match(
 
     _write_json(root / "scoring" / "coarse-screen.json", {"scorecard": scorecard, "ranked": coarse})
     _write_json(root / "scoring" / "detailed-rank.json", result)
+    _write_report(root / "scoring" / "coarse-screen.md", coarse, scorecard, top_n)
+    _write_report(root / "scoring" / "detailed-rank.md", detailed, scorecard, top_n)
     _write_json(root / "reports" / "talent-recommendation.json", result)
     _write_report(root / "reports" / "talent-recommendation.md", detailed, scorecard, top_n)
     _write_outreach_csv(root / "reports" / "outreach-queue.csv", detailed, top_n)
