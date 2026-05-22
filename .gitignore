@@ -66,6 +66,7 @@ data/cache/
 *.pem
 
 # Runtime output
+output/
 runtime/
 
 # Task process artifacts (local draft sources)
