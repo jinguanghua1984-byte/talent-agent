@@ -53,6 +53,9 @@ def test_default_policy_counts_search_budget_only():
     assert DEFAULT_RUN_POLICY["allow_feishu_delivery_publish"] is True
     assert DEFAULT_RUN_POLICY["notify_channel"] == "feishu_im"
     assert DEFAULT_RUN_POLICY["allow_main_db_write"] is False
+    assert DEFAULT_RUN_POLICY["account_day_page_guardrail"] == 500
+    assert DEFAULT_RUN_POLICY["campaign_page_budget"] is None
+    assert DEFAULT_RUN_POLICY["detail_concurrency"] == 4
 
     assert count_search_requests({"stage": "search_live", "pages": 12}) == 12
     assert count_search_requests({"stage": "search_live", "pages": True}) == 0
@@ -438,6 +441,36 @@ def test_build_stage_commands_routes_jd_strategy_to_generic_modules(tmp_path: Pa
     assert any("python -m scripts.maimai_campaign_rank" in command and "--mode list" in command for command in flattened)
     assert any("python -m scripts.maimai_campaign_delivery_report" in command for command in flattened)
     assert not any("python -m scripts.maimai_ai_infra_search_plan" in command for command in flattened)
+
+
+def test_build_stage_command_plan_for_broad_recall_skips_recommendation_delivery(tmp_path: Path) -> None:
+    strategy_path = tmp_path / "strategy.json"
+    strategy_path.write_text(
+        json.dumps(
+            {
+                "strategy_mode": "broad_recall_adaptive_v1",
+                "keyword_packages": [{"id": "p0", "keywords": ["大模型"]}],
+                "company_pools": {"target": ["腾讯混元"]},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    plan = build_stage_command_plan(
+        "data/campaigns/demo",
+        str(strategy_path),
+        policy=DEFAULT_RUN_POLICY,
+    )
+    stages = [command["stage"] for command in plan]
+
+    assert "evaluate_page_quality" in stages
+    assert "detail_priority" in stages
+    assert "broad_recall_summary" in stages
+    assert "detailed_rank" not in stages
+    assert "delivery_report" not in stages
+    assert "outreach_package" not in stages
+    assert "delivery_package" not in stages
 
 
 def test_build_stage_command_plan_links_wave_plan_producer_to_live_gate_consumer():

@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from scripts.maimai_broad_recall_adaptive import is_broad_recall_strategy
+
 
 DEFAULT_RUN_POLICY: dict[str, Any] = {
     "auto_continue_after_search_plan_confirmation": True,
@@ -26,8 +28,11 @@ DEFAULT_RUN_POLICY: dict[str, Any] = {
     "allow_feishu_delivery_publish": True,
     "main_db_sync_mode": "manual_only",
     "daily_search_request_budget": 500,
+    "campaign_page_budget": None,
+    "account_day_page_guardrail": 500,
     "search_wave_max_pages": 50,
     "detail_pack_max_contacts": 100,
+    "detail_concurrency": 4,
     "detail_target_grades": ["A", "B"],
     "detail_include_c_when_abc_total_lte": 100,
     "delivery_outputs": ["local_md", "csv", "feishu_doc", "feishu_base"],
@@ -289,6 +294,56 @@ def _is_legacy_ai_infra_strategy(strategy_path: str | Path) -> bool:
     return isinstance(data, dict) and "company_tiers" in data and "title_batches" in data and "v2" in data
 
 
+def _is_broad_recall_strategy_path(strategy_path: str | Path) -> bool:
+    try:
+        data = json.loads(Path(strategy_path).read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and is_broad_recall_strategy(data)
+
+
+def _notification_command_entries(policy: dict[str, Any], continuation_plan: Path) -> list[dict[str, Any]]:
+    notify_chat_id = str(policy.get("notify_chat_id") or "").strip()
+    notify_user_id = str(policy.get("notify_user_id") or "").strip()
+    if notify_chat_id and notify_user_id:
+        raise ValueError("notify_chat_id and notify_user_id are mutually exclusive")
+    if notify_chat_id or notify_user_id:
+        notify_argv = [
+            "python",
+            "-m",
+            "scripts.campaign_notify",
+            "--event",
+            str(continuation_plan),
+            "--identity",
+            str(policy.get("notify_identity", DEFAULT_RUN_POLICY["notify_identity"])),
+        ]
+        if notify_chat_id:
+            notify_argv.extend(["--chat-id", notify_chat_id])
+        else:
+            notify_argv.extend(["--user-id", notify_user_id])
+        notify_argv.append("--dry-run")
+        return [
+            _command_entry(
+                stage="notify_blocked",
+                description="Dry-run Feishu IM notification for blocked continuation events.",
+                argv=notify_argv,
+                extra={"consumes": [str(continuation_plan)]},
+            )
+        ]
+    return [
+        _command_entry(
+            stage="notify_blocked",
+            description="Notification command not constructed because policy has no notify target.",
+            argv=[],
+            extra={
+                "skipped": True,
+                "blocked_reason": "notify_target_missing",
+                "consumes": [str(continuation_plan)],
+            },
+        )
+    ]
+
+
 def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str, Any]) -> list[dict[str, Any]]:
     root = Path(campaign_root)
     pack_size = policy.get("detail_pack_max_contacts")
@@ -330,6 +385,202 @@ def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str
         if _is_legacy_ai_infra_strategy(strategy)
         else "scripts.maimai_campaign_delivery_report"
     )
+
+    if _is_broad_recall_strategy_path(strategy):
+        page_quality_jsonl = reports / "page-quality.jsonl"
+        adaptive_state = root / "state" / "adaptive-unit-state.json"
+        seen_candidates = root / "state" / "seen-candidates.jsonl"
+        detail_priority_json = reports / "detail-priority.json"
+        detail_priority_md = reports / "detail-priority.md"
+        review_out = root / "review" / f"initial-human-review-draft-{live_wave_id}.json"
+        broad_summary_json = reports / "broad-recall-summary.json"
+        broad_summary_md = reports / "broad-recall-summary.md"
+        commands = [
+            _command_entry(
+                stage="compile_search_plan",
+                description="Generate broad-recall adaptive search units from the confirmed strategy.",
+                argv=[
+                    "python",
+                    "-m",
+                    "scripts.maimai_campaign_search_plan",
+                    "--config",
+                    strategy,
+                    "--out",
+                    str(search_plan),
+                    "--out-units",
+                    str(search_units),
+                ],
+                extra={"produces": [str(search_plan), str(search_units)]},
+            ),
+            _command_entry(
+                stage="plan_search_waves",
+                description="Convert probe-page adaptive search units into the first live wave plan.",
+                argv=[
+                    "python",
+                    "-m",
+                    "scripts.maimai_campaign_orchestrator",
+                    "plan-waves",
+                    "--campaign-root",
+                    campaign_root,
+                    "--units",
+                    str(search_units),
+                    "--out",
+                    str(aggregate_live_plan),
+                ],
+                extra={"consumes": [str(search_units)], "produces": [str(aggregate_live_plan), str(live_plan)]},
+            ),
+            _command_entry(
+                stage="search_live",
+                description="Run the controlled Maimai search live gate for the adaptive probe wave.",
+                live_action=True,
+                requires_policy_gate="allow_live_search",
+                argv=[
+                    "python",
+                    "-m",
+                    "scripts.maimai_ai_infra_search_live_gate",
+                    "--plan",
+                    str(live_plan),
+                    "--out",
+                    str(live_run),
+                    "--cdp-url",
+                    "http://127.0.0.1:9888",
+                ],
+                extra={"consumes": [str(live_plan)], "produces": [str(live_run)]},
+            ),
+            _command_entry(
+                stage="standardize_search_live",
+                description="Standardize the live output into canonical search raw files.",
+                argv=[
+                    "python",
+                    "-m",
+                    "scripts.maimai_search_live_standardize",
+                    "--campaign-root",
+                    campaign_root,
+                    "--run",
+                    str(live_run),
+                    "--wave-id",
+                    live_wave_id,
+                ],
+                extra={
+                    "consumes": [str(live_run)],
+                    "produces": [str(root / "raw" / "search" / "unit-*" / "page-*.json")],
+                },
+            ),
+            _command_entry(
+                stage="evaluate_page_quality",
+                description="Evaluate page quality and update adaptive unit state without producing recommendations.",
+                argv=[
+                    "python",
+                    "-m",
+                    "scripts.maimai_broad_recall_adaptive",
+                    "evaluate-page-quality",
+                    "--campaign-root",
+                    campaign_root,
+                    "--run",
+                    str(live_run),
+                    "--config",
+                    strategy,
+                    "--out-jsonl",
+                    str(page_quality_jsonl),
+                    "--state-out",
+                    str(adaptive_state),
+                    "--seen-out",
+                    str(seen_candidates),
+                ],
+                extra={
+                    "produces": [str(page_quality_jsonl), str(adaptive_state), str(seen_candidates)],
+                    "auto_next_stage": "import_wave",
+                },
+            ),
+            _command_entry(
+                stage="import_wave",
+                description="Dry-run/apply campaign import from canonical search raw into Campaign DB.",
+                argv=[
+                    "python",
+                    "-m",
+                    "scripts.maimai_ai_infra_pipeline",
+                    "run-campaign",
+                    "--campaign-root",
+                    campaign_root,
+                    "--config",
+                    strategy,
+                    "--wave",
+                    live_wave_id,
+                    "--db",
+                    str(campaign_db),
+                ],
+            ),
+            _command_entry(
+                stage="detail_priority",
+                description="Build detail-priority rows for detail collection; this is not a recommendation report.",
+                argv=[
+                    "python",
+                    "-m",
+                    "scripts.maimai_broad_recall_adaptive",
+                    "build-detail-priority",
+                    "--campaign-root",
+                    campaign_root,
+                    "--db",
+                    str(campaign_db),
+                    "--config",
+                    strategy,
+                    "--out-json",
+                    str(detail_priority_json),
+                    "--out-md",
+                    str(detail_priority_md),
+                    "--review-out",
+                    str(review_out),
+                    "--wave-id",
+                    live_wave_id,
+                ],
+                extra={
+                    "produces": [str(detail_priority_json), str(detail_priority_md), str(review_out)],
+                    "detail_priority_labels": ["detail_p0", "detail_p1", "detail_p2", "skip"],
+                    "auto_next_stage": "detail_pack",
+                },
+            ),
+            _command_entry(
+                stage="detail_pack",
+                description="Build detail packs from detail priority rows; defaults to detail_p0/detail_p1 through A/B compatibility.",
+                argv=[
+                    "python",
+                    "-m",
+                    "scripts.maimai_ai_infra_detail_plan",
+                    "build-ab-packs",
+                    "--campaign-root",
+                    campaign_root,
+                    "--pack-size",
+                    str(pack_size),
+                    "--include-c-when-abc-total-lte",
+                    str(policy.get("detail_include_c_when_abc_total_lte", DEFAULT_RUN_POLICY["detail_include_c_when_abc_total_lte"])),
+                    "--waves",
+                    live_wave_id,
+                ],
+                extra={
+                    "produces": [str(detail_targets), str(root / "raw" / "detail-targets" / "detail-ab-pack-*.json")],
+                    "detail_concurrency": policy.get("detail_concurrency", DEFAULT_RUN_POLICY.get("detail_concurrency", 4)),
+                },
+            ),
+            _command_entry(
+                stage="broad_recall_summary",
+                description="Generate summary-only sourcing report; no candidate recommendation or outreach sheet.",
+                argv=[
+                    "python",
+                    "-m",
+                    "scripts.maimai_broad_recall_adaptive",
+                    "summary",
+                    "--campaign-root",
+                    campaign_root,
+                    "--out-json",
+                    str(broad_summary_json),
+                    "--out-md",
+                    str(broad_summary_md),
+                ],
+                extra={"produces": [str(broad_summary_json), str(broad_summary_md)]},
+            ),
+        ]
+        commands.extend(_notification_command_entries(policy, continuation_plan))
+        return commands
 
     commands = [
         _command_entry(
@@ -574,47 +825,7 @@ def build_stage_command_plan(campaign_root: str, strategy: str, policy: dict[str
         ),
     ]
 
-    notify_chat_id = str(policy.get("notify_chat_id") or "").strip()
-    notify_user_id = str(policy.get("notify_user_id") or "").strip()
-    if notify_chat_id and notify_user_id:
-        raise ValueError("notify_chat_id and notify_user_id are mutually exclusive")
-    if notify_chat_id or notify_user_id:
-        notify_argv = [
-            "python",
-            "-m",
-            "scripts.campaign_notify",
-            "--event",
-            str(continuation_plan),
-            "--identity",
-            str(policy.get("notify_identity", DEFAULT_RUN_POLICY["notify_identity"])),
-        ]
-        if notify_chat_id:
-            notify_argv.extend(["--chat-id", notify_chat_id])
-        else:
-            notify_argv.extend(["--user-id", notify_user_id])
-        notify_argv.append("--dry-run")
-        commands.append(
-            _command_entry(
-                stage="notify_blocked",
-                description="Dry-run Feishu IM notification for blocked continuation events.",
-                argv=notify_argv,
-                extra={"consumes": [str(continuation_plan)]},
-            )
-        )
-    else:
-        commands.append(
-            _command_entry(
-                stage="notify_blocked",
-                description="Notification command not constructed because policy has no notify target.",
-                argv=[],
-                extra={
-                    "skipped": True,
-                    "blocked_reason": "notify_target_missing",
-                    "consumes": [str(continuation_plan)],
-                },
-            )
-        )
-
+    commands.extend(_notification_command_entries(policy, continuation_plan))
     return commands
 
 

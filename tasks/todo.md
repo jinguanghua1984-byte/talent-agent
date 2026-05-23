@@ -4,6 +4,15 @@
 
 ## Active Task
 
+- [x] 脉脉宽召回自适应寻访实验模式实现（2026-05-24）：基于已确认 spec 实现 `strategy_mode=broad_recall_adaptive_v1`，保持原流程默认行为不变。
+  - [x] 写入实施计划：`docs/superpowers/plans/2026-05-24-maimai-broad-recall-adaptive-implementation-plan.md`。
+  - [x] 新增宽召回自适应策略模块和规则页质评分测试。
+  - [x] 将 search plan 与 orchestrator 对显式 `strategy_mode=broad_recall_adaptive_v1` 路由到新实验编排。
+  - [x] 实现详情优先级和寻访摘要报告，跳过推荐报告、外联 sheet 和飞书候选人交付包。
+  - [x] 更新 skill/workflow 文档合同测试。
+  - [x] 跑聚焦测试、全量测试和 diff hygiene，写回 Review。
+  - Review：新增 `scripts/maimai_broad_recall_adaptive.py`，提供 `strategy_mode=broad_recall_adaptive_v1` 检测、宽召回 search units、规则页质评分、unit 状态、详情优先级、寻访摘要报告和 CLI 子命令。`scripts/maimai_campaign_search_plan.py` 仅在显式 broad mode 下生成 adaptive unit；`scripts/maimai_campaign_orchestrator.py` 仅在 broad mode 下改走 `evaluate_page_quality -> detail_priority -> detail_pack -> broad_recall_summary`，并跳过 detailed rank、delivery report、outreach package 和 Feishu delivery package；旧默认流程保持不变。`skills/maimai-talent-search-campaign/SKILL.md` 与 `agents/workflows/maimai-unattended-campaign/AGENT.md` 已补实验模式合同。验证：`python -m pytest tests/test_maimai_broad_recall_adaptive.py tests/test_maimai_campaign_search_plan.py tests/test_maimai_campaign_orchestrator.py tests/test_maimai_talent_search_campaign_skill.py -q` -> `50 passed`；`python -m pytest tests scripts -q` -> `852 passed, 1 warning`；`python -m py_compile scripts/maimai_broad_recall_adaptive.py scripts/maimai_campaign_orchestrator.py scripts/maimai_campaign_search_plan.py` 通过；`git diff --check` 通过。warning 为既有 `scripts/test_boss.py` event loop deprecation。
+
 - [x] 脉脉宽召回自适应寻访实验模式设计（2026-05-24）：讨论并固化 `strategy_mode=broad_recall_adaptive_v1`，作为不替换原流程的并行实验 mode。
   - [x] 确认目标：在不明显牺牲相关性的前提下最大化脉脉扩库收益。
   - [x] 确认方案 B：新增实验 mode，共用搜索、导入、详情、通知和恢复等底层原子能力。

@@ -20,6 +20,22 @@ description: 脉脉 unattended campaign 的 canonical workflow，约束搜索、
 - 详情抓取完成后自动进入详评和精排，自动生成交付包并推送飞书；摘要内容和表格标题必须使用中文。
 - Campaign DB 之后由人工手动整合进主 DB；本 workflow 只记录同步包/报告和人工整合入口，不自动写主库。
 
+## 宽召回自适应实验模式
+
+当 `strategy.json` 显式包含 `strategy_mode=broad_recall_adaptive_v1` 时，进入并行实验编排；默认无人值守流程不变。该模式用于脉脉扩库，不用于本流程内做人选推荐交付。
+
+实验模式执行规则：
+
+- 不设置 campaign 总页数上限。
+- `account_day_page_guardrail=500` 表示单账号单日平台护栏，不是业务总预算。
+- 用户手动换账号或次日恢复后，workflow 从 `state/continuation-plan.json` 继续。
+- 每个 search unit 先探测 2 页，按页质规则继续、观察或停止。
+- 连续低质量页停止 unit，状态写为 `stopped_low_quality`。
+- 列表粗筛只产生详情优先级：`detail_p0`、`detail_p1`、`detail_p2`、`skip`。
+- 详情并发首版上限为 4；出现验证码、429、403、432、安全页或 partial capture 立即停机。
+- 详情 apply 到 Campaign DB 后只生成寻访摘要报告，不进入详评精排，不生成外联队列，不发布候选人交付包。
+- 主库 `data/talent.db` 仍为人工边界。
+
 ## 停机条件
 
 遇到以下任一情况必须停止当前阶段，不得继续翻页、重试 apply 或推进下游：登录页、登录失效、验证码、安全页、403、429、432、非 JSON、HTML 响应、模板漂移、详情 partial capture。

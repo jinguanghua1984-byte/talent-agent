@@ -72,3 +72,16 @@ def test_build_generic_search_units_cross_product_multiple_keyword_packages() ->
     assert units[0]["keyword_package"] == "p0-data-strategy"
     assert units[4]["keyword_package"] == "p0-delivery"
     assert units[4]["query"] == "字节 DMC 数据标注 数据质检 数据交付 质量评估"
+
+
+def test_broad_recall_strategy_routes_to_adaptive_units() -> None:
+    strategy = _strategy()
+    strategy["strategy_mode"] = "broad_recall_adaptive_v1"
+    strategy["adaptive_search"] = {"probe_pages": 2, "unit_max_pages": 15}
+
+    plan = build_generic_search_plan(strategy)
+
+    assert plan["strategy_mode"] == "broad_recall_adaptive_v1"
+    assert plan["batches"][0]["max_pages"] == 2
+    assert plan["batches"][0]["unit_max_pages"] == 15
+    assert plan["batches"][0]["adaptive_search"]["probe_pages"] == 2

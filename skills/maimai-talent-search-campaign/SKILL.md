@@ -58,6 +58,27 @@ description: Use when the user asks to search Maimai from a JD or talent-search 
 - 计划确认后自动启动 CDP 浏览器、加载临时 profile 和扩展，并进入 canonical workflow 的预检与执行阶段。
 - 详情抓取、详评精排、交付包生成和飞书推送在无人值守模式下自动推进；Campaign DB 之后由人工手动整合进主 DB。
 
+## 宽召回自适应实验模式
+
+当用户明确要求扩展候选人池、宽召回、动态翻页、按真实搜索质量调整页数，或讨论 `strategy_mode=broad_recall_adaptive_v1` 时，可以生成并行实验合同。该模式不替换默认流程，真实任务验证通过前不得切为默认。
+
+实验模式合同必须写入：
+
+- `strategy_mode=broad_recall_adaptive_v1`
+- `search_intent="talent_pool_expansion"`
+- `account_day_page_guardrail=500`
+- `campaign_page_budget=null`
+- `detail_concurrency=4`
+- `auto_rank_after_detail_apply=false`
+- `auto_publish_feishu_delivery_after_detail_rank=false`
+- `allow_feishu_delivery_publish=false`
+
+该模式不设置 campaign 总页数上限。500 页只是单账号单日平台护栏；换账号由用户手动在页面完成，workflow 只识别平台日限、429、验证码、安全页等阻断并写恢复计划。
+
+搜索策略使用宽召回：公司、职位、多关键字和硬性指标分层组合，不把完整 JD must-have 全部压入搜索 query。每个 search unit 先探测 2 页，按规则页质评分决定继续、观察或停止；连续低质量页写为 `stopped_low_quality`。
+
+列表粗筛只产生详情抓取优先级：`detail_p0`、`detail_p1`、`detail_p2`、`skip`。详情抓取后写 Campaign DB，只生成寻访摘要报告，不生成候选人推荐报告，不生成外联 sheet，不发布飞书候选人交付包。主库同步仍为人工边界，后续精准匹配交给 `jd-talent-delivery`。
+
 ## 输出产物
 
 生成并保持以下静态合同文件，供 canonical workflow 和实现脚本读取：

@@ -6,6 +6,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from scripts.maimai_broad_recall_adaptive import (
+    STRATEGY_MODE as BROAD_RECALL_STRATEGY_MODE,
+    build_broad_recall_search_units,
+    is_broad_recall_strategy,
+)
 from scripts.maimai_company_registry import expand_company_pool_terms
 
 
@@ -76,6 +81,9 @@ def _query_terms(raw_company_term: str, package: dict[str, Any]) -> list[str]:
 
 
 def build_generic_search_units(strategy: dict[str, Any]) -> list[dict[str, Any]]:
+    if is_broad_recall_strategy(strategy):
+        return build_broad_recall_search_units(strategy)
+
     packages = _keyword_packages(strategy)
     company_terms = _company_pool_terms(strategy)
     expanded = expand_company_pool_terms(company_terms)
@@ -106,12 +114,15 @@ def build_generic_search_units(strategy: dict[str, Any]) -> list[dict[str, Any]]
 
 def build_generic_search_plan(strategy: dict[str, Any]) -> dict[str, Any]:
     units = build_generic_search_units(strategy)
-    return {
+    plan = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "strategy_version": strategy.get("strategy_version") or "",
         "compiler": "maimai_campaign_search_plan",
         "batches": units,
     }
+    if is_broad_recall_strategy(strategy):
+        plan["strategy_mode"] = BROAD_RECALL_STRATEGY_MODE
+    return plan
 
 
 def main(argv: list[str] | None = None) -> int:

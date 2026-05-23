@@ -131,6 +131,38 @@ def test_workflow_defines_unattended_progression_after_plan_confirmation():
     assert "涉及飞书云文档或多维表格发布时必须另行确认" not in text
 
 
+def test_skill_documents_broad_recall_adaptive_experiment():
+    text = SKILL.read_text(encoding="utf-8")
+    for token in [
+        "strategy_mode=broad_recall_adaptive_v1",
+        "宽召回",
+        "account_day_page_guardrail",
+        "不设置 campaign 总页数上限",
+        "详情抓取优先级",
+        "寻访摘要报告",
+        "不生成候选人推荐报告",
+        "不生成外联 sheet",
+    ]:
+        assert token in text
+
+
+def test_workflow_documents_broad_recall_summary_only_mode():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    for token in [
+        "broad_recall_adaptive_v1",
+        "单账号单日平台护栏",
+        "用户手动换账号",
+        "stopped_low_quality",
+        "detail_p0",
+        "detail_p1",
+        "detail_p2",
+        "只生成寻访摘要报告",
+        "不进入详评精排",
+        "不生成外联队列",
+    ]:
+        assert token in text
+
+
 def test_outreach_template_has_execution_fields():
     data = json.loads(OUTREACH_TEMPLATE.read_text(encoding="utf-8"))
     assert data["schema"] == "maimai_outreach_queue_fields_v1"
