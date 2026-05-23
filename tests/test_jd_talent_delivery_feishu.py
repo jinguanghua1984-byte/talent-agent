@@ -6,6 +6,8 @@ import pytest
 
 from scripts import jd_talent_delivery_feishu as feishu
 from scripts.jd_talent_delivery_feishu import (
+    _first_sheet_id,
+    _nodes_by_title,
     _resolve_lark_cli_argv,
     _stdout_json,
     _token,
@@ -68,9 +70,61 @@ class FakeRunner:
             return subprocess.CompletedProcess(argv, 0, '{"node":{"title":"readback","obj_type":"docx"}}', "")
         if "docs +fetch" in joined:
             return subprocess.CompletedProcess(argv, 0, '{"outline":[{"text":"Heading 1","level":1}]}', "")
+        if "sheets +info" in joined:
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                '{"data":{"sheets":{"sheets":[{"sheet_id":"sheet_1","title":"Sheet1"}]}}}',
+                "",
+            )
         if "sheets +read" in joined:
             return subprocess.CompletedProcess(argv, 0, '{"values":[["name","email"],["A","a@example.com"]]}', "")
         return subprocess.CompletedProcess(argv, 1, "", "unexpected command")
+
+
+class ExistingChildrenRunner(FakeRunner):
+    def __call__(self, argv: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
+        self.calls.append(argv)
+        joined = " ".join(argv)
+        if "wiki +node-list" in joined:
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                json.dumps(
+                    {
+                        "data": {
+                            "nodes": [
+                                {
+                                    "title": "Demo Role JD",
+                                    "obj_type": "docx",
+                                    "obj_token": "existing_doc_jd",
+                                    "node_token": "existing_node_jd",
+                                },
+                                {
+                                    "title": "Demo Role role profile",
+                                    "obj_type": "docx",
+                                    "obj_token": "existing_doc_profile",
+                                    "node_token": "existing_node_profile",
+                                },
+                                {
+                                    "title": "Demo Role recommendation report",
+                                    "obj_type": "docx",
+                                    "obj_token": "existing_doc_recommendation",
+                                    "node_token": "existing_node_recommendation",
+                                },
+                                {
+                                    "title": "Demo Role outreach queue",
+                                    "obj_type": "sheet",
+                                    "obj_token": "existing_sheet",
+                                    "node_token": "existing_node_sheet",
+                                },
+                            ]
+                        }
+                    }
+                ),
+                "",
+            )
+        return super().__call__(argv, cwd)
 
 
 class FailingRunner:
@@ -236,9 +290,63 @@ def test_publish_output_runs_preflight_dry_run_then_real_publish(tmp_path: Path)
     assert any("drive +import" in call and "--dry-run" in call for call in calls)
     assert any("wiki +move" in call and "--target-parent-token parent_node" in call for call in calls)
     assert any("wiki +node-list --as user --space-id 7642607697183001542 --parent-node-token parent_node --page-size 50 --format json" in call for call in calls)
-    assert any("wiki +node-get --as user --token moved_node --obj-type docx --space-id 7642607697183001542 --format json" in call for call in calls)
-    assert any("docs +fetch --as user --api-version v2 --doc doc_" in call and "--format json --limit 20" in call for call in calls)
-    assert any("sheets +read --as user --spreadsheet-token sheet_token --range A1:Z5" in call for call in calls)
+    assert any("wiki +node-get --as user --token doc_" in call and "--obj-type docx --space-id 7642607697183001542 --format json" in call for call in calls)
+    assert any("docs +fetch --as user --api-version v2 --doc doc_" in call and "--format json --scope outline --max-depth 3" in call for call in calls)
+    assert any("sheets +info --as user --spreadsheet-token sheet_token" in call for call in calls)
+    assert any("sheets +read --as user --spreadsheet-token sheet_token --sheet-id sheet_1 --range A1:Z5" in call for call in calls)
+
+
+def test_publish_output_reuses_existing_parent_node_without_creating_parent(tmp_path: Path) -> None:
+    root = _safe_output_root(tmp_path)
+    runner = FakeRunner()
+
+    result = publish_output(
+        output_root=root,
+        jd_title="Demo Role",
+        wiki_space_id="7642607697183001542",
+        runner=runner,
+        parent_node_token="existing_parent",
+    )
+
+    assert result["status"] == "published"
+    assert result["parent_node_token"] == "existing_parent"
+    calls = [" ".join(call) for call in runner.calls]
+    assert not any("wiki +node-create" in call for call in calls)
+    assert any(
+        "wiki +node-list --as user --space-id 7642607697183001542 --parent-node-token existing_parent --page-size 50 --format json"
+        in call
+        for call in calls
+    )
+    assert any("wiki +move" in call and "--target-parent-token existing_parent" in call for call in calls)
+
+
+def test_publish_output_reuses_existing_children_without_duplicate_imports(tmp_path: Path) -> None:
+    root = _safe_output_root(tmp_path)
+    runner = ExistingChildrenRunner()
+
+    result = publish_output(
+        output_root=root,
+        jd_title="Demo Role",
+        wiki_space_id="7642607697183001542",
+        runner=runner,
+        parent_node_token="existing_parent",
+    )
+
+    assert result["status"] == "published"
+    assert [item["reused_existing"] for item in result["published"]] == [True, True, True, True]
+    assert [item["obj_token"] for item in result["published"]] == [
+        "existing_doc_jd",
+        "existing_doc_profile",
+        "existing_doc_recommendation",
+        "existing_sheet",
+    ]
+    assert (root / "feishu" / "publish-results.json").exists()
+    calls = [" ".join(call) for call in runner.calls]
+    assert not any("drive +import" in call for call in calls)
+    assert not any("wiki +move" in call for call in calls)
+    assert any("docs +fetch --as user --api-version v2 --doc existing_doc_jd" in call for call in calls)
+    assert any("sheets +info --as user --spreadsheet-token existing_sheet" in call for call in calls)
+    assert any("sheets +read --as user --spreadsheet-token existing_sheet --sheet-id sheet_1 --range A1:Z5" in call for call in calls)
 
 
 def test_publish_output_raises_when_command_fails(tmp_path: Path) -> None:
@@ -271,6 +379,10 @@ def test_stdout_json_wraps_non_json_stdout_in_value_error() -> None:
         _stdout_json({"stdout": "not json output that should be summarized"})
 
 
+def test_stdout_json_accepts_prefixed_cli_text_before_json() -> None:
+    assert _stdout_json({"stdout": 'Found 5 node(s)\n{"data":{"ok":true}}'}) == {"data": {"ok": True}}
+
+
 def test_stdout_json_rejects_non_object_json() -> None:
     with pytest.raises(ValueError, match="command stdout JSON must be an object"):
         _stdout_json({"stdout": '["not", "object"]'})
@@ -278,6 +390,33 @@ def test_stdout_json_rejects_non_object_json() -> None:
 
 def test_token_reads_nested_data_dict() -> None:
     assert _token({"data": {"node_token": "nested"}}, "node_token") == "nested"
+
+
+def test_token_reads_deep_nested_normalized_keys() -> None:
+    assert _token({"data": {"items": [{"node": {"wikiToken": "deep"}}]}}, "wiki_token") == "deep"
+
+
+def test_nodes_by_title_reads_real_node_list_shape() -> None:
+    nodes = _nodes_by_title(
+        {
+            "data": {
+                "nodes": [
+                    {"title": "A", "obj_token": "a"},
+                    {"title": "B", "obj_token": "b"},
+                ]
+            }
+        }
+    )
+
+    assert nodes["A"]["obj_token"] == "a"
+    assert nodes["B"]["obj_token"] == "b"
+
+
+def test_first_sheet_id_reads_sheets_info_shape() -> None:
+    assert (
+        _first_sheet_id({"data": {"sheets": {"sheets": [{"sheet_id": "OVWwfA", "title": "Sheet1"}]}}})
+        == "OVWwfA"
+    )
 
 
 def test_resolve_lark_cli_argv_prefers_env_override(monkeypatch) -> None:
@@ -320,7 +459,14 @@ def test_default_runner_passes_resolved_argv_to_subprocess(monkeypatch) -> None:
 
     assert completed.args == [r"C:\tools\lark-cli.cmd", "doctor"]
     assert seen["argv"] == [r"C:\tools\lark-cli.cmd", "doctor"]
-    assert seen["kwargs"] == {"cwd": "demo", "text": True, "capture_output": True, "check": False}
+    assert seen["kwargs"] == {
+        "cwd": "demo",
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "capture_output": True,
+        "check": False,
+    }
 
 
 def test_main_help_mentions_publish_entry(capsys) -> None:
@@ -333,10 +479,10 @@ def test_main_help_mentions_publish_entry(capsys) -> None:
 
 def test_main_publish_invokes_publish_output(tmp_path: Path, monkeypatch) -> None:
     root = _safe_output_root(tmp_path)
-    calls: list[tuple[str, str, str]] = []
+    calls: list[tuple[str, str, str, str | None]] = []
 
-    def fake_publish_output(output_root, jd_title, wiki_space_id):
-        calls.append((str(output_root), jd_title, wiki_space_id))
+    def fake_publish_output(output_root, jd_title, wiki_space_id, parent_node_token=None):
+        calls.append((str(output_root), jd_title, wiki_space_id, parent_node_token))
         return {"status": "published"}
 
     monkeypatch.setattr(feishu, "publish_output", fake_publish_output)
@@ -344,4 +490,30 @@ def test_main_publish_invokes_publish_output(tmp_path: Path, monkeypatch) -> Non
     code = main(["--output-root", str(root), "--jd-title", "Demo Role", "--publish"])
 
     assert code == 0
-    assert calls == [(str(root), "Demo Role", "7642607697183001542")]
+    assert calls == [(str(root), "Demo Role", "7642607697183001542", None)]
+
+
+def test_main_publish_passes_parent_node_token(tmp_path: Path, monkeypatch) -> None:
+    root = _safe_output_root(tmp_path)
+    calls: list[tuple[str, str, str, str | None]] = []
+
+    def fake_publish_output(output_root, jd_title, wiki_space_id, parent_node_token=None):
+        calls.append((str(output_root), jd_title, wiki_space_id, parent_node_token))
+        return {"status": "published"}
+
+    monkeypatch.setattr(feishu, "publish_output", fake_publish_output)
+
+    code = main(
+        [
+            "--output-root",
+            str(root),
+            "--jd-title",
+            "Demo Role",
+            "--parent-node-token",
+            "existing_parent",
+            "--publish",
+        ]
+    )
+
+    assert code == 0
+    assert calls == [(str(root), "Demo Role", "7642607697183001542", "existing_parent")]

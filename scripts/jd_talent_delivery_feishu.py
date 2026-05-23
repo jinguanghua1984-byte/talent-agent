@@ -241,12 +241,26 @@ def _docs_fetch_command(doc_token: str) -> list[str]:
         doc_token,
         "--format",
         "json",
-        "--limit",
-        "20",
+        "--scope",
+        "outline",
+        "--max-depth",
+        "3",
     ]
 
 
-def _sheets_read_command(spreadsheet_token: str) -> list[str]:
+def _sheets_info_command(spreadsheet_token: str) -> list[str]:
+    return [
+        "lark-cli",
+        "sheets",
+        "+info",
+        "--as",
+        "user",
+        "--spreadsheet-token",
+        spreadsheet_token,
+    ]
+
+
+def _sheets_read_command(spreadsheet_token: str, sheet_id: str) -> list[str]:
     return [
         "lark-cli",
         "sheets",
@@ -255,6 +269,8 @@ def _sheets_read_command(spreadsheet_token: str) -> list[str]:
         "user",
         "--spreadsheet-token",
         spreadsheet_token,
+        "--sheet-id",
+        sheet_id,
         "--range",
         "A1:Z5",
     ]
@@ -372,7 +388,15 @@ def _resolve_lark_cli_argv(argv: list[str]) -> list[str]:
 
 
 def default_runner(argv: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(_resolve_lark_cli_argv(argv), cwd=cwd, text=True, capture_output=True, check=False)
+    return subprocess.run(
+        _resolve_lark_cli_argv(argv),
+        cwd=cwd,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
 
 
 def _run(argv: list[str], runner: Runner, cwd: str | None = None) -> dict[str, Any]:
@@ -390,6 +414,11 @@ def _run(argv: list[str], runner: Runner, cwd: str | None = None) -> dict[str, A
 
 def _stdout_json(result: dict[str, Any]) -> dict[str, Any]:
     text = str(result.get("stdout") or "").strip() or "{}"
+    if not text.startswith("{"):
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            text = text[start : end + 1]
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -401,17 +430,68 @@ def _stdout_json(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _optional_token(data: dict[str, Any], *keys: str) -> str | None:
-    containers: list[dict[str, Any]] = [data]
-    for nested_key in ("data", "node"):
-        nested = data.get(nested_key)
-        if isinstance(nested, dict):
-            containers.append(nested)
-    for container in containers:
-        for key in keys:
-            value = container.get(key)
-            if isinstance(value, str) and value:
-                return value
-    return None
+    wanted = {key.replace("_", "").casefold() for key in keys}
+
+    def visit(value: Any) -> str | None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key.replace("_", "").casefold() in wanted and isinstance(item, str) and item:
+                    return item
+            for item in value.values():
+                found = visit(item)
+                if found:
+                    return found
+        elif isinstance(value, list):
+            for item in value:
+                found = visit(item)
+                if found:
+                    return found
+        return None
+
+    return visit(data)
+
+
+def _wiki_nodes(data: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates: list[Any] = []
+    if isinstance(data.get("nodes"), list):
+        candidates.append(data["nodes"])
+    if isinstance(data.get("items"), list):
+        candidates.append(data["items"])
+    nested = data.get("data")
+    if isinstance(nested, dict):
+        if isinstance(nested.get("nodes"), list):
+            candidates.append(nested["nodes"])
+        if isinstance(nested.get("items"), list):
+            candidates.append(nested["items"])
+
+    nodes: list[dict[str, Any]] = []
+    for candidate in candidates:
+        for item in candidate:
+            if isinstance(item, dict):
+                nodes.append(item)
+    return nodes
+
+
+def _nodes_by_title(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    by_title: dict[str, dict[str, Any]] = {}
+    for node in _wiki_nodes(data):
+        title = node.get("title")
+        if isinstance(title, str) and title and title not in by_title:
+            by_title[title] = node
+    return by_title
+
+
+def _first_sheet_id(data: dict[str, Any]) -> str:
+    nested = data.get("data")
+    if isinstance(nested, dict):
+        sheets_container = nested.get("sheets")
+        if isinstance(sheets_container, dict):
+            sheets = sheets_container.get("sheets")
+            if isinstance(sheets, list):
+                for sheet in sheets:
+                    if isinstance(sheet, dict) and isinstance(sheet.get("sheet_id"), str) and sheet["sheet_id"]:
+                        return str(sheet["sheet_id"])
+    raise ValueError("missing sheet_id in sheets +info output")
 
 
 def _token(data: dict[str, Any], *keys: str) -> str:
@@ -432,6 +512,7 @@ def publish_output(
     jd_title: str,
     wiki_space_id: str,
     runner: Runner = default_runner,
+    parent_node_token: str | None = None,
 ) -> dict[str, Any]:
     root = Path(output_root)
     manifest = build_publish_manifest(root, jd_title=jd_title, wiki_space_id=wiki_space_id, dry_run=True)
@@ -449,10 +530,14 @@ def publish_output(
     for step in manifest["preflight"]:
         run(step["argv"])
 
-    parent_dry_run = _wiki_parent_create_command(jd_title, wiki_space_id, dry_run=True)
-    run(parent_dry_run)
-    parent_real = run(_without_dry_run(parent_dry_run))
-    parent_node_token = _token(_stdout_json(parent_real), "node_token", "wiki_token")
+    existing_children: dict[str, dict[str, Any]] = {}
+    if parent_node_token:
+        existing_children = _nodes_by_title(_stdout_json(run(_wiki_node_list_command(wiki_space_id, parent_node_token))))
+    else:
+        parent_dry_run = _wiki_parent_create_command(jd_title, wiki_space_id, dry_run=True)
+        run(parent_dry_run)
+        parent_real = run(_without_dry_run(parent_dry_run))
+        parent_node_token = _token(_stdout_json(parent_real), "node_token", "wiki_token")
 
     source_files = manifest["source_files"]
     publish_items = [
@@ -463,6 +548,27 @@ def publish_output(
     ]
     published: list[dict[str, Any]] = []
     for name, obj_type, source_file, title in publish_items:
+        existing = existing_children.get(title)
+        if (
+            isinstance(existing, dict)
+            and existing.get("obj_type") == obj_type
+            and isinstance(existing.get("obj_token"), str)
+            and existing.get("obj_token")
+        ):
+            published.append(
+                {
+                    "name": name,
+                    "title": title,
+                    "obj_type": obj_type,
+                    "source_file": source_file,
+                    "obj_token": str(existing["obj_token"]),
+                    "node_token": str(existing.get("node_token") or existing["obj_token"]),
+                    "reused_existing": True,
+                    "move": {"status": "reused_existing", "node": existing},
+                }
+            )
+            continue
+
         import_dry_run = _drive_import_command(source_file, obj_type, title, dry_run=True)
         run(import_dry_run)
         import_real = run(_without_dry_run(import_dry_run))
@@ -504,13 +610,17 @@ def publish_output(
     doc_outlines: list[dict[str, Any]] = []
     sheet_previews: list[dict[str, Any]] = []
     for item in published:
-        node_token = str(item.get("node_token") or item["obj_token"])
         obj_type = str(item["obj_type"])
-        node_details.append(_stdout_json(run(_wiki_node_get_command(node_token, obj_type, wiki_space_id))))
+        node_details.append(_stdout_json(run(_wiki_node_get_command(str(item["obj_token"]), obj_type, wiki_space_id))))
         if obj_type == "docx":
             doc_outlines.append(_stdout_json(run(_docs_fetch_command(str(item["obj_token"])))))
         elif obj_type == "sheet":
-            sheet_previews.append(_stdout_json(run(_sheets_read_command(str(item["obj_token"])))))
+            sheet_info = _stdout_json(run(_sheets_info_command(str(item["obj_token"]))))
+            sheet_id = _first_sheet_id(sheet_info)
+            preview = _stdout_json(run(_sheets_read_command(str(item["obj_token"]), sheet_id)))
+            preview["_sheet_id"] = sheet_id
+            preview["_sheet_info"] = sheet_info
+            sheet_previews.append(preview)
 
     dry_run_result = {
         "schema": DRY_RUN_RESULT_SCHEMA,
@@ -549,12 +659,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest-out")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--publish", action="store_true", help="run lark-cli publish workflow after internal dry-runs")
+    parser.add_argument("--parent-node-token", help="reuse an existing JD Wiki parent node instead of creating one")
     args = parser.parse_args(argv)
 
     if args.publish:
         if args.dry_run:
             parser.error("--dry-run only applies to manifest generation; publish runs its own dry-run prechecks")
-        publish_output(args.output_root, args.jd_title, args.wiki_space_id)
+        publish_output(args.output_root, args.jd_title, args.wiki_space_id, parent_node_token=args.parent_node_token)
         return 0
 
     if not args.manifest_out:

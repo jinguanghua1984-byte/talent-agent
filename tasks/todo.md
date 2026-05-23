@@ -4,16 +4,12 @@
 
 ## Active Task
 
-- [ ] JD Talent Delivery skill 实施（2026-05-23）：按 `docs/superpowers/plans/2026-05-23-jd-talent-delivery-skill.md` 执行，新增本地 JD 人才库推荐与飞书 Wiki 交付 workflow；主库只读，飞书发布默认真实执行但先 dry-run 预检。
-  - [x] Task 1：Skill contract 与测试。
-  - [x] Task 2：Canonical workflow 与架构测试。
-  - [ ] Task 3：岗位画像 builder。
-  - [ ] Task 4：Scorecard builder。
-  - [ ] Task 5：人才库匹配、推荐报告和外联表。
-  - [ ] Task 6：飞书发布 manifest。
-  - [ ] Task 7：飞书 preflight 与真实发布 executor。
-  - [ ] Task 8：端到端 workspace CLI 接线。
-  - [ ] Task 9：聚焦、架构相关和全量验证。
+- [x] 01 混元大模型数据策略负责人 JD 人才库推荐（2026-05-23）：按 `docs/business-requirements/01-hunyuan-llm-data-strategy-lead.md` 读取 JD，基于本地 `data/talent.db` 只读生成岗位画像、评分卡、Top30 推荐报告和外联表，并发布到飞书 Wiki `JD需求交付`。
+  - [x] 建立独立 `data/output/` 运行目录并复制 JD。
+  - [x] 生成岗位画像和评分卡。
+  - [x] 只读匹配 `data/talent.db`，产出粗筛、精排、推荐报告和外联表。
+  - [x] 生成 Feishu publish manifest 并复用既有 Wiki 父节点真实发布。
+  - [x] 校验输出完整性和推荐结果质量。
 
 - [x] 混元 8JD 详情后主库级重新精排（2026-05-23）：基于已写入 2648 条详情后的 `data/talent.db`，重跑 8 个 JD 的 `maimai_campaign_rank --mode detailed`，并与 2026-05-22 旧精排结果对比。
   - [x] 运行 8 个 campaign strategy 的主库 detailed rank，输出到新的 `data/output/` 目录。
@@ -101,6 +97,8 @@
 
 ## Review
 
+- 2026-05-23 01 混元大模型数据策略负责人 JD 人才库推荐：本轮输出目录为 `data/output/01-hunyuan-llm-data-strategy-lead-2026-05-23/`。已复制 JD 到 `source/jd.md`，基于 `data/campaigns/hunyuan-01-llm-data-strategy-lead-2026-05-22/strategy.json` 重写岗位画像与 scorecard，并用 `data/talent.db` 只读重新生成粗筛/精排结果。推荐结果：主库候选人 `13332`，分层 `A=2/B=26/C=1213/淘汰=12091`，本地交付 Top30；核心产物包括 `profile/role-deep-dive.md`、`scoring/scorecard.json`、`scoring/coarse-screen.json/md`、`scoring/detailed-rank.json/md`、`reports/talent-recommendation.md/json`、`reports/outreach-queue.csv/md`、`feishu/publish-manifest.json`。校验：必要文件齐全，Top30 JSON 与 30 行外联 CSV 可解析，Feishu manifest 无 DB/zip/raw/sync bundle 敏感路径；本地生成阶段未触发平台搜索，未写 `match_scores`。
+- 2026-05-23 01 混元大模型数据策略负责人飞书发布：已发布到 Wiki space `7642607697183001542` 的父节点 `MbEEw5vNUiHUGpk6hWncNlKnnLb`（标题 `混元大模型数据策略负责人`）。父节点下 4 个子节点：JD `QF3odbjReoPJi8xVEuQcEVhfnBh` / `PJ5Ww8dbhiWfhSkGan5c7kzBn3e`、role profile `OHmdddSQ8oLbNSxV9nScfHNDn5g` / `LP0TwUNZxiM93ZkrMAechGcbnfb`、recommendation report `YdpMdLZ4Pos6c6x5dvzcbcaHnjh` / `PKNewgXuNizMo3kE9bhc3pdFnEf`、outreach queue sheet `VCchsoEVchGv5Atg99pcoNhsnvb` / `G3c6wZFgOivx12k3nZ9cWTMnnYf`。本地结果写入 `feishu/publish-results.json` 和 `feishu/dry-run-results.json`；恢复发布时 4 个子节点均为 `reused_existing=true`，未重复导入。验证：`wiki +node-list` 返回 4 个子节点，docx outline 读回 3 个，sheet `OVWwfA` 读回 1 个；`python -m pytest tests/test_jd_talent_delivery_feishu.py tests/test_jd_talent_delivery_cli.py -q` -> `31 passed`，`git diff --check` 通过。未上传 DB/zip/raw/sync bundle，未写 `match_scores`。
 - 2026-05-23 JD Talent Delivery Task 2：新增 runtime-neutral canonical workflow `agents/workflows/jd-talent-delivery/AGENT.md`，覆盖资源索引、S0-S7、scorecard 一致性、安全边界和飞书停机条件；新增 `tests/test_jd_talent_delivery_workflow.py` 并将 `jd-talent-delivery` 加入架构 `WORKFLOWS`。由于架构测试要求每个 workflow 都有运行时 adapter，新增最小 `.claude/skills/jd-talent-delivery/SKILL.md` 指向 canonical workflow。验证：先跑 `python -m pytest tests/test_jd_talent_delivery_workflow.py -q` 红灯，因缺少 workflow 文件 `FileNotFoundError` 失败；创建 workflow 后同命令 `4 passed`；新增架构列表后组合测试因缺少 adapter 失败；补 adapter 后 `python -m pytest tests/test_jd_talent_delivery_workflow.py tests/test_agent_architecture.py -q` -> `9 passed`。`git diff --check` 通过；workflow 私有运行时禁词扫描无命中。
 - 2026-05-23 详情后主库级重新精排：已用 `python -m scripts.maimai_campaign_rank --mode detailed --limit 13332` 对 8 个混元 JD 全量重跑，输出目录为 `data/output/hunyuan-8jd-main-db-match-after-detail-2026-05-23/`。汇总见 `main-db-detailed-rank-after-detail-summary.md/json`，前后对比见 `main-db-detailed-rank-pre-post-comparison.md/json`。与详情写入前同口径相比，8JD 合计 `A 16->19 (+3)`、`B 450->493 (+43)`、`C 9686->10036 (+350)`、`A+B 466->512 (+46)`、`A+B+C 10152->10548 (+396)`、`淘汰 96504->96108 (-396)`。验证：3 个汇总 JSON 均可解析，8 个 rank JSON 均为 `total_candidates=13332`，8 个 Markdown 输出存在，主库 `PRAGMA integrity_check=ok/candidates=13332/candidate_details=13332/source_profiles=13332/maimai_detail_capture_rows=3625`。
 - 2026-05-23 ABC 详情写入主库：写入前备份为 `data/backups/talent-main-before-hunyuan-abc-detail-apply-20260523-003549.db`，备份 `integrity=ok/candidates=13332/source_profiles=13332/candidate_details=13332/maimai_detail_capture=977`。已修正专用 detail campaign manifest 缺少 `schema=maimai_ai_infra_v2_campaign` 导致 pipeline apply 前置校验失败的问题；失败发生在写库前，随后从 `detail-abc-pack-001` 重新顺序 apply。27 个 pack 全部写入主库，汇总 `matched=2648/written=2648/unmatched=0/failed_jobs=0/capture_blockers=0/apply_blockers=0`。写入后主库 `integrity=ok/candidates=13332/source_profiles=13332/candidate_details=13332/maimai_detail_capture=3625/hunyuan_abc_capture_rows=2648/detailed_candidates=13319`。摘要见 `data/output/hunyuan-8jd-abc-detail-main-apply-2026-05-23/main-detail-apply-summary.md/json`，逐包 JSONL 为 `apply-summary.jsonl`。
