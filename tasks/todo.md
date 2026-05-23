@@ -4,6 +4,14 @@
 
 ## Active Task
 
+- [x] 脉脉宽召回自适应寻访实验模式设计（2026-05-24）：讨论并固化 `strategy_mode=broad_recall_adaptive_v1`，作为不替换原流程的并行实验 mode。
+  - [x] 确认目标：在不明显牺牲相关性的前提下最大化脉脉扩库收益。
+  - [x] 确认方案 B：新增实验 mode，共用搜索、导入、详情、通知和恢复等底层原子能力。
+  - [x] 确认搜索策略：宽召回、自适应翻页、规则页质评分、无 campaign 总预算。
+  - [x] 确认执行护栏：500 页为单账号单日平台护栏，换账号由用户手动完成，workflow 只做阻断识别和恢复。
+  - [x] 确认产出范围：列表粗筛只决定详情优先级，详情 apply 后只生成寻访摘要报告，不做人选推荐和外联 sheet。
+  - Review：设计文档已写入 `docs/superpowers/specs/2026-05-24-maimai-broad-recall-adaptive-design.md`。本轮只产出设计，不进入实现；下一步需用户 review spec 后再写实施计划。
+
 - [x] 08 混元多模态数据工程师 JD 人才库推荐（2026-05-23）：按 `docs/business-requirements/08-hunyuan-multimodal-data-engineer.md` 读取完整 JD，基于本地 `data/talent.db` 只读生成岗位画像、评分卡、Top30 推荐报告和外联表，并直接发布到飞书 Wiki `JD需求交付`，发布后用飞书消息通知群。
   - [x] 确认 08 JD、`jd-talent-delivery` workflow、输出目录、主库只读边界、飞书 Wiki 与默认通知群。
   - [x] 建立独立 `data/output/` 运行目录并复制 JD。
