@@ -5,6 +5,7 @@ import csv
 import json
 import re
 import sqlite3
+from collections import Counter
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -13,6 +14,8 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from scripts.jd_talent_delivery_scorecard import validate_scorecard
+from scripts.maimai_company_registry import expand_company_pool_terms
+from scripts.maimai_url import sanitize_maimai_profile_url
 from scripts.talent_db import TalentDB
 from scripts.talent_models import Candidate, CandidateDetail, SortSpec
 
@@ -37,6 +40,14 @@ CSV_FIELDS = [
     "suggested_outreach_angle",
     "profile_url",
 ]
+
+HARD_RISK_FLAGS = {
+    "exclusion_terms",
+    "low_hunting_status",
+    "missing_detail_for_detailed_score",
+}
+
+MOJIBAKE_MARKERS = ("锛", "鐨", "�", "���", "娣峰")
 
 
 @dataclass(frozen=True)
@@ -144,6 +155,8 @@ def _label_thresholds(scorecard: dict[str, Any]) -> dict[str, int]:
             result[key] = int(thresholds.get(key, default))
         except (TypeError, ValueError) as exc:
             raise ValueError(f"invalid label threshold: {key}") from exc
+    if not (result["strong_recommend"] > result["recommend"] > result["observe"]):
+        raise ValueError("label thresholds must satisfy strong_recommend > recommend > observe")
     return result
 
 
@@ -161,10 +174,20 @@ def _company_terms(scorecard: dict[str, Any]) -> list[str]:
     pools = scorecard.get("company_pools")
     if not isinstance(pools, dict):
         return []
-    terms: list[str] = []
+    raw_terms: list[str] = []
     for values in pools.values():
         if isinstance(values, list):
-            terms.extend(str(item) for item in values if str(item))
+            raw_terms.extend(str(item) for item in values if str(item))
+    terms: list[str] = []
+    for item in expand_company_pool_terms(list(dict.fromkeys(raw_terms))):
+        terms.extend(
+            [
+                item.get("raw_term") or "",
+                item.get("canonical_company") or "",
+                *item.get("company_aliases", []),
+                *item.get("org_product_terms", []),
+            ]
+        )
     return list(dict.fromkeys(terms))
 
 
@@ -192,7 +215,7 @@ def _source_url(bundle: CandidateBundle) -> str:
     for source in bundle.sources:
         url = getattr(source, "profile_url", "") or ""
         if url:
-            return str(url)
+            return sanitize_maimai_profile_url(str(url))
     return ""
 
 
@@ -207,7 +230,147 @@ def _platform_id(bundle: CandidateBundle) -> str:
 def _weighted_hits(hit_count: int, total_terms: int, weight: int) -> int:
     if total_terms <= 0 or hit_count <= 0:
         return 0
-    return min(weight, round(weight * hit_count / total_terms))
+    denominator = min(total_terms, 6)
+    return min(weight, round(weight * hit_count / denominator))
+
+
+def _title_level(title: str, title_hits: list[str], keyword_hits: list[str]) -> str:
+    if title_hits:
+        return "precision"
+    generic_terms = ["负责人", "专家", "Lead", "Manager", "产品", "平台", "策略", "运营"]
+    if any(_contains(title, term) for term in keyword_hits):
+        return "technical"
+    if any(_contains(title, term) for term in generic_terms):
+        return "generic"
+    return "missing"
+
+
+def _shorten(value: Any, limit: int = 180) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _experience_snippet(prefix: str, item: dict[str, Any], limit: int = 180) -> str:
+    company = item.get("company") or item.get("organization") or ""
+    title = item.get("title") or item.get("position") or item.get("name") or ""
+    period = item.get("period") or item.get("v") or ""
+    description = item.get("description") or item.get("summary") or ""
+    heading = " ".join(part for part in (period, company, title) if part)
+    body = _shorten(description, limit)
+    if heading and body:
+        return f"{prefix}：{heading} - {body}"
+    if heading:
+        return f"{prefix}：{heading}"
+    if body:
+        return f"{prefix}：{body}"
+    return ""
+
+
+def _detail_present(detail: CandidateDetail | None) -> bool:
+    if detail is None:
+        return False
+    return bool(
+        detail.work_experience
+        or detail.education_experience
+        or detail.project_experience
+        or detail.summary
+        or detail.raw_data
+    )
+
+
+def _key_evidence(
+    bundle: CandidateBundle,
+    company_hits: list[str],
+    title: str,
+    matched_terms: list[str],
+) -> list[str]:
+    candidate = bundle.candidate
+    detail = bundle.detail
+    lines: list[str] = []
+    company = company_hits[0] if company_hits else candidate.current_company or ""
+    keyword_text = "、".join(matched_terms[:8])
+    parts = [part for part in (company, title, f"关键词：{keyword_text}" if keyword_text else "") if part]
+    if parts:
+        lines.append("评分证据：" + " / ".join(parts))
+    if detail is not None:
+        for work in (detail.work_experience or ())[:2]:
+            snippet = _experience_snippet("工作经历", work)
+            if snippet:
+                lines.append(snippet)
+        for project in (detail.project_experience or ())[:1]:
+            snippet = _experience_snippet("项目经历", project)
+            if snippet:
+                lines.append(snippet)
+        for edu in (detail.education_experience or ())[:1]:
+            snippet = _experience_snippet("教育经历", edu, limit=120)
+            if snippet:
+                lines.append(snippet)
+    return lines[:5]
+
+
+def _direction_rules(scorecard: dict[str, Any]) -> dict[str, list[str]]:
+    delivery = scorecard.get("delivery_targets")
+    if isinstance(delivery, dict) and isinstance(delivery.get("direction_rules"), dict):
+        return {
+            str(label): [str(term) for term in terms if str(term)]
+            for label, terms in delivery["direction_rules"].items()
+            if isinstance(terms, list)
+        }
+    terms = scorecard.get("terms") if isinstance(scorecard.get("terms"), dict) else {}
+    return {
+        "核心能力": [str(item) for item in terms.get("must_have", []) if str(item)],
+        "加分能力": [str(item) for item in terms.get("nice_to_have", []) if str(item)],
+        "岗位匹配": [str(item) for item in terms.get("title_aliases", []) if str(item)],
+    }
+
+
+def _direction_labels(text: str, scorecard: dict[str, Any], title_level: str) -> list[str]:
+    labels = [
+        label
+        for label, terms in _direction_rules(scorecard).items()
+        if terms and any(_contains(text, term) for term in terms)
+    ]
+    if labels:
+        return labels[:4]
+    if title_level in {"precision", "technical"}:
+        return ["岗位匹配"]
+    return ["待深审"]
+
+
+def _risk_summary(flags: list[str]) -> str:
+    if not flags:
+        return "无明显硬风险"
+    labels = {
+        "low_hunting_status": "求职状态偏低",
+        "missing_detail_for_detailed_score": "缺少详情评分证据",
+        "company_not_targeted": "公司不在目标池",
+        "title_not_targeted": "职位方向不明确",
+        "keyword_evidence_missing": "关键词证据不足",
+    }
+    result: list[str] = []
+    for flag in flags:
+        if flag.startswith("exclusion_terms:"):
+            result.append("命中排除项：" + flag.split(":", 1)[1])
+        else:
+            result.append(labels.get(flag, flag))
+    return "；".join(result)
+
+
+def _outreach_angle(item: dict[str, Any]) -> str:
+    company = item.get("current_company") or "当前团队"
+    title = item.get("current_title") or "当前岗位"
+    directions = "、".join(item.get("directions") or ["岗位匹配"])
+    evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+    keyword_text = "、".join(evidence.get("tech_keywords") or []) or directions
+    if item.get("recommendation_label") == "强推荐":
+        return f"优先从 {company} 的 {title} 经历切入，确认其在 {keyword_text} 上的角色深度、团队规模和近期机会意愿。"
+    if item.get("recommendation_label") == "推荐":
+        return f"围绕 {company} 的 {title} 经历追问 {keyword_text}，确认职责边界和岗位匹配深度。"
+    if item.get("recommendation_label") == "观察":
+        return f"先轻量深审 {company} 的 {title} 经历，重点确认核心能力证据是否真实匹配。"
+    return "不进入主动外联队列；仅作为下一轮评分误判样本。"
 
 
 def _education_score(education: str, weight: int) -> int:
@@ -217,23 +380,44 @@ def _education_score(education: str, weight: int) -> int:
     return weight // 2 if education else 0
 
 
-def _risk_flags(candidate: Candidate, exclusion_hits: list[str]) -> list[str]:
+def _risk_flags(
+    candidate: Candidate,
+    exclusion_hits: list[str],
+    *,
+    mode: str,
+    detail_present: bool,
+) -> list[str]:
     flags: list[str] = []
     if exclusion_hits:
         flags.append("exclusion_terms:" + ",".join(exclusion_hits))
     hunting_status = candidate.hunting_status or ""
     if any(term in hunting_status for term in ["不看", "暂不", "不考虑"]):
         flags.append("low_hunting_status")
+    if mode == "detailed" and not detail_present:
+        flags.append("missing_detail_for_detailed_score")
     return flags
 
 
 def _recommendation_label(
-    score: int, scorecard: dict[str, Any], risk_flags: list[str]
+    score: int,
+    scorecard: dict[str, Any],
+    risk_flags: list[str],
+    *,
+    directions: list[str] | None = None,
+    key_evidence: list[str] | None = None,
 ) -> str:
     thresholds = _label_thresholds(scorecard)
     if any(flag.startswith("exclusion_terms:") for flag in risk_flags):
         return "不推荐"
-    if score >= thresholds["strong_recommend"]:
+    has_hard_risk = any(flag in HARD_RISK_FLAGS for flag in risk_flags)
+    has_actionable_evidence = bool(key_evidence)
+    is_pending_direction = directions == ["待深审"]
+    if (
+        score >= thresholds["strong_recommend"]
+        and not has_hard_risk
+        and has_actionable_evidence
+        and not is_pending_direction
+    ):
         return "强推荐"
     if score >= thresholds["recommend"]:
         return "推荐"
@@ -273,6 +457,8 @@ def score_candidate(
     must_hits = _matched_terms(text, must_terms)
     nice_hits = _matched_terms(text, nice_terms)
     exclusion_hits = _matched_terms(text, _terms(scorecard, "exclusion_terms"))
+    level = _title_level(candidate.current_title or "", title_hits, must_hits + nice_hits)
+    detail_present = _detail_present(bundle.detail)
 
     if "company_context" in dimension_scores:
         dimension_scores["company_context"] = weights.get("company_context", 0) if company_hits else 0
@@ -301,9 +487,28 @@ def score_candidate(
         dimension_scores["risk"] = -abs(weights.get("risk", 0))
 
     score = max(0, min(100, sum(dimension_scores.values())))
-    risks = _risk_flags(candidate, exclusion_hits)
+    risks = _risk_flags(candidate, exclusion_hits, mode=mode, detail_present=detail_present)
     matched_terms = list(dict.fromkeys(company_hits + title_hits + must_hits + nice_hits))
-    label = _recommendation_label(score, scorecard, risks)
+    key_evidence = _key_evidence(bundle, company_hits, candidate.current_title or "", matched_terms)
+    directions = _direction_labels(text, scorecard, level)
+    label = _recommendation_label(
+        score,
+        scorecard,
+        risks,
+        directions=directions,
+        key_evidence=key_evidence,
+    )
+    evidence = {
+        "company": company_hits[0] if company_hits else candidate.current_company or "",
+        "company_matches": company_hits,
+        "title": candidate.current_title or "",
+        "title_level": level,
+        "tech_keywords": list(dict.fromkeys(must_hits + nice_hits)),
+        "education": candidate.education or "",
+        "work_years": candidate.work_years,
+        "key_evidence": key_evidence,
+        "detail_present": detail_present,
+    }
 
     return {
         "candidate_id": candidate.id,
@@ -318,8 +523,17 @@ def score_candidate(
         "work_years": candidate.work_years,
         "education": candidate.education or "",
         "dimensions": dimension_scores,
+        "matched_terms_by_dimension": {
+            "company_context": company_hits,
+            "title_focus": title_hits,
+            "must_have": must_hits,
+            "nice_to_have": nice_hits,
+        },
         "matched_terms": matched_terms,
+        "directions": directions,
+        "evidence": evidence,
         "risk_flags": risks,
+        "risk_summary": _risk_summary(risks),
         "profile_url": _source_url(bundle),
         "platform_id": _platform_id(bundle),
     }
@@ -388,7 +602,7 @@ def _write_report(
         "",
         f"- 评分卡：{scorecard.get('role_id', '')} / {scorecard.get('version', '')}",
         f"- TopN：{top_n}",
-        "- 执行边界：只读 `data/talent.db`，未写入 `match_scores`，未触发平台搜索。",
+        "- 执行边界：只读本地人才库，未写入 `match_scores`，未触发平台搜索。",
         "",
         "## 评分维度",
         "",
@@ -442,6 +656,9 @@ def _write_report(
 def _outreach_row(rank: int, item: dict[str, Any]) -> dict[str, Any]:
     company = item.get("current_company", "")
     title = item.get("current_title", "")
+    evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+    key_evidence = evidence.get("key_evidence") or item.get("matched_terms", [])[:8]
+    directions = item.get("directions") or item.get("matched_terms", [])[:4]
     return {
         "priority": _priority(item),
         "rank": rank,
@@ -455,10 +672,10 @@ def _outreach_row(rank: int, item: dict[str, Any]) -> dict[str, Any]:
         "score": item.get("score", ""),
         "recommendation_label": item.get("recommendation_label", ""),
         "grade": item.get("grade", ""),
-        "directions": "、".join(item.get("matched_terms", [])[:4]),
-        "key_evidence": "；".join(item.get("matched_terms", [])[:8]),
-        "risk_summary": "；".join(item.get("risk_flags", [])) or "无明显硬风险",
-        "suggested_outreach_angle": f"围绕 {company} 的 {title} 经历确认岗位匹配深度。",
+        "directions": "、".join(str(item) for item in directions),
+        "key_evidence": "；".join(str(item) for item in key_evidence),
+        "risk_summary": item.get("risk_summary") or "无明显硬风险",
+        "suggested_outreach_angle": _outreach_angle(item),
         "profile_url": item.get("profile_url", ""),
     }
 
@@ -488,6 +705,135 @@ def _write_outreach_md(path: Path, ranked: list[dict[str, Any]], top_n: int) -> 
         )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
+
+
+def _grade_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    counter = Counter(str(item.get("grade") or "") for item in items)
+    return {grade: counter.get(grade, 0) for grade in ("A", "B", "C", "淘汰")}
+
+
+def _read_outreach_rows(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        raise FileNotFoundError(path)
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _scan_text_for_delivery_issues(root: Path) -> list[str]:
+    issues: list[str] = []
+    sensitive_markers = (
+        "trackable_token",
+        "access_token",
+        "authorization: bearer",
+        "sessionid",
+        "raw/search",
+        "raw/detail",
+        "raw_capture",
+        "sync_bundle",
+        ".sqlite",
+        ".db",
+        ".zip",
+    )
+    for path in root.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in {".json", ".md", ".csv", ".txt"}:
+            continue
+        if path.name == "quality-gates.json":
+            continue
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+        normalized = text.lower().replace("\\", "/")
+        for marker in sensitive_markers:
+            if marker in normalized:
+                issues.append(f"sensitive_marker:{marker}:{path.relative_to(root).as_posix()}")
+        for marker in MOJIBAKE_MARKERS:
+            if marker in text:
+                issues.append(f"mojibake_marker:{marker}:{path.relative_to(root).as_posix()}")
+    return issues
+
+
+def validate_delivery_outputs(
+    output_root: str | Path,
+    *,
+    ranked: list[dict[str, Any]],
+    top_n: int,
+    scorecard: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    root = Path(output_root)
+    critical: list[str] = []
+    warnings: list[str] = []
+    top_rows = ranked[:top_n]
+
+    if len(top_rows) != top_n:
+        critical.append("top_n_row_count_mismatch")
+    if top_rows and all(str(item.get("grade") or "") in {"C", "淘汰"} for item in top_rows):
+        critical.append("top_n_all_low_confidence")
+
+    for item in top_rows:
+        missing_fields = [
+            field
+            for field in ("candidate_id", "score", "grade", "recommendation_label", "profile_url")
+            if item.get(field) in (None, "")
+        ]
+        evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
+        if not evidence.get("key_evidence"):
+            missing_fields.append("key_evidence")
+        if missing_fields:
+            critical.append(
+                f"candidate_missing_fields:{item.get('candidate_id', '<unknown>')}:{','.join(missing_fields)}"
+            )
+        if "trackable_token" in str(item.get("profile_url") or ""):
+            critical.append(f"profile_url_tracking_token:{item.get('candidate_id', '<unknown>')}")
+
+    outreach_path = root / "reports" / "outreach-queue.csv"
+    try:
+        rows = _read_outreach_rows(outreach_path)
+    except FileNotFoundError:
+        critical.append("missing_outreach_csv")
+        rows = []
+    except csv.Error as exc:
+        critical.append(f"outreach_csv_parse_error:{exc}")
+        rows = []
+
+    if rows and len(rows) != top_n:
+        critical.append("outreach_csv_row_count_mismatch")
+    required_csv_fields = {
+        "candidate_id",
+        "company",
+        "title",
+        "score",
+        "grade",
+        "suggested_outreach_angle",
+        "profile_url",
+    }
+    for index, row in enumerate(rows, start=2):
+        missing = sorted(field for field in required_csv_fields if not row.get(field))
+        if missing:
+            critical.append(f"outreach_row_missing_fields:{index}:{','.join(missing)}")
+        if "trackable_token" in str(row.get("profile_url") or ""):
+            critical.append(f"outreach_url_tracking_token:{index}")
+        angle = row.get("suggested_outreach_angle") or ""
+        company = row.get("company") or ""
+        title = row.get("title") or ""
+        if company and title and (company not in angle or title not in angle):
+            warnings.append(f"outreach_angle_missing_company_or_title:{index}")
+
+    critical.extend(_scan_text_for_delivery_issues(root))
+    if scorecard is not None:
+        must_have_count = len(_terms(scorecard, "must_have"))
+        if must_have_count > 12:
+            warnings.append(f"scorecard_many_must_have_terms:{must_have_count}")
+    result = {
+        "schema": "jd_talent_delivery_quality_gates_v1",
+        "status": "blocked" if critical else "passed",
+        "top_n": top_n,
+        "ranked_count": len(ranked),
+        "top_grade_counts": _grade_counts(top_rows),
+        "critical_issues": sorted(dict.fromkeys(critical)),
+        "warnings": sorted(dict.fromkeys(warnings)),
+    }
+    quality_path = root / "reports" / "quality-gates.json"
+    quality_path.parent.mkdir(parents=True, exist_ok=True)
+    quality_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8-sig")
+    return result
 
 
 def run_match(
@@ -533,6 +879,10 @@ def run_match(
     _write_report(root / "reports" / "talent-recommendation.md", detailed, scorecard, top_n)
     _write_outreach_csv(root / "reports" / "outreach-queue.csv", detailed, top_n)
     _write_outreach_md(root / "reports" / "outreach-queue.md", detailed, top_n)
+    quality = validate_delivery_outputs(root, ranked=detailed[:top_n], top_n=top_n, scorecard=scorecard)
+    result["quality_gates"] = quality
+    _write_json(root / "reports" / "talent-recommendation.json", result)
+    _write_json(root / "scoring" / "detailed-rank.json", result)
     return result
 
 

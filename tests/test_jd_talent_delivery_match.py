@@ -36,6 +36,33 @@ def _scorecard() -> dict:
     }
 
 
+def _broad_scorecard() -> dict:
+    scorecard = _scorecard()
+    scorecard["terms"]["must_have"] = [
+        "大模型",
+        "后训练",
+        "数据策略",
+        "数据质量",
+        "数据标注",
+        "数据合成",
+        "数据交付",
+        "质检",
+        "SFT",
+        "RLHF",
+        "评测",
+        "人机协同",
+        "供应商管理",
+        "语料",
+        "多模态",
+        "产品化",
+    ]
+    scorecard["terms"]["nice_to_have"] = ["飞书", "指标体系", "预算管理", "专家评审"]
+    scorecard["terms"]["title_aliases"] = ["数据产品负责人", "数据策略负责人"]
+    scorecard["company_pools"] = {"目标公司": ["腾讯混元"]}
+    scorecard["target_role"] = "大模型数据产品负责人"
+    return scorecard
+
+
 def _candidate() -> Candidate:
     return Candidate(
         id=101,
@@ -45,6 +72,19 @@ def _candidate() -> Candidate:
         education="上海交通大学 硕士",
         work_years=5,
         skill_tags=("vLLM", "KV Cache"),
+        hunting_status="在职观望",
+    )
+
+
+def _data_product_candidate() -> Candidate:
+    return Candidate(
+        id=202,
+        name="候选人B",
+        current_company="腾讯",
+        current_title="数据产品负责人",
+        education="复旦大学 本科",
+        work_years=8,
+        skill_tags=("大模型", "数据质量", "数据标注", "后训练"),
         hunting_status="在职观望",
     )
 
@@ -90,6 +130,25 @@ class FakeTalentDB:
         pass
 
 
+class TrackingUrlTalentDB(FakeTalentDB):
+    def get_sources(self, candidate_id: int) -> list:
+        return [
+            type(
+                "Source",
+                (),
+                {
+                    "platform": "maimai",
+                    "platform_id": "p101",
+                    "profile_url": (
+                        "https://maimai.cn/profile/detail?dstu=p101&"
+                        "trackable_token=secret-token&show_tip=0"
+                    ),
+                    "fetched_at": "2026-05-23",
+                },
+            )()
+        ]
+
+
 def test_run_match_outputs_reports_and_outreach(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(match, "TalentDB", FakeTalentDB)
     scorecard_path = tmp_path / "scorecard.json"
@@ -126,7 +185,9 @@ def test_run_match_outputs_reports_and_outreach(tmp_path: Path, monkeypatch) -> 
     assert rows[0]["priority"] in {"P0", "P1"}
     assert rows[0]["grade"]
     assert rows[0]["profile_url"].startswith("https://maimai.cn/profile/detail")
+    assert "trackable_token" not in rows[0]["profile_url"]
     assert result["ranked"][0]["grade"]
+    assert (out_dir / "reports" / "quality-gates.json").exists()
 
     report = (out_dir / "reports" / "talent-recommendation.md").read_text(
         encoding="utf-8-sig"
@@ -135,6 +196,84 @@ def test_run_match_outputs_reports_and_outreach(tmp_path: Path, monkeypatch) -> 
     assert "82" in report
     assert "101" in (out_dir / "scoring" / "coarse-screen.md").read_text(encoding="utf-8-sig")
     assert "101" in (out_dir / "scoring" / "detailed-rank.md").read_text(encoding="utf-8-sig")
+
+
+def test_score_candidate_caps_broad_must_have_dilution_and_expands_company_aliases() -> None:
+    scorecard = _broad_scorecard()
+    detail = CandidateDetail(
+        candidate_id=202,
+        work_experience=[
+            {
+                "company": "腾讯",
+                "title": "数据产品负责人",
+                "description": "负责混元大模型后训练数据策略、数据标注、数据质量和交付体系。",
+            }
+        ],
+    )
+    bundle = match.CandidateBundle(candidate=_data_product_candidate(), detail=detail, sources=[])
+
+    scored = match.score_candidate(bundle, scorecard, mode="detailed")
+
+    assert scored["recommendation_label"] in {"强推荐", "推荐"}
+    assert scored["dimensions"]["must_have"] >= 20
+    assert scored["dimensions"]["company_context"] == 16
+    assert scored["evidence"]["title_level"] == "precision"
+    assert "腾讯" in scored["evidence"]["company_matches"]
+    assert scored["evidence"]["key_evidence"]
+
+
+def test_outreach_url_is_sanitized_and_angle_keeps_company_and_title(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(match, "TalentDB", TrackingUrlTalentDB)
+    scorecard_path = tmp_path / "scorecard.json"
+    scorecard_path.write_text(
+        json.dumps(_scorecard(), ensure_ascii=False), encoding="utf-8"
+    )
+    out_dir = tmp_path / "delivery"
+
+    match.run_match(
+        db_path=tmp_path / "talent.db",
+        scorecard_path=scorecard_path,
+        out_dir=out_dir,
+        top_n=1,
+        limit=10,
+    )
+
+    with (out_dir / "reports" / "outreach-queue.csv").open(encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[0]["profile_url"] == "https://maimai.cn/profile/detail?dstu=p101"
+    assert "字节跳动" in rows[0]["suggested_outreach_angle"]
+    assert "推理框架工程师" in rows[0]["suggested_outreach_angle"]
+
+
+def test_validate_delivery_outputs_blocks_all_c_topn(tmp_path: Path) -> None:
+    root = tmp_path / "delivery"
+    root.mkdir()
+    ranked = [
+        {
+            "candidate_id": index,
+            "name": f"候选人{index}",
+            "grade": "C",
+            "recommendation_label": "观察",
+            "score": 61,
+            "current_company": "公司",
+            "current_title": "职位",
+            "profile_url": f"https://maimai.cn/profile/detail?dstu={index}",
+            "evidence": {"key_evidence": ["评分证据：数据质量"]},
+        }
+        for index in range(1, 4)
+    ]
+    (root / "reports").mkdir()
+    (root / "reports" / "outreach-queue.csv").write_text(
+        "candidate_id,name,company,title,suggested_outreach_angle,profile_url\n"
+        "1,候选人1,公司,职位,围绕 公司 的 职位 经历确认岗位匹配深度。,"
+        "https://maimai.cn/profile/detail?dstu=1\n",
+        encoding="utf-8-sig",
+    )
+
+    quality = match.validate_delivery_outputs(root, ranked=ranked, top_n=3)
+
+    assert "top_n_all_low_confidence" in quality["critical_issues"]
+    assert quality["status"] == "blocked"
 
 
 def test_coarse_and_detailed_share_dimension_ids() -> None:

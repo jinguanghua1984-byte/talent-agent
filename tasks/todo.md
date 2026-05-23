@@ -4,6 +4,97 @@
 
 ## Active Task
 
+- [x] 08 混元多模态数据工程师 JD 人才库推荐（2026-05-23）：按 `docs/business-requirements/08-hunyuan-multimodal-data-engineer.md` 读取完整 JD，基于本地 `data/talent.db` 只读生成岗位画像、评分卡、Top30 推荐报告和外联表，并直接发布到飞书 Wiki `JD需求交付`，发布后用飞书消息通知群。
+  - [x] 确认 08 JD、`jd-talent-delivery` workflow、输出目录、主库只读边界、飞书 Wiki 与默认通知群。
+  - [x] 建立独立 `data/output/` 运行目录并复制 JD。
+  - [x] 基于 08 完整 JD 和既有 `hunyuan-08-multimodal-data-engineer-2026-05-22` 参考策略生成岗位画像和评分卡。
+  - [x] 只读匹配 `data/talent.db`，产出粗筛、精排、推荐报告和外联表。
+  - [x] 生成 Feishu publish manifest，完成 dry-run 后真实发布并回读 Wiki/Doc/Sheet。
+  - [x] 发送飞书消息通知并校验消息发送结果。
+  - [x] 校验输出完整性、推荐结果质量、乱码/tracking URL 和敏感产物未上传，写回 Review。
+  - Review：输出目录 `data/output/08-hunyuan-multimodal-data-engineer-2026-05-23/`，岗位画像和评分卡已按 08 完整 JD + `hunyuan-08-multimodal-data-engineer-2026-05-22` 策略补强，聚焦多模态数据管线、TB/PB 分布式处理、Spark/Ray/Flink、Python/Linux、数据质量、元数据、版本管理和可追溯。基于主人才库全量 `13332` 人只读匹配，精排 `112` 人，Top30 为 `A=2/B=28/C=0/淘汰=0`，质量门禁 passed。飞书 Wiki 目录 `https://sq8org1v4k6.feishu.cn/wiki/KRFdwUAAnielGSkdXcicUjxAnDd` 已发布并回读 4 个子节点：JD `F3G0dV28gofUPZx8hMYcrY1HncH`、岗位画像 `BLFVdtYGLoPu1tx0EFDcEXLonDh`、推荐报告 `XOs1ducBGovbP5xwBPjcoS1TnTX`、外联表 `NXz8s8fsrhxsYWt5kOMcGx1MnTd`；IM 通知已发送到 `JD需求协同` 群 `oc_632ba22d46d3900d26ada803b2cfa196`，消息 `om_x100b6e20a4bb20b8b4a34f70946271d`。验证：`python -m pytest tests\test_jd_talent_delivery_feishu.py tests\test_jd_talent_delivery_match.py -q` -> `49 passed`；`python -m py_compile scripts\jd_talent_delivery_feishu.py scripts\jd_talent_delivery_match.py scripts\jd_talent_delivery.py scripts\jd_talent_delivery_profile.py scripts\jd_talent_delivery_scorecard.py` 通过；输出 JSON 全部可解析、外联 CSV `30` 行、敏感/乱码/tracking 扫描无命中；`git diff --check -- tasks\todo.md memory\error-log.md data\output\08-hunyuan-multimodal-data-engineer-2026-05-23` 通过。期间发现本机 `lark-cli doctor/auth status` 不支持 `--format`，已改用当前 CLI 语法并记录到 `memory/error-log.md`。
+
+- [x] JD talent delivery 全流程自动推进边界加固（2026-05-23）：检查并更新 `agents/workflows/jd-talent-delivery/AGENT.md`，确保 JD 输入齐全且中间无错误时，S0-S8 从头执行到尾，中间不询问是否继续、不要求人工二次确认。
+  - [x] 补文档合同测试，覆盖全流程连续执行、dry-run/readback/质量门禁通过即自动推进、禁止阶段间人工二次确认。
+  - [x] 更新 canonical workflow 全局执行规则和 S0-S8 推进语义。
+  - [x] 同步 `skills/jd-talent-delivery/SKILL.md` 自动交接摘要。
+  - [x] 跑聚焦测试和 diff 检查，写回 Review。
+  - Review：`agents/workflows/jd-talent-delivery/AGENT.md` 新增“连续执行规则”，明确输入齐全且门禁通过时按 S0->S8 连续执行到完成，阶段成功输出即进入下一阶段授权，不得在 S1-S8 之间询问是否继续、是否发布或是否发送通知；dry-run、回读和质量门禁都是自动验证门禁，通过即继续、失败才停。S0 的能力检查已改为运行时校验和错误证据落盘，不再写成人工确认能力；安全/停机条件补充了正常路径不包含 `--yes` 高风险写操作，遇到 `confirmation_required` 或要求 `--yes` 时停机而非插入二次确认。`skills/jd-talent-delivery/SKILL.md` 同步输入齐全后自动从 S0 连续执行到 S8、不需要阶段间人工二次确认。验证：先跑 RED 得到 2 个预期失败；实现后 `python -m pytest tests\test_jd_talent_delivery_workflow.py tests\test_jd_talent_delivery_skill.py -q` -> `15 passed`；`git diff --check -- ...` 通过。
+
+- [x] JD talent delivery 完成通知默认发群改造（2026-05-23）：消息模板和正文保持不变，workflow 任务完成后默认用飞书 user 身份发到 `JD需求协同` 群，并发送一条测试消息让用户确认。
+  - [x] 先补回归测试，锁定默认通知目标为 `JD需求协同` 群、发送命令使用 `--as user --chat-id`，且消息模板不变。
+  - [x] 修改 `scripts/jd_talent_delivery_feishu.py` 默认通知解析逻辑，保留显式 `--notify-user-id` / `--notify-chat-id` 覆盖。
+  - [x] 同步 `agents/workflows/jd-talent-delivery/AGENT.md` 和 `skills/jd-talent-delivery/SKILL.md` 的完成通知合同。
+  - [x] 跑聚焦测试、编译和 diff 检查。
+  - [x] 搜索 `JD需求协同` 群并用 user 身份发送测试消息，记录结果。
+  - Review：`scripts/jd_talent_delivery_feishu.py` 已将默认完成通知目标从授权用户 open_id 改为 `JD需求协同` 群：发布回读通过后先执行 `im +chat-search --as user --query JD需求协同`，精确匹配群名并解析 `chat_id`，再用 `im +messages-send --as user --chat-id` 发送，显式 `--notify-user-id` / `--notify-chat-id` 覆盖逻辑保留。`agents/workflows/jd-talent-delivery/AGENT.md` 和 `skills/jd-talent-delivery/SKILL.md` 已同步默认群通知合同，消息模板函数未改。验证：先跑 RED 得到 3 个预期失败；实现后 `python -m pytest tests\test_jd_talent_delivery_feishu.py tests\test_jd_talent_delivery_workflow.py tests\test_jd_talent_delivery_skill.py -q` -> `51 passed`；`python -m py_compile scripts\jd_talent_delivery_feishu.py` 通过；`git diff --check -- ...` 通过。真实飞书测试：搜索到 `JD需求协同` 群 `chat_id=oc_632ba22d46d3900d26ada803b2cfa196`，已用 user 身份发送测试消息，`message_id=om_x100b6e20362990acb26ffa53145fa15`。
+
+- [x] 07 混元数据算法负责人-语音方向 JD 人才库推荐（2026-05-23）：按 `docs/business-requirements/07-hunyuan-data-algorithm-lead-speech.md` 读取完整 JD，基于本地 `data/talent.db` 只读生成岗位画像、评分卡、Top30 推荐报告和外联表，并直接发布到飞书 Wiki `JD需求交付`，发布后用飞书消息通知用户。
+  - [x] 建立独立 `data/output/` 运行目录并复制 JD。
+  - [x] 基于 07 JD 和既有 `hunyuan-07-data-algorithm-speech-2026-05-22` 参考策略生成岗位画像和评分卡。
+  - [x] 只读匹配 `data/talent.db`，产出粗筛、精排、推荐报告和外联表。
+  - [x] 生成 Feishu publish manifest，完成 dry-run 后真实发布并回读 Wiki/Doc/Sheet。
+  - [x] 发送飞书消息通知用户并校验消息发送结果。
+  - [x] 校验输出完整性、推荐结果质量、乱码/tracking URL 和敏感产物未上传，写回 Review。
+  - Review：输出目录 `data/output/07-hunyuan-data-algorithm-lead-speech-2026-05-23/`，岗位画像和评分卡已按 07 完整 JD + `hunyuan-07-data-algorithm-speech-2026-05-22` 策略补强，聚焦 ASR/语音/音频数据算法、音频质量评估、数据清洗、标注、数据合成和数据 pipeline。基于主人才库全量 `13332` 人只读匹配，精排 `1317` 人，Top30 为 `A=1/B=29/C=0/淘汰=0`，质量门禁 passed。飞书 Wiki 目录 `https://sq8org1v4k6.feishu.cn/wiki/ClRfwtTTfi5sCrkGYjqcWF9bntb` 已发布并回读 4 个子节点：JD `Ce1Md6UAaoTQ9SxjgtkcMwVunwg`、岗位画像 `UcYkdiB3Por2XWxoU3bcK3r5n5g`、推荐报告 `HKtRdQzPLocXhgxjFPUcRo9Rn7c`、外联表 `B8TSs3ykvhtp2ZtLMN0cqyiMnff`；IM 通知已发送到 `ou_81c032a629f9bb197fd65e8134ecf9ac`。验证：`python -m pytest tests\test_jd_talent_delivery_feishu.py tests\test_jd_talent_delivery_match.py -q` -> `49 passed`；`python -m py_compile scripts\jd_talent_delivery_feishu.py scripts\jd_talent_delivery_match.py scripts\jd_talent_delivery.py scripts\jd_talent_delivery_scorecard.py` 通过；输出 JSON 全部可解析、外联 CSV `30` 行且无 `trackable_token`；`git diff --check -- ...` 通过。
+
+- [x] 06 混元数据算法负责人-3D方向 JD 人才库推荐（2026-05-23）：按 `docs/business-requirements/06-hunyuan-data-algorithm-lead-3d.md` 读取完整 JD，基于本地 `data/talent.db` 只读生成岗位画像、评分卡、Top30 推荐报告和外联表，并直接发布到飞书 Wiki `JD需求交付`，发布后用飞书消息通知用户。
+  - [x] 建立独立 `data/output/` 运行目录并复制 JD。
+  - [x] 基于 06 JD 和既有 `hunyuan-06-data-algorithm-3d-2026-05-22` 参考策略生成岗位画像和评分卡。
+  - [x] 只读匹配 `data/talent.db`，产出粗筛、精排、推荐报告和外联表。
+  - [x] 生成 Feishu publish manifest，完成 dry-run 后真实发布并回读 Wiki/Doc/Sheet。
+  - [x] 发送飞书消息通知用户并校验消息发送结果。
+  - [x] 校验输出完整性、推荐结果质量、乱码/tracking URL 和敏感产物未上传，写回 Review。
+  - Review：输出目录 `data/output/06-hunyuan-data-algorithm-lead-3d-2026-05-23/`，岗位画像和评分卡已按 06 完整 JD + `hunyuan-06-data-algorithm-3d-2026-05-22` 策略补强，聚焦 3D/多模态数据算法、embedding/Caption、质量评估、去重聚类、数据合成和数据 pipeline。基于主人才库全量 `13332` 人只读匹配，精排 `1307` 人，Top30 为 `A=3/B=27/C=0/淘汰=0`，质量门禁 passed。飞书 Wiki 目录 `https://sq8org1v4k6.feishu.cn/wiki/EoOMw1JWTiqdnwkejnEcOvOSnTf` 已发布并回读 4 个子节点：JD `JcNYdpeAuoyecKx0t8OcGh1onHd`、岗位画像 `GmCYdlOBjo4kgUx8yq9co0smnuh`、推荐报告 `Abjmd4tIUoVrIxxyVtZccTxsnbe`、外联表 `VcT8sUI5HhiNXGt6tfqcM7j5nY2`；IM 通知已发送到 `ou_81c032a629f9bb197fd65e8134ecf9ac`。验证：`python -m pytest tests\test_jd_talent_delivery_feishu.py tests\test_jd_talent_delivery_match.py -q` -> `49 passed`；`python -m py_compile scripts\jd_talent_delivery_feishu.py scripts\jd_talent_delivery_match.py scripts\jd_talent_delivery.py scripts\jd_talent_delivery_scorecard.py` 通过；输出 JSON 全部可解析、外联 CSV `30` 行且无 `trackable_token`；`git diff --check -- ...` 通过。
+
+- [x] 05 混元大模型后训练算法工程师/专家 JD 人才库推荐（2026-05-23）：按 `docs/business-requirements/05-hunyuan-llm-post-training-algorithm-expert.md` 读取完整 JD，基于本地 `data/talent.db` 只读生成岗位画像、评分卡、Top30 推荐报告和外联表，并直接发布到飞书 Wiki `JD需求交付`，发布后用飞书消息通知用户。
+  - [x] 建立独立 `data/output/` 运行目录并复制 JD。
+  - [x] 基于 05 JD 和既有 `hunyuan-05-llm-post-training-algorithm-2026-05-22` 参考策略生成岗位画像和评分卡。
+  - [x] 只读匹配 `data/talent.db`，产出粗筛、精排、推荐报告和外联表。
+  - [x] 生成 Feishu publish manifest，完成 dry-run 后真实发布并回读 Wiki/Doc/Sheet。
+  - [x] 发送飞书消息通知用户并校验消息发送结果。
+  - [x] 校验输出完整性、推荐结果质量、乱码/tracking URL 和敏感产物未上传，写回 Review。
+  - Review：输出目录 `data/output/05-hunyuan-llm-post-training-algorithm-expert-2026-05-23/`，岗位画像和评分卡已按 05 完整 JD + `hunyuan-05-llm-post-training-algorithm-2026-05-22` 策略补强；全库只读粗筛 13332 人、精排 1274 人，Top30 为 `A=3/B=27/C=0/淘汰=0`，质量门禁 passed。飞书 Wiki 目录 `https://sq8org1v4k6.feishu.cn/wiki/ImaxwnldaiAWKGkayqpcSAKPn0g` 已发布并回读 4 个子节点：JD `BXJodX8oRoN47zxRloxceyZSnXd`、岗位画像 `O96xd16jaoilhRxe3QpcsU8Mnue`、推荐报告 `L6IEdRr5joy6FhxJQHAchoRongf`、外联表 `CH2Ksq6BahlA63tEEhhcZg7Cn2f`；IM 通知已发送到 `ou_81c032a629f9bb197fd65e8134ecf9ac`。期间修复发布器两处复用问题：Sheet 回读支持多段 rich text cell，IM 通知改用直接 Node runner 发送多行中文。验证：`python -m pytest tests\test_jd_talent_delivery_feishu.py tests\test_jd_talent_delivery_match.py -q` -> `49 passed`；`python -m py_compile scripts\jd_talent_delivery_feishu.py scripts\jd_talent_delivery_match.py` 通过；输出 JSON 全部可解析；发布包扫描无 tracking/raw/DB 路径或乱码标记；`git diff --check -- ...` 通过；`python -m pytest tests scripts -q` -> `841 passed, 1 warning`。
+
+- [x] JD talent delivery 飞书完成通知与 Sheet 防乱码发布改造（2026-05-23）：把任务结束后的飞书 IM 通知固化为 workflow 标准步骤，并把外联表发布从 CSV Drive import 改为 `sheets +create` + UTF-8 JSON `sheets +write`，从机制上避免中文乱码。
+  - [x] 更新 workflow/skill contract：新增完成通知步骤、固定消息模板、成果物和停机条件；明确禁止外联表使用 `drive +import --type sheet`。
+  - [x] 改造 `scripts/jd_talent_delivery_feishu.py`：外联表创建空 Sheet 后写入 CSV rows；发布完成后生成通知文本并用 `im +messages-send` 推送。
+  - [x] 补充/调整回归测试：覆盖无 CSV import、UTF-8 JSON 写入、通知模板、默认通知目标和发送结果落盘。
+  - [x] 更新 `tasks/lessons.md` 和 `memory/error-log.md`，记录本次用户纠正与根因。
+  - [x] 跑聚焦测试、编译和 diff 检查，并在本任务写 Review。
+  - Review：`agents/workflows/jd-talent-delivery/AGENT.md` 新增 S8 飞书完成通知，固化 `im +messages-send` 方式和消息模板；`skills/jd-talent-delivery/SKILL.md` 同步输出产物与发布边界。`scripts/jd_talent_delivery_feishu.py` 已禁止外联表 CSV Drive import 路径，改为 `sheets +create`、解析 CSV 为二维数组、`sheets +write --values` 分块写入，并对 Sheets JSON payload 优先使用显式 Node CLI runner；发布/回读通过后写入 `feishu/im-notification-message.txt`、`feishu/im-notification-results.json` 并发送 IM。验证：`python -m pytest tests\test_jd_talent_delivery_feishu.py tests\test_jd_talent_delivery_workflow.py tests\test_jd_talent_delivery_skill.py -q` -> `49 passed`；`python -m pytest tests\test_jd_talent_delivery_match.py tests\test_jd_talent_delivery_feishu.py tests\test_jd_talent_delivery_cli.py tests\test_jd_talent_delivery_workflow.py tests\test_jd_talent_delivery_skill.py tests\test_jd_talent_delivery_scorecard.py tests\test_jd_talent_delivery_profile.py -q` -> `74 passed`；`python -m py_compile scripts\jd_talent_delivery_feishu.py` 通过；`git diff --check -- ...` 通过。
+
+- [x] 04 混元数据管理平台技术负责人 JD 人才库推荐重试（2026-05-23）：按 `docs/business-requirements/04-hunyuan-data-management-platform-tech-lead.md` 读取 JD，基于本地 `data/talent.db` 只读生成岗位画像、评分卡、Top30 推荐报告和外联表，并直接发布到飞书 Wiki `JD需求交付`，发布后用飞书消息通知用户；因 JD 正文为“待补充”，本轮结果必须标记低置信边界，不写强结论。
+  - [x] 确认 04 JD、复用工作流入口、输出目录、Wiki 父节点和 IM 通知目标。
+  - [x] 建立独立 `data/output/` 运行目录并复制 JD。
+  - [x] 基于 04 JD 和既有 04 参考策略生成低置信岗位画像和评分卡。
+  - [x] 只读匹配 `data/talent.db`，产出粗筛、精排、推荐报告和外联表。
+  - [x] 生成 Feishu publish manifest，完成 dry-run 后真实发布并回读 Wiki/Doc/Sheet。
+  - [x] 发送飞书消息通知用户并校验消息发送结果。
+  - [x] 校验输出完整性、推荐结果质量、乱码/tracking URL 和敏感产物未上传，写回 Review。
+
+- [x] 03 混元数据标注平台技术负责人 JD 人才库推荐（2026-05-23）：按 `docs/business-requirements/03-hunyuan-data-labeling-platform-tech-lead.md` 读取 JD，基于本地 `data/talent.db` 只读生成岗位画像、评分卡、Top30 推荐报告和外联表，并直接发布到飞书 Wiki `JD需求交付`；因 JD 正文为“待补充”，本轮结果必须标记低置信边界，不写强结论。
+  - [x] 建立独立 `data/output/` 运行目录并复制 JD。
+  - [x] 基于 03 JD 和既有 `hunyuan-03-data-labeling-platform-tech-lead-2026-05-22` 参考策略生成低置信岗位画像和评分卡。
+  - [x] 只读匹配 `data/talent.db`，产出粗筛、精排、推荐报告和外联表。
+  - [x] 生成 Feishu publish manifest，完成 dry-run 后真实发布并回读 Wiki/Doc/Sheet。
+  - [x] 校验输出完整性、推荐结果质量、乱码/tracking URL 和敏感产物未上传。
+
+- [x] JD talent delivery 匹配/发布工作流优化（2026-05-23）：不依赖 campaign `strategy.json` 或现成 `*rank*.json`，把 `jd_talent_delivery_match` 补强为可独立从 `scorecard.json` + `data/talent.db` 完成详情后精排、质量门禁和飞书发布前校验。
+  - [x] 先补回归测试：过多 `must_have` 不再稀释强相关候选人、公司/产品别名可展开、脉脉 URL 去除 `trackable_token`、TopN/CSV/外联角度/敏感路径/乱码门禁能阻断异常。
+  - [x] 参考 `maimai_campaign_rank` 和详情后 delivery/outreach 脚本，完善匹配逻辑：title level、公司别名展开、详情证据、方向标签、外联角度、风险与优先级。
+  - [x] 增加发布前质量校验：scorecard 质量、TopN 数量与分层、CSV 可解析、候选人关键字段、敏感 artifact、tracking URL、mojibake、Sheet 回读关键列。
+  - [x] 强化 Feishu/lark-cli 执行：集中 argv runner、发布后 readback 校验，并记录 range-limited `sheets +write` 恢复路径。
+  - [x] 更新 `agents/workflows/jd-talent-delivery/AGENT.md` 和 `skills/jd-talent-delivery/SKILL.md`，明确不要求 campaign strategy/rank 前置。
+  - [x] 跑聚焦测试、必要全量子集和 `git diff --check`，把 Review 写回任务台账；若出现非显而易见错误，补 `memory/error-log.md`。
+
+- [x] 02 混元大模型数据产品专家/leader JD 人才库推荐（2026-05-23）：按 `docs/business-requirements/02-hunyuan-llm-data-product-lead.md` 读取 JD，基于本地 `data/talent.db` 只读生成岗位画像、评分卡、Top30 推荐报告和外联表，并直接发布到飞书 Wiki `JD需求交付`。
+  - [x] 建立独立 `data/output/` 运行目录并复制 JD。
+  - [x] 基于 02 JD 和既有 `hunyuan-02-llm-data-product-lead-2026-05-22` strategy 生成岗位画像和评分卡。
+  - [x] 只读匹配 `data/talent.db`，产出粗筛、精排、推荐报告和外联表。
+  - [x] 生成 Feishu publish manifest，完成 dry-run 后真实发布并回读 Wiki/Doc/Sheet。
+  - [x] 校验输出完整性、推荐结果质量和敏感产物未上传。
+
 - [x] 01 混元大模型数据策略负责人 JD 人才库推荐（2026-05-23）：按 `docs/business-requirements/01-hunyuan-llm-data-strategy-lead.md` 读取 JD，基于本地 `data/talent.db` 只读生成岗位画像、评分卡、Top30 推荐报告和外联表，并发布到飞书 Wiki `JD需求交付`。
   - [x] 建立独立 `data/output/` 运行目录并复制 JD。
   - [x] 生成岗位画像和评分卡。
@@ -96,6 +187,17 @@
 - 2026-05：`tasks/archive/2026-05.md`
 
 ## Review
+
+- 2026-05-23 04 混元数据管理平台技术负责人 JD 人才库推荐重试：本轮输出目录为 `data/output/04-hunyuan-data-management-platform-tech-lead-2026-05-23/`。已复制 JD 到 `source/jd.md`；因 JD 正文仍为“待补充”，岗位画像和评分卡显式标记 `low_missing_jd_body`，基于 04 基础信息和既有 04 参考策略校准数据管理平台、元数据、数据治理、数据资产、平台架构和目标公司池。基于主人才库全量 `13332` 人只读匹配，详细评分 `101` 人，Top30 分层为 `A=0/B=4/C=26/淘汰=0`；本轮“推荐”只表示优先深审，不等同强推荐。核心产物包括 `profile/role-deep-dive.md`、`profile/role-profile.json`、`scoring/scorecard.json`、`scoring/coarse-screen.json/md`、`scoring/detailed-rank.json/md`、`reports/talent-recommendation.md/json`、`reports/outreach-queue.csv/md`、`reports/quality-gates.json`、`feishu/publish-manifest.json`、`feishu/publish-results.json`、`feishu/sheet-repair-results.json`、`feishu/im-notification-results.json`。
+- 2026-05-23 04 混元数据管理平台技术负责人飞书发布与通知：已发布到 Wiki space `7642607697183001542`，父节点 `AeCAwXBrNivv8rknXQKciRstnHe`（`https://sq8org1v4k6.feishu.cn/wiki/AeCAwXBrNivv8rknXQKciRstnHe`）。子节点 4 个：JD `VMwtdZYE1oKL5Yxa7VUcyE5Znp9` / `Kt7dw0zCgiLhkYkTfgucBuBRnIc`，role profile `TQs9di47cooklBxYr0jcWdOgnZe` / `FkrrwzIlHi4V7KkwpV4cTyEmnre`，recommendation report `CFx7d0wkvopu6Qxqwm0cVXNQnWd` / `NkBMwMuAFiwn2xkzmKYcxSH9ntV`，outreach queue sheet `UAANsuV9ghCdFstkDXncEc0RnTd` / `YjmLwxMKaiiRXpkL8EAcN1eUnbP`。直达链接：推荐报告 `https://sq8org1v4k6.feishu.cn/docx/CFx7d0wkvopu6Qxqwm0cVXNQnWd`，外联表 `https://sq8org1v4k6.feishu.cn/sheets/UAANsuV9ghCdFstkDXncEc0RnTd`。发布后发现 CSV 导入的 Sheet 中文乱码，已用 `sheets +write` 重写 `A1:Q31` 并回读 `A1:Q5` 与本地 CSV 一致；IM 通知已用 user 身份发给当前授权用户，消息 `om_x100b6e26be93b4a0b2c098573eb89a1` 已 `messages-mget` 回读确认。验证：产物完整性 `missing=[]`，质量门禁 `passed`，发布 `published`，Wiki 子节点 `4`，Sheet 修复 `passed`，IM `sent`；聚焦测试 `python -m pytest tests/test_jd_talent_delivery_match.py tests/test_jd_talent_delivery_feishu.py tests/test_campaign_notify.py -q` -> `60 passed`；`git diff --check -- tasks/todo.md memory/error-log.md` 通过。`lark-cli doctor` 提示当前 `1.0.36`，最新 `1.0.39` 可后续更新。
+
+- 2026-05-23 03 混元数据标注平台技术负责人 JD 人才库推荐：本轮输出目录为 `data/output/03-hunyuan-data-labeling-platform-tech-lead-2026-05-23/`。已复制 JD 到 `source/jd.md`，因正文为“待补充”，画像和评分卡显式标记 `low_missing_jd_body`，只使用基础信息、人才画像和 03 参考策略生成低置信候选池。基于主人才库全量 `13332` 人只读匹配，详细评分 `125` 人，Top30 分层为 `A=0/B=22/C=8/淘汰=0`；本轮“推荐”只表示优先深审，不等同强推。核心产物包括 `profile/role-deep-dive.md`、`profile/role-profile.json`、`scoring/scorecard.json`、`scoring/coarse-screen.json/md`、`scoring/detailed-rank.json/md`、`reports/talent-recommendation.md/json`、`reports/outreach-queue.csv/md`、`reports/quality-gates.json`、`feishu/publish-manifest.json`、`feishu/publish-results.json`。
+- 2026-05-23 03 混元数据标注平台技术负责人飞书发布：已发布到 Wiki space `7642607697183001542` 的父节点 `Oar3wpU5CikJaRkSWfJcPOC7n0d`（`https://sq8org1v4k6.feishu.cn/wiki/Oar3wpU5CikJaRkSWfJcPOC7n0d`）。父节点下 4 个子节点：JD `VeDKdxTsVoL08YxkbGqcmky6nsf` / `HbTYwbqUmiv9SxkOtOacFWmdn4f`、role profile `GBLddiPNPoPlhwxvl6fcg6Uinkf` / `CJKXwi1qCil9QKkO4UDcFX8enIf`、recommendation report `AQZDdhEv3o4Zxzx4xzRc1hhInQb` / `RT3FwB0ggiFq6YkFccTcA8DGnnd`、outreach queue sheet `UIk3sJ7pzhqvYQtqmBjcKvKBnyf` / `SqkcwvbcSiq6s1krxcIc29ocnCh`。直达链接：JD `https://sq8org1v4k6.feishu.cn/docx/VeDKdxTsVoL08YxkbGqcmky6nsf`，画像 `https://sq8org1v4k6.feishu.cn/docx/GBLddiPNPoPlhwxvl6fcg6Uinkf`，推荐报告 `https://sq8org1v4k6.feishu.cn/docx/AQZDdhEv3o4Zxzx4xzRc1hhInQb`，外联 Sheet `https://sq8org1v4k6.feishu.cn/sheets/UIk3sJ7pzhqvYQtqmBjcKvKBnyf`。验证：`wiki +node-list` 返回 4 个子节点；3 个 Doc outline 读回；Sheet `y8ocjC` 读回 `A1:Z5` 并与本地 CSV 前 17 列一致；发布质量 `passed/top_n=30/outreach_rows=30`；敏感/乱码/tracking 扫描无命中。期间修复了发布器对 `sheets +read` 当前返回结构、URL 单元格对象和尾部空列的兼容，新增回归后 `tests/test_jd_talent_delivery_feishu.py` 为 `32 passed`；聚焦套件 `python -m pytest tests/test_jd_talent_delivery_feishu.py tests/test_jd_talent_delivery_match.py tests/test_jd_talent_delivery_cli.py tests/test_jd_talent_delivery_workflow.py -q` -> `55 passed`，`py_compile` 和 `git diff --check` 通过。`lark-cli doctor` 通过但提示当前 `1.0.36` 可更新到 `1.0.39`。
+
+- 2026-05-23 JD talent delivery 匹配/发布工作流优化：已确认标准路径不依赖 campaign `strategy.json` 或历史 `*rank*.json`。`scripts/jd_talent_delivery_match.py` 现在从 `scorecard.json` + 只读 `data/talent.db` 独立完成粗筛/精排，补齐公司/产品别名展开、title level、详情证据、方向标签、外联角度、宽 `must_have` 防稀释、`reports/quality-gates.json` 和 TopN/CSV/敏感标记/乱码门禁；新增 `scripts/maimai_url.py` 并在 JD delivery 与 AI Infra 外联交付中清洗脉脉 tracking URL。`scripts/jd_talent_delivery_feishu.py` 增加发布前 package 校验、token/raw/db/zip/trackable 扫描、质量门禁读取和 Sheet 回读与本地 CSV 前几行比对；workflow/skill 文档已写明 scorecard-only 前置、argv-list lark-cli、range-limited `sheets +write` 恢复路径。验证：新增 RED 测试先失败后转绿；聚焦套件 `70 passed`；`py_compile` 通过；`git diff --check` 通过；全量 `python -m pytest tests scripts -q` -> `831 passed, 1 warning`，warning 为既有 `scripts/test_boss.py` event loop deprecation。
+
+- 2026-05-23 02 混元大模型数据产品专家/leader JD 人才库推荐：本轮输出目录为 `data/output/02-hunyuan-llm-data-product-lead-2026-05-23/`。已复制 JD 到 `source/jd.md`，基于 `data/campaigns/hunyuan-02-llm-data-product-lead-2026-05-22/strategy.json` 生成岗位画像与 scorecard；推荐报告对齐详情后主库级精排 `data/output/hunyuan-8jd-main-db-match-after-detail-2026-05-23/`，主库候选人 `13332`，分层 `A=2/B=151/C=1724/淘汰=11455`，本地交付 Top30（P0=2/P1=28）。核心产物包括 `profile/role-deep-dive.md`、`profile/role-profile.json`、`scoring/scorecard.json`、`scoring/coarse-screen.json/md`、`scoring/detailed-rank.json/md`、`reports/talent-recommendation.md/json`、`reports/outreach-queue.csv/md`、`feishu/publish-manifest.json`、`feishu/publish-results.json`、`feishu/sheet-outreach-angle-fix.json`。已清理外联 `profile_url` 中的 `trackable_token`，本地生成阶段未触发平台搜索，未写 `match_scores`。
+- 2026-05-23 02 混元大模型数据产品专家/leader 飞书发布：已发布到 Wiki space `7642607697183001542` 的父节点 `UCNTwycawitpuckCVB9cskijn8f`（`https://sq8org1v4k6.feishu.cn/wiki/UCNTwycawitpuckCVB9cskijn8f`）。父节点下 4 个子节点：JD `QxoMdeUXioDUO4x3r7ZcuVObnTg` / `F4pTwFkMji2QR3kx61Xcza5cnPc`、role profile `OQfNdZiqgo4cjsx2s7Tc02Pmnbe` / `FJ3UwW67NihopNktwWocEbRyn9d`、recommendation report `DhuJdEu0Mo2Ym7x3n4GcZgMDnzd` / `MVzMwrrMgi6CSCkSypoc1yy0ntb`、outreach queue sheet `Dl7bs3HuEhnyRHtDcFycukjlnjj` / `BHcWwqOAtiUB7ykAJUccdJnsnpg`。直达链接：JD `https://sq8org1v4k6.feishu.cn/docx/QxoMdeUXioDUO4x3r7ZcuVObnTg`，画像 `https://sq8org1v4k6.feishu.cn/docx/OQfNdZiqgo4cjsx2s7Tc02Pmnbe`，推荐报告 `https://sq8org1v4k6.feishu.cn/docx/DhuJdEu0Mo2Ym7x3n4GcZgMDnzd`，外联 Sheet `https://sq8org1v4k6.feishu.cn/sheets/Dl7bs3HuEhnyRHtDcFycukjlnjj`。发布后已用 `sheets +write` 修正外联建议列 `N2:N31` 并读回 `N1:N5`。验证：`wiki +node-list` 返回 4 个子节点，docx outline 读回 3 个，sheet `Z21AQn` 读回 1 个；`python -m pytest tests/test_jd_talent_delivery_feishu.py tests/test_jd_talent_delivery_cli.py tests/test_jd_talent_delivery_workflow.py tests/test_jd_talent_delivery_match.py -q` -> `44 passed`，自定义 JSON/发布结果校验通过，敏感标记扫描无命中，`git diff --check` 通过。`lark-cli doctor` 通过但提示当前 `1.0.36` 可更新到 `1.0.39`。
 
 - 2026-05-23 01 混元大模型数据策略负责人 JD 人才库推荐：本轮输出目录为 `data/output/01-hunyuan-llm-data-strategy-lead-2026-05-23/`。已复制 JD 到 `source/jd.md`，基于 `data/campaigns/hunyuan-01-llm-data-strategy-lead-2026-05-22/strategy.json` 重写岗位画像与 scorecard，并用 `data/talent.db` 只读重新生成粗筛/精排结果。推荐结果：主库候选人 `13332`，分层 `A=2/B=26/C=1213/淘汰=12091`，本地交付 Top30；核心产物包括 `profile/role-deep-dive.md`、`scoring/scorecard.json`、`scoring/coarse-screen.json/md`、`scoring/detailed-rank.json/md`、`reports/talent-recommendation.md/json`、`reports/outreach-queue.csv/md`、`feishu/publish-manifest.json`。校验：必要文件齐全，Top30 JSON 与 30 行外联 CSV 可解析，Feishu manifest 无 DB/zip/raw/sync bundle 敏感路径；本地生成阶段未触发平台搜索，未写 `match_scores`。
 - 2026-05-23 01 混元大模型数据策略负责人飞书发布：已发布到 Wiki space `7642607697183001542` 的父节点 `MbEEw5vNUiHUGpk6hWncNlKnnLb`（标题 `混元大模型数据策略负责人`）。父节点下 4 个子节点：JD `QF3odbjReoPJi8xVEuQcEVhfnBh` / `PJ5Ww8dbhiWfhSkGan5c7kzBn3e`、role profile `OHmdddSQ8oLbNSxV9nScfHNDn5g` / `LP0TwUNZxiM93ZkrMAechGcbnfb`、recommendation report `YdpMdLZ4Pos6c6x5dvzcbcaHnjh` / `PKNewgXuNizMo3kE9bhc3pdFnEf`、outreach queue sheet `VCchsoEVchGv5Atg99pcoNhsnvb` / `G3c6wZFgOivx12k3nZ9cWTMnnYf`。本地结果写入 `feishu/publish-results.json` 和 `feishu/dry-run-results.json`；恢复发布时 4 个子节点均为 `reused_existing=true`，未重复导入。验证：`wiki +node-list` 返回 4 个子节点，docx outline 读回 3 个，sheet `OVWwfA` 读回 1 个；`python -m pytest tests/test_jd_talent_delivery_feishu.py tests/test_jd_talent_delivery_cli.py -q` -> `31 passed`，`git diff --check` 通过。未上传 DB/zip/raw/sync bundle，未写 `match_scores`。

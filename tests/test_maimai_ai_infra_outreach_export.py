@@ -44,7 +44,12 @@ def test_export_outreach_package_writes_queue_csv_and_p0_p1_audit(tmp_path: Path
             "queue_counts": {"P0": 2, "P1": 1, "P2": 1},
             "priority_queues": {
                 "P0": [
-                    card(1, "P0", "Alice"),
+                    card(
+                        1,
+                        "P0",
+                        "Alice",
+                        profile_url="https://maimai.cn/profile/detail?dstu=p1&trackable_token=secret",
+                    ),
                     card(2, "P0", "Bob", profile_url=""),
                 ],
                 "P1": [
@@ -82,7 +87,7 @@ def test_export_outreach_package_writes_queue_csv_and_p0_p1_audit(tmp_path: Path
     assert rows[0]["priority"] == "P0"
     assert rows[0]["candidate_id"] == "1"
     assert rows[0]["directions"] == "推理引擎、训练框架"
-    assert rows[0]["profile_url"].startswith("https://maimai.cn/profile/detail")
+    assert rows[0]["profile_url"] == "https://maimai.cn/profile/detail?dstu=p1"
     assert rows[-1]["priority"] == "P2"
 
     audit = json.loads((tmp_path / "audit.json").read_text(encoding="utf-8-sig"))

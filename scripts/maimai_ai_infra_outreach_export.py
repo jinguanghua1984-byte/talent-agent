@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from scripts.maimai_url import sanitize_maimai_profile_url
+
 
 QUEUE_KEYS = ("P0", "P1", "P2")
 AUDIT_PRIORITIES = ("P0", "P1")
@@ -109,7 +111,7 @@ def _csv_row(card: dict[str, Any]) -> dict[str, Any]:
         "key_evidence": _join(card.get("key_evidence"), "；"),
         "risk_summary": card.get("risk_summary") or "",
         "suggested_outreach_angle": card.get("suggested_outreach_angle") or "",
-        "profile_url": card.get("profile_url") or "",
+        "profile_url": sanitize_maimai_profile_url(card.get("profile_url") or ""),
     }
 
 

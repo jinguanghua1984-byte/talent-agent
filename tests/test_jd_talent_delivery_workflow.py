@@ -35,10 +35,23 @@ def test_workflow_declares_stage_artifacts() -> None:
         "S5：人才库精排",
         "S6：报告和外联表",
         "S7：飞书发布",
+        "S8：飞书完成通知",
         "data/output/<jd-slug>-<YYYY-MM-DD>/",
         "data/output/<jd-slug>-<YYYY-MM-DD>-run-NNN/",
         "run-manifest.json",
         "output_dir",
+    ]:
+        assert token in text
+
+
+def test_workflow_runs_end_to_end_without_intermediate_confirmation() -> None:
+    text = _text()
+
+    for token in [
+        "输入齐全且所有门禁通过时，必须按 S0 -> S1 -> S2 -> S3 -> S4 -> S5 -> S6 -> S7 -> S8 顺序连续执行到完成",
+        "阶段成功输出即为进入下一阶段的授权",
+        "不得在 S1-S8 之间询问是否继续、是否发布或是否发送通知",
+        "dry-run、回读和质量门禁都是自动验证门禁；通过即继续，失败才停止",
     ]:
         assert token in text
 
@@ -64,6 +77,57 @@ def test_workflow_enforces_scorecard_consistency() -> None:
         assert token in text
 
 
+def test_workflow_declares_independent_match_and_quality_gates() -> None:
+    text = _text()
+
+    for token in [
+        "不要求存在 campaign `strategy.json`",
+        "不要求存在历史 `*rank*.json`",
+        "脉脉 URL 必须清洗 `trackable_token`",
+        "`reports/quality-gates.json`",
+        "TopN 全部为 C/淘汰时必须停止发布",
+        "CSV 必须可解析且行数等于 TopN",
+        "Sheet 回读必须比对本地 CSV 表头和前几行",
+        "lark-cli 必须通过 argv list 调用",
+        "外联表禁止使用 `drive +import --type sheet`",
+        "sheets +create",
+        "sheets +write --values <UTF-8 JSON>",
+        "回读是验证，不是乱码修复兜底",
+    ]:
+        assert token in text
+
+
+def test_workflow_codifies_completion_notification() -> None:
+    text = _text()
+
+    for token in [
+        "S8：飞书完成通知",
+        "im +messages-send",
+        "JD需求协同",
+        "im +chat-search --as user",
+        "--chat-id <chat_id>",
+        "任务执行结果",
+        "成果物清单",
+        "Wiki目录",
+        "推荐报告摘要",
+        "feishu/im-notification-message.txt",
+        "feishu/im-notification-results.json",
+        "通知发送失败属于任务失败",
+    ]:
+        assert token in text
+
+
+def test_workflow_does_not_require_second_confirmation_after_publish_dry_run() -> None:
+    text = _text()
+
+    for token in [
+        "dry-run 成功后必须直接执行真实发布",
+        "不得要求人工二次确认",
+        "发布成功并回读通过后继续 S8",
+    ]:
+        assert token in text
+
+
 def test_workflow_enforces_safety_and_stop_conditions() -> None:
     text = _text()
 
@@ -80,5 +144,7 @@ def test_workflow_enforces_safety_and_stop_conditions() -> None:
         "权限不足",
         "scope 缺失",
         "dry-run 失败",
+        "外联表发布步骤出现 `drive +import --type sheet`",
+        "飞书完成通知发送失败",
     ]:
         assert token in text

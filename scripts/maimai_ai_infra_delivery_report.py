@@ -15,6 +15,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.maimai_ai_infra_detail_report import build_detail_report
+from scripts.maimai_url import sanitize_maimai_profile_url
 
 
 RECOMMENDATION_LABELS = ("强推荐", "推荐", "观察", "不推荐")
@@ -411,7 +412,9 @@ def _candidate_card(
         or ""
     )
     platform_id = source.get("platform_id") or target.get("id") or target.get("platform_id") or ""
-    profile_url = source.get("profile_url") or target.get("detail_url") or target.get("profile_url") or ""
+    profile_url = sanitize_maimai_profile_url(
+        source.get("profile_url") or target.get("detail_url") or target.get("profile_url") or ""
+    )
     card = {
         "rank": rank_index,
         "candidate_id": candidate_id,

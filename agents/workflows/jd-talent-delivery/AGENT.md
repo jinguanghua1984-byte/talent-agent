@@ -18,6 +18,12 @@ description: "JD 本地人才库推荐和飞书知识库交付。用于读取 JD
 
 如果用户没有提供 JD 正文或可读路径，只问一个最小澄清问题。除非用户明确覆盖，默认 `top_n=30`、`publish_feishu=true`、`wiki_space_id=7642607697183001542`。
 
+## 连续执行规则
+
+输入齐全且所有门禁通过时，必须按 S0 -> S1 -> S2 -> S3 -> S4 -> S5 -> S6 -> S7 -> S8 顺序连续执行到完成。阶段成功输出即为进入下一阶段的授权，不得在 S1-S8 之间询问是否继续、是否发布或是否发送通知。
+
+dry-run、回读和质量门禁都是自动验证门禁；通过即继续，失败才停止。停机条件是本 workflow 正常路径中的唯一中断来源；停机时保留已生成产物并写入阶段错误证据。除初始 JD 输入缺失时的最小澄清问题外，本 workflow 不要求人工二次确认。
+
 ## 资源索引
 
 | 资源 | 用途 |
@@ -28,7 +34,7 @@ description: "JD 本地人才库推荐和飞书知识库交付。用于读取 JD
 | `agents/workflows/talent-library/references/safety-rules.md` | 人才库写入、评分、详情和批量操作安全规则 |
 | `skills/jd-talent-delivery/SKILL.md` | 业务入口、默认参数和交接合同 |
 | `data/talent.db` | 只读人才库主数据源 |
-| `lark-cli` | 飞书 Docs、Sheets、Drive、Wiki 发布能力 |
+| `lark-cli` | 飞书 Docs、Sheets、Drive、Wiki 发布和 IM 通知能力 |
 
 目标飞书知识库为 `JD需求交付`，默认 `space_id=7642607697183001542`。
 
@@ -37,10 +43,10 @@ description: "JD 本地人才库推荐和飞书知识库交付。用于读取 JD
 ### S0：前置检查
 
 1. 解析 JD 输入、`top_n`、`publish_feishu` 和 `wiki_space_id`。
-2. 读取 `agents/capabilities.md`，确认当前运行时具备文件读写、命令执行和人工确认能力。
+2. 读取 `agents/capabilities.md`，校验当前运行时具备文件读写、命令执行和错误证据落盘能力；该校验不得触发人工二次确认。
 3. 读取 `agents/workflows/talent-library/AGENT.md`、`agents/workflows/talent-library/references/data-contract.md` 和 `agents/workflows/talent-library/references/safety-rules.md`。
 4. 确认 `data/talent.db` 存在且本流程仅以只读方式打开。
-5. 如果 `publish_feishu=true`，先执行 `lark-cli doctor` 和 `lark-cli auth status`；认证失败、权限不足或 scope 缺失时停止。
+5. 如果 `publish_feishu=true`，先执行 `lark-cli doctor` 和 `lark-cli auth status`；认证失败、权限不足、Sheets/Docs/Wiki/IM scope 缺失时停止。
 
 ### S1：建立输出目录
 
@@ -97,6 +103,8 @@ S1 至少写入：
 
 精排不得重新解释 JD，只能使用 `profile/role-profile.json` 和 `scoring/scorecard.json`。精排证据必须可追溯到人才库字段或已生成的岗位画像。维度、权重、阈值必须写入报告。
 
+本流程不要求存在 campaign `strategy.json`，也不要求存在历史 `*rank*.json`。这些 artifact 只能作为人工排障或历史参考，不能作为 S4/S5 的前置条件。标准执行入口必须能仅凭 `scoring/scorecard.json` 和只读 `data/talent.db` 生成粗筛、精排和 TopN 交付。
+
 ### S6：报告和外联表
 
 生成：
@@ -105,19 +113,73 @@ S1 至少写入：
 - `reports/talent-recommendation.json`
 - `reports/outreach-queue.csv`
 - `reports/outreach-queue.md`
+- `reports/quality-gates.json`
 
 推荐报告必须展示 JD 摘要、评分卡版本、维度、权重、阈值、TopN 候选人证据、风险项和建议动作。外联表必须只包含交付所需字段，不包含平台原始 payload、raw detail 或数据库文件路径。
 
+发布前质量门禁必须检查：
+
+- 脉脉 URL 必须清洗 `trackable_token`、UTM 和详情抓取用 tracking 参数，只保留可交付 profile URL。
+- TopN 全部为 C/淘汰时必须停止发布，并报告需要人工复核或重跑评分卡。
+- CSV 必须可解析且行数等于 TopN，关键列必须包含 `candidate_id`、公司、职位、分数、评级、外联角度和 profile URL。
+- 候选人卡片必须包含可追溯关键证据，外联角度应包含公司和职位。
+- 发布包不得包含 token、cookie、DB/zip/raw/sync bundle 路径或乱码标记。
+
 ### S7：飞书发布
 
-发布前必须生成 `feishu/publish-manifest.json`，并完成 Wiki 目录 dry-run、Markdown 导入 dry-run 和 CSV 导入 dry-run。Markdown 使用 `drive +import --type docx` 后移动到 Wiki；CSV 使用 `drive +import --type sheet` 后移动到 Wiki。
+发布前必须生成 `feishu/publish-manifest.json`，并完成 Wiki 目录 dry-run、Markdown 导入 dry-run、Sheet 创建 dry-run 和 Sheet UTF-8 JSON 写入 dry-run。dry-run 成功后必须直接执行真实发布，不得要求人工二次确认；只有认证失败、权限不足、scope 缺失、dry-run 失败、质量门禁 blocked 或回读不一致时才停止。
+
+Markdown 使用 `drive +import --type docx` 后移动到 Wiki。外联表禁止使用 `drive +import --type sheet` 或任何 CSV 文件导入路径；必须使用 `sheets +create` 创建空电子表格，再把本地 `reports/outreach-queue.csv` 解析为二维数组，通过 `sheets +write --values <UTF-8 JSON>` 分块写入，最后 `wiki +move` 到目标目录。
+
+lark-cli 必须通过 argv list 调用，不得把 JSON、中文、URL 拼成 PowerShell 字符串执行。包含中文 JSON payload 的 `sheets +create` / `sheets +write` 必须走显式 Node `@larksuite/cli/scripts/run.js` 入口或等价 UTF-8 argv runner，避免 Windows `.cmd` shim 和 PowerShell 编码链路。发布后必须回读 Wiki 子节点、Doc outline 和 Sheet；Sheet 回读必须比对本地 CSV 表头和前几行。回读是验证，不是乱码修复兜底；如果回读不一致，视为发布失败，必须修正发布器而不是手工改云端数据。
 
 发布后写入：
 
 - `feishu/dry-run-results.json`
 - `feishu/publish-results.json`
 
-发布完成后回读 Wiki 子节点、文档 outline 和表格前几行，确认交付包位于 `JD需求交付` 下。
+发布完成后回读 Wiki 子节点、文档 outline 和表格前几行，确认交付包位于 `JD需求交付` 下。发布成功并回读通过后继续 S8。
+
+### S8：飞书完成通知
+
+S7 全部发布和回读通过后，必须发送飞书 IM 完成通知。默认通知目标为 `JD需求协同` 群，必须先用 user 身份搜索群并解析 `chat_id`；如果运行参数提供 `--notify-user-id` 或 `--notify-chat-id`，使用显式目标。默认发送方式固定为：
+
+```powershell
+lark-cli im +chat-search --as user --query "JD需求协同" --disable-search-by-user --search-types "private,public_joined,external" --page-size 10 --format json
+lark-cli im +messages-send --as user --chat-id <chat_id> --text <message> --idempotency-key <stable_key>
+```
+
+显式个人覆盖目标时才使用：
+
+```powershell
+lark-cli im +messages-send --as user --user-id <open_id> --text <message> --idempotency-key <stable_key>
+```
+
+消息模板固定包含以下段落：
+
+```text
+<JD标题> 推荐结果已发布
+
+任务执行结果：<发布状态、质量门禁、外联表行数>
+成果物清单：
+- Wiki目录：<wiki_url>
+- JD：<jd_docx_url>
+- 岗位画像：<profile_docx_url>
+- 推荐报告：<recommendation_docx_url>
+- 外联表：<sheet_url>
+
+推荐报告摘要：
+- 匹配口径：本地人才库只读；粗筛 <coarse_total> 人，精排 <total_scored> 人。
+- Top<N>：A=<A>/B=<B>/C=<C>/淘汰=<淘汰>
+- 注意：<低置信或风险说明；无则写“无”>
+```
+
+通知发送后必须写入：
+
+- `feishu/im-notification-message.txt`
+- `feishu/im-notification-results.json`
+
+通知发送失败属于任务失败，不得只在聊天窗口口头说明。
 
 ## Scorecard 一致性
 
@@ -138,6 +200,7 @@ S1 至少写入：
 - 不上传 raw detail。
 - 不上传 raw capture 或平台原始 payload。
 - 不自动追加 `--yes`。
+- 本 workflow 正常路径不包含需要 `--yes` 的高风险写操作。
 - 不绕过 `lark-cli` dry-run 直接发布。
 - 不把候选人隐私字段扩散到非交付文档。
 
@@ -154,5 +217,10 @@ S1 至少写入：
 - scope 缺失。
 - Wiki 目标不存在且不能创建。
 - dry-run 失败。
+- `lark-cli` 返回 `confirmation_required` 或要求追加 `--yes`。
 - `lark-cli` flag 漂移或返回不可解释错误。
 - `feishu/publish-manifest.json` 中出现 SQLite、sync zip、raw search、raw detail、raw capture 或平台原始 payload 路径。
+- `reports/quality-gates.json` 状态为 blocked。
+- Sheet 回读与本地 CSV 表头或前几行不一致。
+- 外联表发布步骤出现 `drive +import --type sheet`。
+- 飞书完成通知发送失败或未写入 `feishu/im-notification-results.json`。

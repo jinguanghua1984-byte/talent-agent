@@ -47,3 +47,5 @@
 - 2026-05-19：脉脉无人值守 campaign 里“每日请求预算 500”必须明确写成“每日搜索请求预算 500”，只统计列表搜索请求，不包括详情请求；详情请求另按 pack 上限、health gate、请求间隔和平台安全停机规则控制。
 - 2026-05-20：当用户明确要求“无人值守” campaign 时，搜索计划确认后不应反复让用户 check/apply，也不要再提示手动启动浏览器；run-policy 应覆盖 Campaign DB clean dry-run 自动 apply、列表后自动粗筛、详情后自动详评/精排和飞书交付包发布。只在登录/验证码/安全页/429/非 JSON/模板漂移等平台阻断、主库写入或策略异常时停下来。
 - 2026-05-22：当通用 campaign 里出现 `AI Infra` 等首次样板任务痕迹时，不要只当作交付文案问题；优先沿脚本、模板、配置和报告生成链路追踪是否存在本应按 JD 动态生成却沿用样板数据的参数残留，并区分对搜索、评分、详情和交付各阶段的真实影响。
+- 2026-05-23：JD talent delivery 不能把 campaign `strategy.json` 或历史 `*rank*.json` 当作必须前置；标准路径必须能从 JD 生成的 `scorecard.json` 和只读 `data/talent.db` 独立完成匹配、精排、质量门禁和飞书交付，campaign artifact 只能作为可选参考或排障输入。
+- 2026-05-23：JD talent delivery 的飞书 IM 完成通知必须是 workflow 固定步骤，不是任务后人工补发；通知模板要落盘并包含任务执行结果、成果物清单、Wiki 目录链接和推荐报告摘要。外联 Sheet 不能再通过 `drive +import --type sheet` 导入 CSV，必须走 `sheets +create` + UTF-8 JSON `sheets +write`，把乱码预防放在发布机制里，而不是发布后靠校验修复。
