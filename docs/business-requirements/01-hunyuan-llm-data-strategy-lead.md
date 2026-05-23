@@ -19,7 +19,7 @@
 1.对标大模型团队做数据交付的人选
 2.有计算机/统计学/数学等理工科背景，后续担任产品/技术负责人的复合背景人选，或者有互联网产品创业经历
 
-目标公司：字节dmc，字节global data，字节aidp，阿里，快手，美团，小红书，surge A，scale AI
+目标公司：字节dmc，字节global data，字节aidp，阿里，快手，美团，小红书，surge AI，scale AI
 
 ## 岗位 JD
 

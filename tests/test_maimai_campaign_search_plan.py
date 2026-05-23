@@ -53,3 +53,22 @@ def test_build_generic_search_plan_does_not_emit_ai_infra_batches() -> None:
     assert "AI Infra" not in encoded
     assert "训练框架" not in encoded
     assert plan["batches"][0]["query"] == "字节 DMC 大模型 后训练 数据策略 数据质量"
+
+
+def test_build_generic_search_units_cross_product_multiple_keyword_packages() -> None:
+    strategy = _strategy()
+    strategy["keyword_packages"].append(
+        {
+            "id": "p0-delivery",
+            "priority": "P0",
+            "position_terms": ["数据交付负责人"],
+            "keywords": ["数据标注", "数据质检", "数据交付", "质量评估"],
+        }
+    )
+
+    units = build_generic_search_units(strategy)
+
+    assert len(units) == 8
+    assert units[0]["keyword_package"] == "p0-data-strategy"
+    assert units[4]["keyword_package"] == "p0-delivery"
+    assert units[4]["query"] == "字节 DMC 数据标注 数据质检 数据交付 质量评估"

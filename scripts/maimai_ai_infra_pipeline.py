@@ -25,6 +25,7 @@ from scripts.maimai_ai_infra_campaign import (
 from scripts.maimai_ai_infra_rank import rank_candidates
 from scripts.maimai_ai_infra_search_plan import build_plan, build_search_units, load_strategy
 from scripts.maimai_ai_infra_search_runner import DEFAULT_TEMPLATE, build_dry_run_result
+from scripts.maimai_campaign_search_plan import build_generic_search_plan, build_generic_search_units
 from scripts.maimai_detail_import import CONFIRM_TEXT, apply_capture, build_dry_run, dry_run_capture
 from scripts.maimai_detail_targets import export_targets
 from scripts.talent_library import (
@@ -279,7 +280,24 @@ def _clean_dry_run(result: dict[str, Any], metadata: dict[str, Any]) -> bool:
     )
 
 
+def _is_generic_jd_strategy(strategy: dict[str, Any]) -> bool:
+    return isinstance(strategy.get("keyword_packages"), list) and isinstance(strategy.get("company_pools"), dict)
+
+
 def _ensure_campaign_plan_files(paths: CampaignPaths, config: Path) -> None:
+    if paths.strategy.exists() and paths.search_plan.exists() and paths.search_units.exists():
+        return
+
+    raw_strategy = _load_json(config)
+    if _is_generic_jd_strategy(raw_strategy):
+        if not paths.strategy.exists():
+            _write_json(paths.strategy, raw_strategy)
+        if not paths.search_plan.exists():
+            _write_json(paths.search_plan, build_generic_search_plan(raw_strategy))
+        if not paths.search_units.exists():
+            _write_jsonl(paths.search_units, build_generic_search_units(raw_strategy))
+        return
+
     strategy = load_strategy(config)
     if not paths.strategy.exists():
         _write_json(paths.strategy, strategy)

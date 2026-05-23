@@ -576,6 +576,75 @@ def test_run_campaign_wave_dry_run_writes_contacts_and_report(tmp_path: Path):
     assert not import_ledger_has_apply(paths, "wave-001")
 
 
+def test_run_campaign_wave_generates_plan_files_for_generic_jd_strategy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    paths = ensure_campaign(tmp_path / "campaign")
+    strategy = {
+        "strategy_version": "generic-jd-v1",
+        "keyword_packages": [
+            {
+                "id": "data_strategy",
+                "priority": "P0",
+                "keywords": ["data strategy", "data quality"],
+                "position_terms": ["data lead"],
+            }
+        ],
+        "company_pools": {"p0_direct": ["ByteDance DMC"]},
+        "position_aliases": ["data strategy lead"],
+        "screening_rules": {"reject": ["BI"]},
+        "delivery_targets": {
+            "report_title": "Generic JD report",
+            "direction_rules": {"data_strategy": ["data strategy"]},
+        },
+    }
+    paths.strategy.write_text(json.dumps(strategy, ensure_ascii=False), encoding="utf-8")
+    mark_page_completed(
+        paths,
+        "unit-000001",
+        1,
+        {
+            "wave_id": "search-wave-001",
+            "contacts": [
+                {
+                    "id": "u1",
+                    "name": "Alice",
+                    "company": "ByteDance",
+                    "position": "Data Strategy Lead",
+                }
+            ],
+        },
+    )
+
+    def fail_legacy_loader(config: Path):  # noqa: ANN001
+        raise AssertionError(f"legacy strategy loader should not run for generic JD strategy: {config}")
+
+    monkeypatch.setattr(pipeline, "load_strategy", fail_legacy_loader)
+
+    result = run_campaign_wave(
+        campaign_root=paths.root,
+        config=paths.strategy,
+        wave="search-wave-001",
+        db_path=tmp_path / "campaign.db",
+    )
+
+    assert result["search_plan"] == paths.search_plan
+    assert result["search_units"] == paths.search_units
+    assert paths.search_plan.exists()
+    assert paths.search_units.exists()
+    units = [
+        json.loads(line)
+        for line in paths.search_units.read_text(encoding="utf-8-sig").splitlines()
+        if line.strip()
+    ]
+    assert units
+    assert units[0]["search_filters"]["allcompanies"] == ""
+    assert units[0]["search_filters"]["positions"] == ""
+    assert units[0]["query_relation"] == 0
+    assert (paths.reports_dir / "import-list-search-wave-001-dry-run.md").exists()
+
+
 def test_run_campaign_wave_apply_aborts_when_wave_already_applied(tmp_path: Path):
     paths = ensure_campaign(tmp_path / "campaign")
     append_import_ledger(paths, {"wave_id": "wave-001", "action": "apply", "status": "completed"})

@@ -67,7 +67,11 @@ def _company_pool_terms(strategy: dict[str, Any]) -> list[str]:
 
 
 def _query_terms(raw_company_term: str, package: dict[str, Any]) -> list[str]:
-    keywords = [str(item).strip() for item in package.get("keywords") or [] if str(item).strip()]
+    explicit_query_terms = package.get("query_terms")
+    if isinstance(explicit_query_terms, list) and explicit_query_terms:
+        keywords = [str(item).strip() for item in explicit_query_terms if str(item).strip()]
+    else:
+        keywords = [str(item).strip() for item in package.get("keywords") or [] if str(item).strip()]
     return [raw_company_term, *keywords[:4]]
 
 
@@ -77,26 +81,26 @@ def build_generic_search_units(strategy: dict[str, Any]) -> list[dict[str, Any]]
     expanded = expand_company_pool_terms(company_terms)
 
     units: list[dict[str, Any]] = []
-    for company_index, company in enumerate(expanded, start=1):
-        package = packages[min(company_index - 1, len(packages) - 1)]
-        query = " ".join(_query_terms(company["raw_term"], package))
-        units.append({
-            "unit_id": f"unit-{len(units) + 1:06d}",
-            "source_company_term": company["raw_term"],
-            "canonical_company": company["canonical_company"],
-            "company_aliases": company["company_aliases"],
-            "org_product_terms": company["org_product_terms"],
-            "preferred_search_mode": company["preferred_search_mode"],
-            "priority": package.get("priority") or "P1",
-            "keyword_package": package.get("id") or "",
-            "position_terms": package.get("position_terms") or [],
-            "keywords": package.get("keywords") or [],
-            "query": query,
-            "query_relation": 0,
-            "page_size": 30,
-            "max_pages": 5 if str(package.get("priority") or "") == "P0" else 3,
-            "search_filters": dict(DEFAULT_QUERY_FILTERS),
-        })
+    for package in packages:
+        for company in expanded:
+            query = " ".join(_query_terms(company["raw_term"], package))
+            units.append({
+                "unit_id": f"unit-{len(units) + 1:06d}",
+                "source_company_term": company["raw_term"],
+                "canonical_company": company["canonical_company"],
+                "company_aliases": company["company_aliases"],
+                "org_product_terms": company["org_product_terms"],
+                "preferred_search_mode": company["preferred_search_mode"],
+                "priority": package.get("priority") or "P1",
+                "keyword_package": package.get("id") or "",
+                "position_terms": package.get("position_terms") or [],
+                "keywords": package.get("keywords") or [],
+                "query": query,
+                "query_relation": 0,
+                "page_size": 30,
+                "max_pages": 5 if str(package.get("priority") or "") == "P0" else 3,
+                "search_filters": dict(DEFAULT_QUERY_FILTERS),
+            })
     return units
 
 
