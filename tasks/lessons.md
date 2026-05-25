@@ -53,3 +53,4 @@
 - 2026-05-23：JD talent delivery 的飞书 IM 完成通知必须是 workflow 固定步骤，不是任务后人工补发；通知模板要落盘并包含任务执行结果、成果物清单、Wiki 目录链接和推荐报告摘要。外联 Sheet 不能再通过 `drive +import --type sheet` 导入 CSV，必须走 `sheets +create` + UTF-8 JSON `sheets +write`，把乱码预防放在发布机制里，而不是发布后靠校验修复。
 - 2026-05-24：自适应扩页的回归测试不能把 page 3 预先写进 wave plan；必须让 `max_pages=probe_pages`，再验证 live gate 依据页质和 `unit_max_pages` 在执行中实际请求 page 3-N。
 - 2026-05-25：长时无人值守任务里的“中断后关机”是一次性运行指令，不是永久策略；用户后续要求取消时，必须先查杀/确认无 `Stop-Computer`、`shutdown.exe` 或延迟关机进程，再继续恢复任务，并把 `shutdown_instruction_active=false` 写回 campaign 状态。
+- 2026-05-25：用户要求同步 campaign DB 到主库时，必须优先按用户指定的 campaign 路径收窄范围；不能把 `data/campaigns/**/talent.db` 默认扩展为全部目录。若范围被用户更正，先停止残留全量任务，再只处理指定 DB。

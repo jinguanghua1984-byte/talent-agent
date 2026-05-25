@@ -4,14 +4,64 @@
 
 ## Active Task
 
-- [ ] 提交并推送全部当前更新（2026-05-25）：按用户要求把当前非忽略变更统一提交并推送到 `origin/main`，提交前核对敏感/生成物边界、运行测试和 diff hygiene。
+- [x] 读取飞书 Wiki 并做本地人才库推荐（2026-05-25，Y69DwM483iPeU2krcLvcvFgBnSf）：读取 `https://sq8org1v4k6.feishu.cn/wiki/Y69DwM483iPeU2krcLvcvFgBnSf?fromScene=spaceOverview`，过滤非 JD 信息后整理为标准 JD，再基于只读 `data/talent.db` 生成 Top30 推荐、发布飞书并通知。
+  - [x] S0 前置检查：workflow、`data/talent.db` 只读可用、`lark-cli` 鉴权与必要 scope。
+  - [x] S1 读取 Wiki/Doc 正文，抽取岗位职责、任职要求、候选人画像，过滤页面导航、协作说明、流程噪声和无关信息。
+  - [x] S2 标准 JD 落盘到 `docs/business-requirements/`，保留来源引用和招聘参考信息。
+  - [x] S3-S6 生成岗位画像、评分卡、粗筛、精排、推荐报告和外联表，必要时回到评分卡收敛后重跑。
+  - [x] S7-S8 发布到飞书 Wiki，回读 Wiki/Doc/Sheet，并发送 `JD需求协同` 完成通知。
+  - [x] 记录 Review：交付链接、Top30 分层、质量门、验证命令和风险边界。
+  - Review：已读取 Wiki 节点 `Y69DwM483iPeU2krcLvcvFgBnSf`，解析为 docx `M5fHdOP9foHGRhxNkYJcgG1Onoc`，标题“腾讯游戏-多模态策略产品经理/专家(深圳)”。标准 JD 已落盘 `docs/business-requirements/12-tencent-games-multimodal-strategy-product-manager.md`，把多模态策略产品、AI 产品、视频生成、模型评测、数据策略、指标体系、数据分析、产品规划和项目推动作为评分输入，把薪资、职级、面试流程、HC、WP 提交说明列为招聘参考；“训练/推理/数据工程都可以看”与本岗位产品经理方向不一致，未作为本岗位硬门槛。输出目录：`data/output/12-tencent-games-multimodal-strategy-product-manager-2026-05-25`。自动画像首版误把数据工程纳入 must-have 且缺少评测/产品信号，已回到 S2/S3 手工收敛为 `v2-product-evaluation-balanced`：`must_have=12/nice_to_have=20`；最终粗筛 `19881` 人、精排 `343` 人，Top30 `A=1/B=29/C=0/淘汰=0`，`reports/quality-gates.json status=passed` 且无 warnings。飞书已真实发布并回读：Wiki 目录 `https://sq8org1v4k6.feishu.cn/wiki/VsdxwMhwBiWh2okIeDAcKdYpnNg`，JD `https://sq8org1v4k6.feishu.cn/docx/WTQUdmLASoFjyOxiUf0c9km3nIb`，岗位画像 `https://sq8org1v4k6.feishu.cn/docx/KXVOdSunDowiJLxSIy2cGDRcnxh`，推荐报告 `https://sq8org1v4k6.feishu.cn/docx/PdYhdnLiNoAep9xXByTcl48jnXe`，外联表 `https://sq8org1v4k6.feishu.cn/sheets/BzBVsCyi8hE1s8tMlW6ciYBdnPE`。回读证据：Wiki 子节点 4 个、3 个 Doc outline 成功、Sheet preview 1 个，外联表 30 行；完成通知已发到 `JD需求协同`，`message_id=om_x100b6e765583bca0b14723b9b442afd`。主库只读验证：`candidates=19881/source_profiles=19881/candidate_details=19881/match_scores=0`，`PRAGMA integrity_check=ok`，未触发平台搜索。验证：`python -m pytest tests\test_jd_talent_delivery_profile.py tests\test_jd_talent_delivery_scorecard.py tests\test_jd_talent_delivery_match.py tests\test_jd_talent_delivery_feishu.py -q` -> `59 passed`；`python -m py_compile scripts\jd_talent_delivery_profile.py scripts\jd_talent_delivery_scorecard.py scripts\jd_talent_delivery_match.py scripts\jd_talent_delivery_feishu.py` 通过；`git diff --check` 通过；交付源/画像/评分/报告/通知/发布清单敏感与乱码标记扫描无命中；`lark-cli doctor` ok 但提示当前 `1.0.36` 可更新到 `1.0.39`。
+
+- [x] 读取飞书 Wiki 并做本地人才库推荐（2026-05-25，IXkZw7rVkiYJerktN7RcwLkIntc）：读取 `https://sq8org1v4k6.feishu.cn/wiki/IXkZw7rVkiYJerktN7RcwLkIntc?fromScene=spaceOverview`，过滤非 JD 信息后整理为标准 JD，再基于只读 `data/talent.db` 生成 Top30 推荐、发布飞书并通知。
+  - [x] 前置检查：仓库 workflow、`data/talent.db` 只读可用、`lark-cli` 鉴权和 scope。
+  - [x] 解析 Wiki 节点与正文，抽取与岗位 JD 相关的信息，过滤页面导航、协作说明、流程噪音和无关信息。
+  - [x] 将清洗后的标准 JD 落盘到 `docs/business-requirements/`，并保留来源引用。
+  - [x] 执行 `jd-talent-delivery`：生成岗位画像、评分卡、粗筛、精排、推荐报告和外联表。
+  - [x] 跑质量门、飞书发布/回读和完成通知，记录产物链接与验证结果。
+  - [x] 更新 Review，说明推荐口径、Top30 分层、验证命令和风险边界。
+  - Review：已读取 Wiki 节点 `IXkZw7rVkiYJerktN7RcwLkIntc`，解析为 docx `GX6SddFF4o9ILdxV7PKcChiWnfb`，标题“腾讯游戏训练推理数据工程研发专家/工程师”。标准 JD 已落盘 `docs/business-requirements/11-tencent-games-training-inference-data-engineering.md`，把训练/推理/数据工程职责和 GPU/CUDA、FSDP/DeepSpeed/Megatron、vLLM/SGLang、KV Cache、OpenRLHF/RLHF 等硬要求作为评分输入，把 HC、薪资、面试流程、WP 协作说明列为招聘参考。输出目录：`data/output/11-tencent-games-training-inference-data-engineering-2026-05-25`。初版评分卡因硬词过细导致精排为 0，已回到 S3 收敛为 `v3-recall-balanced`：`must_have=12/nice_to_have=29`，粗筛用于召回、精排用于证据排序；最终粗筛 `19881` 人、精排 `311` 人，Top30 `A=0/B=4/C=26/淘汰=0`，`reports/quality-gates.json status=passed` 且无 warnings。该岗位结果偏召回，Top30 中 C 类较多，不能包装成高置信强推荐；后续若要更高精度，应继续收紧精排规则，要求命中训练系统/分布式训练或推理系统/性能优化之一。飞书已真实发布并回读：Wiki 目录 `https://sq8org1v4k6.feishu.cn/wiki/XlEpw0BOjiNozvkWP3bc2S1VnlV`，JD `https://sq8org1v4k6.feishu.cn/docx/Xp5lduXgbob9lOxMwcLcU3OknSH`，岗位画像 `https://sq8org1v4k6.feishu.cn/docx/D8D3dg9BHouMIvx8Zc2cKYRpnVf`，推荐报告 `https://sq8org1v4k6.feishu.cn/docx/DG7vduTNIozwghxM1R2ca6OjnuZ`，外联表 `https://sq8org1v4k6.feishu.cn/sheets/C6zhsLp48hhcDkte163cGeMBnph`。回读证据：Wiki 子节点 4 个、3 个 Doc outline 成功、Sheet preview 1 个，外联表 30 行；完成通知已发到 `JD需求协同`，`message_id=om_x100b6e754a5b8c80b250ceb04518507`。主库只读验证：`candidates=19881/source_profiles=19881/candidate_details=19881/match_scores=0`，`PRAGMA integrity_check=ok`，未触发平台搜索。验证：`python -m pytest tests\test_jd_talent_delivery_profile.py tests\test_jd_talent_delivery_scorecard.py tests\test_jd_talent_delivery_match.py tests\test_jd_talent_delivery_feishu.py -q` -> `59 passed`；`python -m py_compile scripts\jd_talent_delivery_profile.py scripts\jd_talent_delivery_scorecard.py scripts\jd_talent_delivery_match.py scripts\jd_talent_delivery_feishu.py` 通过；`git diff --check` 通过；交付源/画像/评分/报告敏感与乱码标记扫描无命中；`lark-cli doctor` ok 但提示当前 `1.0.36` 可更新到 `1.0.39`。
+
+- [x] 读取飞书 Wiki 并做本地人才库推荐（2026-05-25）：读取 `https://sq8org1v4k6.feishu.cn/wiki/KiwdwyM0uiaA8jkafXHcVBJgn8e?fromScene=spaceOverview`，过滤非 JD 信息后整理为标准 JD，再基于只读 `data/talent.db` 生成 Top30 推荐与质量验证。
+  - [x] 完成前置检查：仓库 workflow、`data/talent.db` 只读可用、`lark-cli` 鉴权和 scope。
+  - [x] 拉取 Wiki 正文，抽取与岗位 JD 相关的信息，过滤流程噪音、页面导航和无关协作信息。
+  - [x] 将清洗后的 JD 落盘到 `docs/business-requirements/`，并保留来源引用。
+  - [x] 执行 `jd-talent-delivery`：生成岗位画像、评分卡、粗筛、精排、推荐报告和外联表。
+  - [x] 跑质量门、飞书发布/回读和完成通知，记录产物链接与验证结果。
+  - [x] 更新 Review，说明推荐口径、Top30 分层、验证命令和风险边界。
+  - Review：已读取 Wiki 节点 `KiwdwyM0uiaA8jkafXHcVBJgn8e`，解析为 docx `SUhJdYCpioPzxfx83z7cBTDInfe`，无子节点；整理后的标准 JD 已落盘 `docs/business-requirements/10-tencent-games-multimodal-algorithm-researcher.md`，把岗位职责/要求/候选人画像作为评分输入，把薪资、面试流程、WP 协作说明列为招聘参考。输出目录：`data/output/10-tencent-games-multimodal-algorithm-researcher-2026-05-25`。主库只读验证：`candidates=19881/source_profiles=19881/candidate_details=19881`，`PRAGMA integrity_check=ok`，未写 `match_scores`，未触发平台搜索。初版评分卡因 26 个 must-have 过宽导致质量门 `blocked`，已参考历史多模态算法交付口径收敛为 v2 refined 评分卡并从 S4-S6 全量重跑；最终粗筛 `19881` 人、精排 `1461` 人，Top30 `A=1/B=29/C=0/淘汰=0`，`reports/quality-gates.json status=passed`。飞书已真实发布并回读：Wiki 目录 `https://sq8org1v4k6.feishu.cn/wiki/FWISwW75Ki2o8NkrMeqcttixnGb`，JD `https://sq8org1v4k6.feishu.cn/docx/Btecd85pOo71uEx1ZARcT38tnPb`，岗位画像 `https://sq8org1v4k6.feishu.cn/docx/NTqudSdJZogGqAxyClDc9wjxnpf`，推荐报告 `https://sq8org1v4k6.feishu.cn/docx/Kos2dUvrXoaoZLxaToycnhTlnUQ`，外联表 `https://sq8org1v4k6.feishu.cn/sheets/TWSDstJCMhagp6tlpfycsFlInSi`。回读证据：Wiki 子节点 4 个、3 个 Doc outline 成功、Sheet `A1:Z5` 与本地 CSV 前缀比对通过；完成通知已发到 `JD需求协同`，`message_id=om_x100b6e744bdfdc90b1157726fa44821`。验证：`python -m pytest tests\test_jd_talent_delivery_profile.py tests\test_jd_talent_delivery_scorecard.py tests\test_jd_talent_delivery_match.py -q` -> `20 passed`；敏感/乱码标记扫描无命中；`lark-cli doctor` ok 但提示当前 `1.0.36` 可更新到 `1.0.39`。
+
+- [x] 导出人才库跨 PC 同步文件（2026-05-25）：从当前主库 `data/talent.db` 导出完整 `talent_sync` bundle，用于另一台 PC 导入同步；导出后执行 bundle 校验并记录文件大小、哈希和导入命令。
+  - [x] 确认主库同步状态：`candidates=19881/sync_imports=11`。
+  - [x] 导出完整 sync bundle 到 `data/output/`。
+  - [x] 执行 `verify-bundle` 并计算 SHA256。
+  - [x] 写回 Review，给出另一台 PC 的导入命令。
+  - Review：已导出 `data/output/talent-sync-to-pc-2026-05-25/talent-sync-full-20260525-145358.zip`，大小 `71113203` bytes，SHA256 `ccc23e82cc6907d942480baf4beeca6a78a76b88f7e8fb5cf3193d6bd2155e5c`，`verify.ok=true`。bundle manifest：`export_id=93df45bf-f19e-478d-ae23-934b939a3750`，`source_node_id=f10862a8-f87f-498e-83c6-fd168448da08`，包含 `candidates=19881/source_profiles=19881/candidate_details=19881`。校验摘要：`data/output/talent-sync-to-pc-2026-05-25/talent-sync-full-verify-summary.json`。另一台 PC 先 dry-run：`python -m scripts.talent_sync import --db data\talent.db --bundle talent-sync-full-20260525-145358.zip`；确认后 apply：`python -m scripts.talent_sync import --db data\talent.db --bundle talent-sync-full-20260525-145358.zip --apply --confirm "确认同步人才库"`。
+
+- [x] Tencent Campaign DB 同步到主库（2026-05-25）：按用户更正，只将 `data/campaigns/tencent-games-ai-100hc-broad-recall-2026-05-24/talent.db` 通过 `talent_sync` bundle 路径导入 `data/talent.db`，不处理其他 campaign 目录；先 dry-run、备份，再 apply，并保留冲突报告。
+  - [x] 停止已中断的全 campaigns dry-run 残留进程，确认该阶段未写主库。
+  - [x] 盘点 Tencent campaign `talent.db`、主库基线计数和已存在同步状态。
+  - [x] 导出 Tencent sync bundle 并执行 `verify-bundle`。
+  - [x] 对主库执行 import dry-run，记录 created/merged/conflicts/skipped。
+  - [x] 备份主库后执行 `--apply --confirm "确认同步人才库"`。
+  - [x] 核验主库计数、`PRAGMA integrity_check`、`pending_merges`/`sync_conflicts`，运行聚焦测试并写回 Review。
+  - Review：只同步 `data/campaigns/tencent-games-ai-100hc-broad-recall-2026-05-24/talent.db`。导出 bundle：`data/output/tencent-games-main-sync-2026-05-25/tencent-games-ai-100hc-broad-recall-2026-05-24.zip`，`verify_ok=true`；主库备份：`data/backups/talent-before-tencent-games-sync-20260525-133243.db`，备份 `PRAGMA integrity_check=ok`。dry-run 候选人级计划为 `created=6549/merged=1704/conflicts=0/skipped=0`；apply 结果为候选人 `created=6549/merged=1704/conflicts=48/skipped=0`，详情 `created=6549/merged=1704/conflicts=1178/skipped=0`。主库从 `candidates=13332/source_profiles=13332/candidate_details=13332/sync_imports=10/sync_conflicts=1814` 增至 `candidates=19881/source_profiles=19881/candidate_details=19881/sync_imports=11/sync_conflicts=3040`，`pending_merges=0`，`PRAGMA integrity_check=ok`。最新冲突主要为 `candidate_detail.raw_data.maimai_list=908`、`candidate_detail.raw_data.maimai_detail_capture=270`；聚焦测试 `python -m pytest tests\test_talent_sync.py -q` -> `37 passed`。
+
+- [x] 腾讯游戏 AI 岗位 P0-P2 缺失详情补抓（2026-05-25）：基于 `reports/missing-detail-p0-p2-2026-05-25.csv` 为未含 `maimai_detail_capture` 的 P0/P1/P2 人选生成补抓详情任务，4 并行无人值守抓取，只写 Campaign DB，不写主库。
+  - [x] 生成独立补抓 pack 和 pack-index，不覆盖 2026-05-24 已完成的 11 个详情 pack。
+  - [x] 预检 CDP 页面和详情抓取入口，确认登录/验证码/安全页无阻断。
+  - [x] 以 4 个并行 worker 执行详情抓取；遇登录、验证码、403/429/432、非 JSON、模板漂移等阻断立即停机。
+  - [x] 对抓取结果做 dry-run；clean 后 apply 到 Campaign DB `talent.db`。
+  - [x] 复核 P0/P1/P2 缺失详情数量、Campaign DB integrity、主库未写边界，写回 Review。
+  - Review：已生成 `12` 个独立补抓 pack：`detail-missing-p0-p2-pack-001..012`，目标 `1159` 人，4 并行无人值守抓取完成全部 `1159` 个 live detail job。`pack-006` 抓取 `100/100` 成功但 dry-run 发现 `2` 个候选人无工作经历，触发 `missing_work_experience` apply blocker；已保留原始 capture，生成 `detail-missing-p0-p2-pack-006-clean-98` 派生 capture，排除 `candidate_id=5671/5672` 后 dry-run clean。写入前已备份 Campaign DB：`backups/talent-before-missing-detail-apply-20260525-112017.db`。最终 apply 写入 Campaign DB `1157` 人，`failed_jobs=0/unmatched=0/apply_blockers=0`；`maimai_detail_capture` 覆盖从 `1004` 增至 `2161`。P0-P2 剩余未详情 `2` 人，均为 `detail_p1`：`5671 喻鹿鸣`、`5672 李鑫路`，原因均为 `missing_work_experience`。Campaign DB `PRAGMA integrity_check=ok`，`pending_merges=0/sync_conflicts=0`；主库 `data/talent.db` 未写，mtime 仍为 `2026/5/23 9:46:38`。收尾报告：`reports/missing-detail-p0-p2-capture-summary-2026-05-25.json/.md`、`reports/missing-detail-p0-p2-post-apply-2026-05-25.json`。
+
+- [ ] 提交并推送本次工作树更新（2026-05-25）：按用户要求把当前非忽略变更提交并推送到 `origin/main`，提交前核对敏感/生成物边界、运行测试和 diff hygiene。
   - [x] 审查当前分支、变更文件、未跟踪文件和忽略文件，确认 `data/talent.db`、DB WAL/SHM、zip 等本地产物不进入提交。
-  - [x] 检查代码/文档 diff 范围，确认本次提交仅覆盖当前工作树中的 intended updates。
-  - [x] 运行 `git diff --check`、关键脚本 `py_compile` 和仓库要求测试。
+  - [x] 检查代码/文档 diff 范围，确认本次提交覆盖标准 JD、JD 画像增强、回归测试、任务账本和经验记录。
+  - [x] 运行 `git diff --check`、关键脚本 `py_compile` 和仓库测试。
   - [x] 暂存后运行 `git diff --cached --check`。
-  - [x] 提交全部非忽略更新并推送到 `origin/main`。
-  - [x] 验证远端 HEAD、最终 `git status`，写回 Review。
-  - Review：提交范围已核对为 15 个非忽略文件：腾讯游戏 AI 岗位业务需求、broad recall adaptive 设计/实现、脉脉 Campaign live gate/orchestrator/pipeline 代码、配套测试、`tasks/lessons.md` 与 `memory/error-log.md`。无未跟踪文件进入提交，`data/talent.db`、DB WAL/SHM、zip 等本地产物未纳入。验证：`git diff --cached --check` 通过；`python -m py_compile scripts\maimai_ai_infra_campaign.py scripts\maimai_ai_infra_pipeline.py scripts\maimai_ai_infra_search_live_gate.py scripts\maimai_broad_recall_adaptive.py scripts\maimai_campaign_orchestrator.py` 通过；`python -m pytest tests scripts -q` -> `860 passed, 1 warning`，warning 为既有 `scripts/test_boss.py` event loop deprecation。推送后以 `git status --short --branch` 和 `git rev-list --left-right --count HEAD...origin/main` 核验远端同步。
+  - [ ] 提交本次非忽略更新并推送到 `origin/main`。
+  - [ ] 验证远端 HEAD、最终 `git status`，写回 Review。
 
 - [x] 腾讯游戏 AI 岗位 broad recall follow-up 续跑（换号后解除 500 日护栏，2026-05-24）：从 `state/search-wave-followup-003-resume-after-http-432-plan.json` 的恢复点继续，只写 Campaign DB，不写主库。
   - [x] 更新运行策略，明确本轮不再用旧账号 `500` 页上限截断 follow-up wave。

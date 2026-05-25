@@ -25,12 +25,89 @@ CORE_TERMS = [
     "团队管理",
     "后训练",
     "数据策略",
+    "PyTorch",
+    "预训练",
+    "微调",
+    "多模态",
+    "多模态大模型",
+    "视频生成",
+    "视频预测",
+    "视频编辑",
+    "图像生成",
+    "世界模型",
+    "生成式游戏引擎",
+    "Diffusion Models",
+    "Diffusion",
+    "GANs",
+    "VAEs",
+    "Flow-based Models",
+    "CLIP",
+    "LLaVA",
+    "Qwen",
+    "GPU 集群",
+    "分布式训练",
+    "数据并行",
+    "模型并行",
+    "流水线并行",
+    "专家并行",
+    "FSDP",
+    "DeepSpeed",
+    "Megatron-LM",
+    "Megatron",
+    "算子融合",
+    "Attention 算子",
+    "动态批处理",
+    "多模态RLHF",
+    "RLHF",
+    "OpenRLHF",
+    "训练平台",
+    "推理平台",
+    "推理系统",
+    "性能优化",
+    "显存瓶颈",
+    "通信延迟",
+    "负载均衡",
+    "数据工程",
+    "物理一致性",
+    "时空一致性",
+    "可交互性",
+    "可编辑性",
+    "SIGGRAPH",
+    "CVPR",
+    "ICCV",
+    "NeurIPS",
 ]
 
-NICE_TO_HAVE_HINTS = {"SLA"}
+NICE_TO_HAVE_HINTS = {"SLA", "SIGGRAPH", "CVPR", "ICCV", "NeurIPS"}
 
-KNOWN_COMPANIES = ["字节", "字节跳动", "MiniMax", "DeepSeek", "月之暗面", "百度", "阿里", "腾讯"]
-KNOWN_EXCLUSIONS = ["纯 RAG 应用", "销售", "招聘", "纯前端", "运营"]
+KNOWN_COMPANIES = [
+    "字节",
+    "字节跳动",
+    "Seedance",
+    "快手",
+    "可灵",
+    "MiniMax",
+    "DeepSeek",
+    "月之暗面",
+    "百度",
+    "阿里",
+    "通义万相",
+    "阿里未来实验室",
+    "腾讯",
+    "爱诗科技",
+    "生数科技",
+    "B站",
+    "哔哩哔哩",
+]
+KNOWN_EXCLUSIONS = [
+    "纯 RAG 应用",
+    "纯应用层",
+    "传统计算机视觉",
+    "销售",
+    "招聘",
+    "纯前端",
+    "运营",
+]
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -80,6 +157,28 @@ def _title_aliases(title: str) -> list[str]:
         )
     if "平台" in title and "平台工程师" not in title:
         aliases.append(f"{title}工程师")
+    if "算法" in title:
+        aliases.extend(["算法研究员", "算法专家", "多模态算法工程师", "视频生成算法工程师"])
+    if "多模态" in title:
+        aliases.extend(["多模态算法专家", "多模态研究员", "多模态大模型算法工程师"])
+    if any(term in title for term in ["训练", "推理", "数据工程", "AI Infra"]):
+        aliases.extend(
+            [
+                "AI Infra工程师",
+                "AI Infra专家",
+                "大模型训练工程师",
+                "大模型训练专家",
+                "大模型推理工程师",
+                "大模型推理专家",
+                "推理系统工程师",
+                "分布式训练工程师",
+                "分布式训练专家",
+                "CUDA性能优化工程师",
+                "RLHF工程师",
+                "数据工程研发专家",
+                "大模型数据工程师",
+            ]
+        )
     return _unique(aliases)
 
 

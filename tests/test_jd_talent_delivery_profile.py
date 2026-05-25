@@ -25,6 +25,55 @@ def test_build_role_profile_extracts_core_terms() -> None:
     assert "纯 RAG 应用" in profile["exclusion_terms"]
 
 
+def test_build_role_profile_extracts_multimodal_video_generation_signals() -> None:
+    jd_text = """
+    # 腾讯游戏-多模态算法研究员/专家
+
+    负责生成式游戏引擎、视频生成、视频预测、视频编辑和世界模型研发。
+    需要熟练掌握 PyTorch，理解 Diffusion Models、GANs、VAEs、Flow-based Models。
+    需要具备大规模 GPU 集群预训练、微调或后训练经验，熟悉 CLIP、LLaVA、Qwen。
+    目标团队包括字节 Seedance、快手可灵、阿里通义万相、爱诗科技、生数科技和 B站。
+    纯应用层 AIGC/RAG 调用经验、传统计算机视觉应用经验需要降权。
+    SIGGRAPH、CVPR、ICCV、NeurIPS 一作论文优先。
+    """
+
+    profile = build_role_profile(jd_text, source_path="jd.md", role_id="tencent-games-multimodal")
+
+    for term in ["视频生成", "世界模型", "Diffusion Models", "PyTorch", "GPU 集群", "CLIP"]:
+        assert term in profile["must_have"]
+    for term in ["SIGGRAPH", "CVPR", "NeurIPS"]:
+        assert term in profile["nice_to_have"]
+    for company in ["Seedance", "可灵", "通义万相", "爱诗科技", "生数科技", "B站"]:
+        assert company in profile["company_pools"]["目标公司"]
+    assert "纯应用层" in profile["exclusion_terms"]
+    assert "传统计算机视觉" in profile["exclusion_terms"]
+    assert "算法研究员" in profile["title_aliases"]
+    assert "视频生成算法工程师" in profile["title_aliases"]
+
+
+def test_build_role_profile_extracts_training_inference_data_engineering_signals() -> None:
+    jd_text = """
+    # 腾讯游戏训练推理数据工程研发专家/工程师
+
+    负责生成式游戏引擎大模型分布式训练和推理系统的性能优化。
+    需要熟悉 GPU 架构、CUDA 编程、算子融合优化、PyTorch FSDP、DeepSpeed、Megatron-LM。
+    熟悉 vLLM、SGLang、KV Cache、动态批处理、Attention 算子定制。
+    负责多模态RLHF训练与推理平台实现，熟悉 OpenRLHF。
+    目标团队包括字节 Seedance、快手可灵、阿里万相、爱诗科技、生数科技和 B站。
+    只有纯应用层 AIGC/RAG 调用经验需要降权。
+    """
+
+    profile = build_role_profile(jd_text, source_path="jd.md", role_id="tencent-games-ai-infra")
+
+    for term in ["分布式训练", "FSDP", "DeepSpeed", "Megatron-LM", "vLLM", "SGLang", "CUDA", "OpenRLHF"]:
+        assert term in profile["must_have"]
+    for alias in ["AI Infra工程师", "大模型训练工程师", "大模型推理工程师", "RLHF工程师"]:
+        assert alias in profile["title_aliases"]
+    for company in ["Seedance", "可灵", "爱诗科技", "生数科技", "B站"]:
+        assert company in profile["company_pools"]["目标公司"]
+    assert "纯应用层" in profile["exclusion_terms"]
+
+
 def test_render_profile_markdown_matches_deep_dive_shape() -> None:
     profile = build_role_profile(
         "# 数据平台负责人\n负责数据质量、标注平台和团队管理。",
