@@ -77,6 +77,7 @@ def extract_contacts_payload(run_path: str | Path, out_path: str | Path) -> dict
 def extract_wave_contacts_from_pages(paths: CampaignPaths, wave_id: str) -> dict[str, Any]:
     contacts: list[dict[str, Any]] = []
     seen: set[str] = set()
+    skipped_missing_name = 0
     for unit_id, page in sorted(load_completed_pages(paths)):
         raw_path = page_raw_path(paths, unit_id, page)
         data = _load_json(raw_path)
@@ -84,6 +85,9 @@ def extract_wave_contacts_from_pages(paths: CampaignPaths, wave_id: str) -> dict
             continue
         for contact in data.get("contacts") or []:
             if not isinstance(contact, dict):
+                continue
+            if not str(contact.get("name") or "").strip():
+                skipped_missing_name += 1
                 continue
             keys = {
                 str(value).strip()
@@ -100,6 +104,7 @@ def extract_wave_contacts_from_pages(paths: CampaignPaths, wave_id: str) -> dict
             "export_type": "maimai_ai_infra_v2_wave_contacts",
             "wave_id": wave_id,
             "total_contacts": len(contacts),
+            "skipped_missing_name": skipped_missing_name,
         },
         "contacts": contacts,
     }

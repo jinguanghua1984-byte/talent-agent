@@ -1,5 +1,7 @@
 # Lessons
 
+- 2026-05-24：脉脉 campaign 的 `account_day_page_guardrail` 是账号级执行护栏，不是业务需求硬上限；当用户明确换号并解除旧 500 上限时，必须同步更新 run-policy、后续 resume plan 和任务账本，不要继续用旧账号剩余额度截断 follow-up wave，但登录/验证码/403/429/432/非 JSON/模板漂移等平台安全停机规则仍然不变。
+- 2026-05-24：实现或验收带有“自适应/动态”语义的脉脉 campaign 时，不能只验证评分函数、状态文件和报告产物；必须验证 live gate/orchestrator 是否实际消费 `next_page`/`adaptive-unit-state` 生成后续执行计划，并用 raw 页分布证明存在 page 3-N，否则只能称为 probe-only 后置评估。
 - 2026-05-18：工作台里的默认说明文字不要复用日志/代码块样式，尤其不要用深色背景包裹普通提示；说明文本应使用浅色 hint 样式，日志列表、请求预览和提示条也要共享同一套浅色 surface token，避免同一界面出现两套日志背景。
 
 - 2026-05-18：破坏性或全局数据操作（如清除全部数据）如果作用域是整个工作台，就应放在全局 topbar/action 区，而不是某个标签页面板内；图标风格也要跟主 UI token 一致，避免用红色/垃圾桶这类暗示删除文件的图标造成视觉和语义错位。
@@ -49,3 +51,5 @@
 - 2026-05-22：当通用 campaign 里出现 `AI Infra` 等首次样板任务痕迹时，不要只当作交付文案问题；优先沿脚本、模板、配置和报告生成链路追踪是否存在本应按 JD 动态生成却沿用样板数据的参数残留，并区分对搜索、评分、详情和交付各阶段的真实影响。
 - 2026-05-23：JD talent delivery 不能把 campaign `strategy.json` 或历史 `*rank*.json` 当作必须前置；标准路径必须能从 JD 生成的 `scorecard.json` 和只读 `data/talent.db` 独立完成匹配、精排、质量门禁和飞书交付，campaign artifact 只能作为可选参考或排障输入。
 - 2026-05-23：JD talent delivery 的飞书 IM 完成通知必须是 workflow 固定步骤，不是任务后人工补发；通知模板要落盘并包含任务执行结果、成果物清单、Wiki 目录链接和推荐报告摘要。外联 Sheet 不能再通过 `drive +import --type sheet` 导入 CSV，必须走 `sheets +create` + UTF-8 JSON `sheets +write`，把乱码预防放在发布机制里，而不是发布后靠校验修复。
+- 2026-05-24：自适应扩页的回归测试不能把 page 3 预先写进 wave plan；必须让 `max_pages=probe_pages`，再验证 live gate 依据页质和 `unit_max_pages` 在执行中实际请求 page 3-N。
+- 2026-05-25：长时无人值守任务里的“中断后关机”是一次性运行指令，不是永久策略；用户后续要求取消时，必须先查杀/确认无 `Stop-Computer`、`shutdown.exe` 或延迟关机进程，再继续恢复任务，并把 `shutdown_instruction_active=false` 写回 campaign 状态。

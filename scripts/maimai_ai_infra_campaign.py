@@ -13,6 +13,10 @@ from typing import Any
 
 
 MANIFEST_SCHEMA = "maimai_ai_infra_v2_campaign"
+COMPATIBLE_MANIFEST_SCHEMAS = {
+    MANIFEST_SCHEMA,
+    "maimai_jd_campaign_v2",
+}
 RAW_UNIT_PATTERN = re.compile(r"^unit-\d{6}$")
 RAW_PAGE_PATTERN = re.compile(r"^page-(\d{3})\.json$")
 
@@ -246,9 +250,9 @@ def ensure_campaign(root: str | Path, campaign_id: str | None = None) -> Campaig
                 "campaign manifest campaign_id mismatch: "
                 f"expected {paths.campaign_id!r}, got {manifest.get('campaign_id')!r}"
             )
-        if manifest.get("schema") != MANIFEST_SCHEMA:
+        if manifest.get("schema") not in COMPATIBLE_MANIFEST_SCHEMAS:
             raise ValueError(
                 "campaign manifest schema mismatch: "
-                f"expected {MANIFEST_SCHEMA!r}, got {manifest.get('schema')!r}"
+                f"expected one of {sorted(COMPATIBLE_MANIFEST_SCHEMAS)!r}, got {manifest.get('schema')!r}"
             )
     return paths

@@ -8,6 +8,7 @@ from scripts.maimai_broad_recall_adaptive import (
     build_broad_recall_summary,
     build_broad_recall_search_units,
     build_detail_priority_outputs,
+    evaluate_page_quality_run,
     is_broad_recall_strategy,
     next_unit_status,
     score_page_quality,
@@ -100,6 +101,39 @@ def test_next_unit_status_stops_after_consecutive_low_quality_pages() -> None:
     assert updated["stop_reason"] == "consecutive_low_quality_pages"
 
 
+def test_evaluate_page_quality_skips_failed_live_pages(tmp_path: Path) -> None:
+    run_path = tmp_path / "run.json"
+    run_path.write_text(
+        json.dumps(
+            {
+                "batches": [
+                    {
+                        "batch_id": "unit-000001",
+                        "pages": [
+                            {"page": 1, "ok": False, "error": "captcha_api", "contacts": []},
+                            {"page": 2, "ok": True, "contacts": [_contact("1", "腾讯", "大模型数据负责人")]},
+                        ],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    rows = evaluate_page_quality_run(
+        campaign_root=tmp_path,
+        run_path=run_path,
+        strategy=_broad_strategy(),
+        out_jsonl=tmp_path / "reports" / "page-quality.jsonl",
+        state_out=tmp_path / "state" / "adaptive-unit-state.json",
+        seen_out=tmp_path / "state" / "seen-candidates.jsonl",
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["page"] == 2
+
+
 def test_build_detail_priority_outputs_writes_review_file(tmp_path: Path) -> None:
     root = tmp_path / "campaign"
     db_path = root / "talent.db"
@@ -180,3 +214,26 @@ def test_build_broad_recall_summary_excludes_outreach_recommendations(tmp_path: 
     assert "寻访摘要" in text
     assert "外联队列" not in text
     assert "强推荐" not in text
+
+
+def test_build_broad_recall_summary_accepts_bom_prefixed_jsonl_lines(tmp_path: Path) -> None:
+    root = tmp_path / "campaign"
+    (root / "reports").mkdir(parents=True)
+    row_1 = json.dumps(
+        {"unit_id": "unit-000001", "quality_band": "good", "candidate_count": 30, "detail_eligible_count": 12},
+        ensure_ascii=False,
+    )
+    row_2 = json.dumps(
+        {"unit_id": "unit-000002", "quality_band": "observe", "candidate_count": 20, "detail_eligible_count": 5},
+        ensure_ascii=False,
+    )
+    (root / "reports" / "page-quality.jsonl").write_text(f"{row_1}\n\ufeff{row_2}\n", encoding="utf-8")
+
+    summary = build_broad_recall_summary(
+        root,
+        out_json=root / "reports" / "broad-recall-summary.json",
+        out_md=root / "reports" / "broad-recall-summary.md",
+    )
+
+    assert summary["page_quality"]["total_pages"] == 2
+    assert summary["page_quality"]["quality_bands"]["observe"] == 1

@@ -461,6 +461,356 @@ def test_run_gate_can_continue_from_later_start_page(tmp_path, monkeypatch):
     assert [item["page"] for item in result["contacts"]] == [2, 3]
 
 
+def test_run_gate_adaptive_quality_continues_good_unit_to_page_three(tmp_path, monkeypatch):
+    plan_path = tmp_path / "plan.json"
+    out_path = tmp_path / "run.json"
+    strategy_path = tmp_path / "strategy.json"
+    page_quality_path = tmp_path / "reports" / "page-quality.jsonl"
+    state_path = tmp_path / "state" / "adaptive-unit-state.json"
+    seen_path = tmp_path / "state" / "seen-candidates.jsonl"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "gate": "S3",
+                "batches": [
+                    {
+                        "batch_id": "unit-000001",
+                        "unit_id": "unit-000001",
+                        "query": "Acme AI",
+                        "page_size": 30,
+                        "max_pages": 2,
+                        "unit_max_pages": 3,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    strategy_path.write_text(
+        json.dumps(
+            {
+                "strategy_mode": "broad_recall_adaptive_v1",
+                "company_pools": {"target": ["Acme"]},
+                "position_aliases": ["AI"],
+                "keyword_packages": [{"id": "p0", "keywords": ["LLM"], "position_terms": ["AI"]}],
+                "adaptive_search": {"probe_pages": 2, "unit_max_pages": 3, "max_consecutive_low_quality_pages": 2},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            self.calls = 0
+            self.search_calls = 0
+
+        def evaluate(self, expression, timeout=30):
+            self.calls += 1
+            if self.calls == 1:
+                return {"hasTalentBank": True, "hasLoginPrompt": False, "hasCaptcha": False}
+            if self.calls == 2:
+                return {
+                    "hasSearchTemplate": True,
+                    "url": "https://maimai.cn/api/ent/v3/search/basic",
+                    "method": "POST",
+                    "hasBody": True,
+                    "hasSearchObject": True,
+                    "hasNestedQueryField": True,
+                    "hasNestedPagination": True,
+                }
+            if "fetch(tpl.url" in expression:
+                self.search_calls += 1
+                page = self.search_calls
+                return {
+                    "status": "ok",
+                    "httpStatus": 200,
+                    "contentType": "application/json",
+                    "rawLength": 20,
+                    "rawPreview": "{}",
+                    "parseError": None,
+                    "data": {
+                        "data": {
+                            "total": 3,
+                            "list": [
+                                {
+                                    "id": f"good-{page}",
+                                    "company": "Acme",
+                                    "title": "AI platform",
+                                    "description": "LLM serving",
+                                    "detail_url": f"https://maimai.cn/profile/{page}",
+                                }
+                            ],
+                        }
+                    },
+                    "sent": {"url": "https://maimai.cn/api/ent/v3/search/basic"},
+                }
+            return {"hasTalentBank": True, "hasLoginPrompt": False, "hasCaptcha": False}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        live_gate,
+        "list_targets",
+        lambda cdp_url: [
+            {
+                "type": "page",
+                "title": "talent bank",
+                "url": "https://maimai.cn/ent/v41/recruit/talents?tab=1",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/1",
+            }
+        ],
+    )
+    monkeypatch.setattr(live_gate, "CdpSession", FakeSession)
+
+    result = run_gate(
+        plan_path=plan_path,
+        out_path=out_path,
+        cdp_url="http://127.0.0.1:9888",
+        delay_seconds=0,
+        timeout_seconds=1,
+        adaptive_config_path=strategy_path,
+        adaptive_state_out_path=state_path,
+        seen_out_path=seen_path,
+        page_quality_out_path=page_quality_path,
+    )
+
+    assert [page["page"] for page in result["batches"][0]["pages"]] == [1, 2, 3]
+    assert result["batches"][0]["plannedMaxPage"] == 2
+    assert result["batches"][0]["unitMaxPage"] == 3
+    assert all(page["adaptiveQuality"]["quality_band"] == "good" for page in result["batches"][0]["pages"])
+    state = json.loads(state_path.read_text(encoding="utf-8-sig"))
+    assert state["units"]["unit-000001"]["status"] == "exhausted"
+    assert len(page_quality_path.read_text(encoding="utf-8-sig").splitlines()) == 3
+
+
+def test_run_gate_adaptive_quality_stops_low_unit_and_moves_to_next_batch(tmp_path, monkeypatch):
+    plan_path = tmp_path / "plan.json"
+    out_path = tmp_path / "run.json"
+    strategy_path = tmp_path / "strategy.json"
+    state_path = tmp_path / "state" / "adaptive-unit-state.json"
+    page_quality_path = tmp_path / "reports" / "page-quality.jsonl"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "gate": "S3",
+                "batches": [
+                    {
+                        "batch_id": "unit-000001",
+                        "unit_id": "unit-000001",
+                        "query": "low",
+                        "page_size": 30,
+                        "max_pages": 2,
+                        "unit_max_pages": 3,
+                    },
+                    {
+                        "batch_id": "unit-000002",
+                        "unit_id": "unit-000002",
+                        "query": "next",
+                        "page_size": 30,
+                        "max_pages": 1,
+                        "unit_max_pages": 1,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    strategy_path.write_text(
+        json.dumps(
+            {
+                "strategy_mode": "broad_recall_adaptive_v1",
+                "company_pools": {"target": ["Acme"]},
+                "position_aliases": ["AI"],
+                "keyword_packages": [{"id": "p0", "keywords": ["LLM"], "position_terms": ["AI"]}],
+                "adaptive_search": {"probe_pages": 2, "unit_max_pages": 3, "max_consecutive_low_quality_pages": 2},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            self.calls = 0
+            self.search_calls = 0
+
+        def evaluate(self, expression, timeout=30):
+            self.calls += 1
+            if self.calls == 1:
+                return {"hasTalentBank": True, "hasLoginPrompt": False, "hasCaptcha": False}
+            if self.calls == 2:
+                return {
+                    "hasSearchTemplate": True,
+                    "url": "https://maimai.cn/api/ent/v3/search/basic",
+                    "method": "POST",
+                    "hasBody": True,
+                    "hasSearchObject": True,
+                    "hasNestedQueryField": True,
+                    "hasNestedPagination": True,
+                }
+            if "fetch(tpl.url" in expression:
+                self.search_calls += 1
+                return {
+                    "status": "ok",
+                    "httpStatus": 200,
+                    "contentType": "application/json",
+                    "rawLength": 20,
+                    "rawPreview": "{}",
+                    "parseError": None,
+                    "data": {
+                        "data": {
+                            "total": 1,
+                            "list": [{"id": f"low-{self.search_calls}", "company": "Other", "title": "Sales"}],
+                        }
+                    },
+                    "sent": {"url": "https://maimai.cn/api/ent/v3/search/basic"},
+                }
+            return {"hasTalentBank": True, "hasLoginPrompt": False, "hasCaptcha": False}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        live_gate,
+        "list_targets",
+        lambda cdp_url: [
+            {
+                "type": "page",
+                "title": "talent bank",
+                "url": "https://maimai.cn/ent/v41/recruit/talents?tab=1",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/1",
+            }
+        ],
+    )
+    monkeypatch.setattr(live_gate, "CdpSession", FakeSession)
+
+    result = run_gate(
+        plan_path=plan_path,
+        out_path=out_path,
+        cdp_url="http://127.0.0.1:9888",
+        delay_seconds=0,
+        timeout_seconds=1,
+        adaptive_config_path=strategy_path,
+        adaptive_state_out_path=state_path,
+        page_quality_out_path=page_quality_path,
+    )
+
+    assert [page["page"] for page in result["batches"][0]["pages"]] == [1, 2]
+    assert result["batches"][0]["plannedMaxPage"] == 2
+    assert result["batches"][0]["unitMaxPage"] == 3
+    assert result["batches"][0]["adaptiveStopReason"] == "stopped_low_quality"
+    assert [page["page"] for page in result["batches"][1]["pages"]] == [1]
+    state = json.loads(state_path.read_text(encoding="utf-8-sig"))
+    assert state["units"]["unit-000001"]["status"] == "stopped_low_quality"
+    assert state["units"]["unit-000002"]["status"] == "exhausted"
+
+
+def test_run_gate_adaptive_max_live_pages_preserves_next_page_state(tmp_path, monkeypatch):
+    plan_path = tmp_path / "plan.json"
+    out_path = tmp_path / "run.json"
+    strategy_path = tmp_path / "strategy.json"
+    state_path = tmp_path / "state" / "adaptive-unit-state.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "gate": "S3",
+                "batches": [
+                    {
+                        "batch_id": "unit-000001",
+                        "unit_id": "unit-000001",
+                        "query": "Acme AI",
+                        "page_size": 30,
+                        "max_pages": 2,
+                        "unit_max_pages": 5,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    strategy_path.write_text(
+        json.dumps(
+            {
+                "strategy_mode": "broad_recall_adaptive_v1",
+                "company_pools": {"target": ["Acme"]},
+                "position_aliases": ["AI"],
+                "keyword_packages": [{"id": "p0", "keywords": ["LLM"], "position_terms": ["AI"]}],
+                "adaptive_search": {"probe_pages": 2, "unit_max_pages": 5, "max_consecutive_low_quality_pages": 2},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            self.calls = 0
+            self.search_calls = 0
+
+        def evaluate(self, expression, timeout=30):
+            self.calls += 1
+            if self.calls == 1:
+                return {"hasTalentBank": True, "hasLoginPrompt": False, "hasCaptcha": False}
+            if self.calls == 2:
+                return {
+                    "hasSearchTemplate": True,
+                    "url": "https://maimai.cn/api/ent/v3/search/basic",
+                    "method": "POST",
+                    "hasBody": True,
+                    "hasSearchObject": True,
+                    "hasNestedQueryField": True,
+                    "hasNestedPagination": True,
+                }
+            if "fetch(tpl.url" in expression:
+                self.search_calls += 1
+                page = self.search_calls
+                return {
+                    "status": "ok",
+                    "httpStatus": 200,
+                    "contentType": "application/json",
+                    "rawLength": 20,
+                    "rawPreview": "{}",
+                    "parseError": None,
+                    "data": {"data": {"list": [{"id": f"good-{page}", "company": "Acme", "title": "AI"}]}},
+                    "sent": {"url": "https://maimai.cn/api/ent/v3/search/basic"},
+                }
+            return {"hasTalentBank": True, "hasLoginPrompt": False, "hasCaptcha": False}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        live_gate,
+        "list_targets",
+        lambda cdp_url: [
+            {
+                "type": "page",
+                "title": "talent bank",
+                "url": "https://maimai.cn/ent/v41/recruit/talents?tab=1",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/1",
+            }
+        ],
+    )
+    monkeypatch.setattr(live_gate, "CdpSession", FakeSession)
+
+    result = run_gate(
+        plan_path=plan_path,
+        out_path=out_path,
+        cdp_url="http://127.0.0.1:9888",
+        delay_seconds=0,
+        timeout_seconds=1,
+        max_live_pages=3,
+        adaptive_config_path=strategy_path,
+        adaptive_state_out_path=state_path,
+    )
+
+    assert result["status"] == "completed_limited"
+    assert result["stopReason"] == "max_live_pages"
+    assert [page["page"] for page in result["batches"][0]["pages"]] == [1, 2, 3]
+    state = json.loads(state_path.read_text(encoding="utf-8-sig"))
+    assert state["units"]["unit-000001"]["status"] == "active"
+    assert state["units"]["unit-000001"]["next_page"] == 4
+
+
 def test_run_gate_records_batch_exception_error(tmp_path, monkeypatch):
     plan_path = tmp_path / "plan.json"
     out_path = tmp_path / "run.json"

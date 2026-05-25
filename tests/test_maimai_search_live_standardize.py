@@ -54,6 +54,42 @@ def test_standardize_live_run_writes_successful_pages_to_canonical_raw(tmp_path:
     assert load_completed_pages(campaign) == {("unit-000001", 1)}
 
 
+def test_standardize_live_run_accepts_jd_campaign_manifest(tmp_path: Path):
+    campaign = ensure_campaign(tmp_path / "campaign")
+    campaign.manifest.write_text(
+        json.dumps(
+            {
+                "campaign_id": campaign.campaign_id,
+                "schema": "maimai_jd_campaign_v2",
+                "contract_schema": "maimai_broad_recall_adaptive_v1",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    run_path = tmp_path / "run.json"
+    run_path.write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "run_id": "run-jd-001",
+                "batches": [
+                    {
+                        "batch_id": "unit-000001",
+                        "pages": [{"page": 1, "ok": True, "contacts": [{"id": "p1"}]}],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = standardize_live_run(campaign.root, run_path)
+
+    assert result["written_pages"] == 1
+    assert page_raw_path(campaign, "unit-000001", 1).exists()
+
+
 def test_standardize_live_run_rejects_partial_or_failed_pages(tmp_path: Path):
     campaign = ensure_campaign(tmp_path / "campaign")
     run_path = tmp_path / "run.json"

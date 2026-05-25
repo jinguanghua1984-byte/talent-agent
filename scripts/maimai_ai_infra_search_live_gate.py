@@ -23,6 +23,11 @@ from scripts.maimai_ai_infra_search_runner import (  # noqa: E402
     confirmed_search_filters_from_batch,
     normalize_confirmed_search_filters,
 )
+from scripts.maimai_broad_recall_adaptive import (  # noqa: E402
+    adaptive_policy_from_strategy,
+    next_unit_status,
+    score_page_quality,
+)
 
 
 SEARCH_BLOCK_STATUSES = {403, 429, 432}
@@ -37,6 +42,73 @@ def _load_json(path: Path) -> Any:
 def _write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8-sig")
+
+
+def _read_jsonl(path: Path | None) -> list[dict[str, Any]]:
+    if path is None or not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        normalized = line.lstrip("\ufeff")
+        if not normalized.strip():
+            continue
+        item = json.loads(normalized)
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows) + ("\n" if rows else ""),
+        encoding="utf-8-sig",
+    )
+
+
+def _load_seen_candidate_keys(path: Path | None) -> set[str]:
+    return {
+        str(row.get("candidate_key"))
+        for row in _read_jsonl(path)
+        if row.get("candidate_key") not in (None, "")
+    }
+
+
+def _load_adaptive_unit_state(path: Path | None) -> dict[str, dict[str, Any]]:
+    if path is None or not path.exists():
+        return {}
+    data = _load_json(path)
+    units = data.get("units") if isinstance(data, dict) else None
+    if not isinstance(units, dict):
+        return {}
+    return {
+        str(unit_id): dict(value)
+        for unit_id, value in units.items()
+        if isinstance(value, dict)
+    }
+
+
+def _write_adaptive_outputs(
+    *,
+    state_out_path: Path | None,
+    seen_out_path: Path | None,
+    page_quality_out_path: Path | None,
+    unit_state: dict[str, dict[str, Any]],
+    seen_candidate_keys: set[str],
+    page_quality_rows: list[dict[str, Any]],
+) -> None:
+    if state_out_path is not None:
+        _write_json(
+            state_out_path,
+            {
+                "schema": "maimai_broad_recall_unit_state_v1",
+                "units": unit_state,
+            },
+        )
+    if seen_out_path is not None:
+        _write_jsonl(seen_out_path, [{"candidate_key": key} for key in sorted(seen_candidate_keys)])
+    if page_quality_out_path is not None:
+        _write_jsonl(page_quality_out_path, page_quality_rows)
 
 
 def _read_url_json(url: str, timeout: float = 5) -> Any:
@@ -461,6 +533,15 @@ def iter_batch_pages(batch: dict[str, Any]) -> list[int]:
     return list(range(start_page, max_page + 1))
 
 
+def _batch_adaptive_probe_pages(batch: dict[str, Any], policy: dict[str, Any]) -> int:
+    config = batch.get("adaptive_search") if isinstance(batch.get("adaptive_search"), dict) else {}
+    return max(1, int(config.get("probe_pages") or policy["probe_pages"]))
+
+
+def _batch_adaptive_unit_max_pages(batch: dict[str, Any], policy: dict[str, Any], planned_max_page: int) -> int:
+    return max(planned_max_page, int(batch.get("unit_max_pages") or policy["unit_max_pages"]))
+
+
 class CdpSession:
     def __init__(self, websocket_url: str, timeout: float = 30) -> None:
         import websocket
@@ -509,6 +590,13 @@ def run_gate(
     cdp_url: str,
     delay_seconds: float,
     timeout_seconds: float,
+    max_live_pages: int | None = None,
+    adaptive_config_path: Path | None = None,
+    adaptive_state_in_path: Path | None = None,
+    adaptive_state_out_path: Path | None = None,
+    seen_in_path: Path | None = None,
+    seen_out_path: Path | None = None,
+    page_quality_out_path: Path | None = None,
 ) -> dict[str, Any]:
     plan = _load_json(plan_path)
     batches = plan.get("batches") or []
@@ -517,6 +605,17 @@ def run_gate(
     batch_pages = [iter_batch_pages(batch) for batch in batches]
     max_pages_per_batch = max((len(pages) for pages in batch_pages), default=1)
     gate = str(plan.get("gate") or "S2")
+    adaptive_strategy: dict[str, Any] | None = None
+    adaptive_policy: dict[str, Any] | None = None
+    adaptive_unit_state: dict[str, dict[str, Any]] = {}
+    seen_candidate_keys: set[str] = set()
+    page_quality_rows: list[dict[str, Any]] = []
+    if adaptive_config_path is not None:
+        adaptive_strategy = _load_json(adaptive_config_path)
+        adaptive_policy = adaptive_policy_from_strategy(adaptive_strategy)
+        adaptive_unit_state = _load_adaptive_unit_state(adaptive_state_in_path or adaptive_state_out_path)
+        seen_candidate_keys = _load_seen_candidate_keys(seen_in_path or seen_out_path)
+        page_quality_rows = _read_jsonl(page_quality_out_path)
 
     target = find_talent_target(list_targets(cdp_url))
     session = CdpSession(str(target["webSocketDebuggerUrl"]), timeout=timeout_seconds)
@@ -530,8 +629,18 @@ def run_gate(
             "writeDb": False,
             "apply": False,
             "detailFetch": False,
+            "maxLivePages": max_live_pages,
             "abortOn": ["logout", "captcha", "api_captcha", "403", "429", "432", "non_json", "incompatible_request_shape"],
             "delaySeconds": delay_seconds,
+        },
+        "adaptive": {
+            "enabled": adaptive_strategy is not None,
+            "config": str(adaptive_config_path) if adaptive_config_path is not None else None,
+            "stateIn": str(adaptive_state_in_path) if adaptive_state_in_path is not None else None,
+            "stateOut": str(adaptive_state_out_path) if adaptive_state_out_path is not None else None,
+            "seenIn": str(seen_in_path) if seen_in_path is not None else None,
+            "seenOut": str(seen_out_path) if seen_out_path is not None else None,
+            "pageQualityOut": str(page_quality_out_path) if page_quality_out_path is not None else None,
         },
         "pageTarget": {
             "id": target.get("id"),
@@ -560,21 +669,42 @@ def run_gate(
             _write_json(out_path, result)
             return result
 
+        successful_pages = 0
         for index, batch in enumerate(batches, start=1):
             query = str(batch.get("query") or "")
             page_size = int(batch.get("page_size") or 30)
+            planned_pages = batch_pages[index - 1]
+            start_page = planned_pages[0] if planned_pages else max(1, int(batch.get("start_page") or 1))
+            planned_max_page = planned_pages[-1] if planned_pages else start_page
+            adaptive_unit_max_page = (
+                _batch_adaptive_unit_max_pages(batch, adaptive_policy, planned_max_page)
+                if adaptive_policy is not None
+                else planned_max_page
+            )
             batch_result: dict[str, Any] = {
                 "batch_id": batch.get("batch_id"),
                 "query": query,
                 "ok": False,
                 "error": None,
-                "startPage": batch_pages[index - 1][0] if batch_pages[index - 1] else None,
-                "maxPage": batch_pages[index - 1][-1] if batch_pages[index - 1] else None,
+                "startPage": start_page,
+                "maxPage": adaptive_unit_max_page if adaptive_policy is not None else planned_max_page,
+                "plannedMaxPage": planned_max_page,
                 "pages": [],
                 "contacts": [],
             }
+            if adaptive_policy is not None:
+                batch_result["unitMaxPage"] = adaptive_unit_max_page
             try:
-                for page_index, page in enumerate(batch_pages[index - 1], start=1):
+                page_index = 0
+                page = start_page
+                while page <= (adaptive_unit_max_page if adaptive_policy is not None else planned_max_page):
+                    if max_live_pages is not None and successful_pages >= max_live_pages:
+                        result["status"] = "completed_limited"
+                        result["stopReason"] = "max_live_pages"
+                        batch_result["adaptiveStopReason"] = "max_live_pages"
+                        break
+
+                    page_index += 1
                     response = session.evaluate(
                         search_expression(
                             query,
@@ -615,6 +745,7 @@ def run_gate(
                     batch_result["pages"].append(page_result)
                     batch_result["contacts"].extend(contacts)
                     result["contacts"].extend(contacts)
+                    successful_pages += 1
 
                     if "request" not in batch_result:
                         batch_result.update({
@@ -650,14 +781,79 @@ def run_gate(
                         result["stopReason"] = blocking
                         break
 
-                    has_more_pages = page_index < len(batch_pages[index - 1])
+                    if adaptive_strategy is not None and adaptive_policy is not None:
+                        unit_id = str(batch.get("unit_id") or batch.get("batch_id") or f"batch-{index}")
+                        current_state = adaptive_unit_state.get(
+                            unit_id,
+                            {
+                                "unit_id": unit_id,
+                                "status": "active",
+                                "consecutive_low_quality_pages": 0,
+                            },
+                        )
+                        page_record = dict(page_result)
+                        page_record["unit_id"] = unit_id
+                        quality = score_page_quality(
+                            page_record,
+                            adaptive_strategy,
+                            seen_candidate_keys=seen_candidate_keys,
+                            policy=adaptive_policy,
+                        )
+                        page_result["adaptiveQuality"] = quality
+                        page_quality_rows.append(quality)
+                        next_state = next_unit_status(current_state, quality, adaptive_policy)
+                        unit_max_pages = adaptive_unit_max_page
+                        if int(quality.get("next_page") or 0) > unit_max_pages:
+                            next_state["status"] = "exhausted"
+                            next_state["stop_reason"] = "unit_max_pages_exhausted"
+                        adaptive_unit_state[unit_id] = next_state
+                        for item in quality.get("candidate_scores") or []:
+                            candidate_key = item.get("candidate_key") if isinstance(item, dict) else None
+                            if candidate_key not in (None, ""):
+                                seen_candidate_keys.add(str(candidate_key))
+                        _write_adaptive_outputs(
+                            state_out_path=adaptive_state_out_path,
+                            seen_out_path=seen_out_path,
+                            page_quality_out_path=page_quality_out_path,
+                            unit_state=adaptive_unit_state,
+                            seen_candidate_keys=seen_candidate_keys,
+                            page_quality_rows=page_quality_rows,
+                        )
+
+                        should_stop_unit = next_state.get("status") in {"stopped_low_quality", "exhausted"}
+                        probe_pages = _batch_adaptive_probe_pages(batch, adaptive_policy)
+                        if should_stop_unit:
+                            if page >= probe_pages:
+                                batch_result["adaptiveStopReason"] = next_state.get("status")
+                                if next_state.get("stop_reason"):
+                                    batch_result["adaptiveStopDetail"] = next_state["stop_reason"]
+                                if index < len(batches):
+                                    time.sleep(delay_seconds)
+                                break
+
+                        next_page = int(quality.get("next_page") or (page + 1))
+                        if next_page <= page:
+                            next_page = page + 1
+                    else:
+                        next_page = page + 1
+
+                    if max_live_pages is not None and successful_pages >= max_live_pages:
+                        result["status"] = "completed_limited"
+                        result["stopReason"] = "max_live_pages"
+                        batch_result["adaptiveStopReason"] = "max_live_pages"
+                        break
+
+                    has_more_pages = next_page <= (adaptive_unit_max_page if adaptive_policy is not None else planned_max_page)
                     has_more_batches = index < len(batches)
                     if has_more_pages or has_more_batches:
                         time.sleep(delay_seconds)
+                    page = next_page
 
                 batch_result["ok"] = not batch_result.get("error")
                 result["batches"].append(batch_result)
                 if result.get("status") == "stopped":
+                    break
+                if result.get("status") == "completed_limited":
                     break
             except Exception as exc:  # noqa: BLE001 - 门禁脚本必须记录异常后停止。
                 batch_result["error"] = str(exc)
@@ -689,6 +885,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cdp-url", default="http://127.0.0.1:9888")
     parser.add_argument("--delay-seconds", type=float, default=8)
     parser.add_argument("--timeout-seconds", type=float, default=30)
+    parser.add_argument("--max-live-pages", type=int)
+    parser.add_argument("--adaptive-config")
+    parser.add_argument("--adaptive-state-in")
+    parser.add_argument("--adaptive-state-out")
+    parser.add_argument("--seen-in")
+    parser.add_argument("--seen-out")
+    parser.add_argument("--page-quality-out")
     args = parser.parse_args(argv)
 
     result = run_gate(
@@ -697,6 +900,13 @@ def main(argv: list[str] | None = None) -> int:
         cdp_url=args.cdp_url,
         delay_seconds=args.delay_seconds,
         timeout_seconds=args.timeout_seconds,
+        max_live_pages=args.max_live_pages,
+        adaptive_config_path=Path(args.adaptive_config) if args.adaptive_config else None,
+        adaptive_state_in_path=Path(args.adaptive_state_in) if args.adaptive_state_in else None,
+        adaptive_state_out_path=Path(args.adaptive_state_out) if args.adaptive_state_out else None,
+        seen_in_path=Path(args.seen_in) if args.seen_in else None,
+        seen_out_path=Path(args.seen_out) if args.seen_out else None,
+        page_quality_out_path=Path(args.page_quality_out) if args.page_quality_out else None,
     )
     print(json.dumps({
         "status": result.get("status"),

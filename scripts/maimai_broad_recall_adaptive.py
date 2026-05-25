@@ -365,8 +365,9 @@ def _read_jsonl(path: str | Path) -> list[dict[str, Any]]:
         return []
     rows: list[dict[str, Any]] = []
     for line in file.read_text(encoding="utf-8-sig").splitlines():
-        if line.strip():
-            item = json.loads(line)
+        normalized = line.lstrip("\ufeff")
+        if normalized.strip():
+            item = json.loads(normalized)
             if isinstance(item, dict):
                 rows.append(item)
     return rows
@@ -614,6 +615,8 @@ def evaluate_page_quality_run(
         state = unit_state.get(unit_id, {"unit_id": unit_id, "status": "active", "consecutive_low_quality_pages": 0})
         for page in batch.get("pages") or []:
             if not isinstance(page, dict):
+                continue
+            if page.get("ok") is False:
                 continue
             page_record = dict(page)
             page_record["unit_id"] = unit_id

@@ -82,6 +82,36 @@
 
 低质量停止不是失败，状态记录为 `stopped_low_quality`。高质量 unit 可继续执行到 `unit_max_pages` 或直到质量衰减。
 
+### 在线反馈回路补充
+
+`broad_recall_adaptive_v1` 的真实执行不能只在搜索完成后生成页质报告。live gate 必须在每个成功页面返回后立即调用页质评分，并把评分结果写入本轮 run 产物和持久状态。
+
+执行规则：
+
+1. 每个 unit 从 `start_page` 开始执行，默认初始计划仍从 page 1 开始。
+2. 前 `probe_pages` 页必须执行，除非遇到登录、验证码、429、403、432、非 JSON 或安全页等平台阻断。
+3. `search-units.jsonl` 中的 `max_pages` 只表示初始 probe 页数；live gate 在 adaptive 模式下必须用 `unit_max_pages` 作为运行时上限，不能要求 page 3-N 预先出现在 wave plan 里。
+4. 每页成功返回后，基于该页候选人、跨 run `seen-candidates` 和当前策略调用 `score_page_quality`。
+5. `good` 或 `observe` 状态继续尝试下一页；`low` 会累计 `consecutive_low_quality_pages`。
+6. 当连续低质量页达到 `max_consecutive_low_quality_pages`，当前 unit 状态写为 `stopped_low_quality`，本 unit 剩余页不再请求，live gate 直接切换到下一个 unit。
+7. 当 `next_page > unit_max_pages`，当前 unit 写为 `exhausted`，不再继续。
+8. 每页评分后立即刷新 `reports/page-quality*.jsonl`、`state/adaptive-unit-state*.json` 和 `state/seen-candidates*.jsonl`，避免平台阻断后丢失已完成页的决策依据。
+9. 默认固定计划模式不传 adaptive 参数，行为保持不变。
+
+执行产物：
+
+- live run 的每个 page 追加 `adaptiveQuality`，每个 batch 追加 `adaptiveStopReason`。
+- `reports/page-quality.jsonl` 或 wave 专属 page-quality JSONL 保存页级评分。
+- `state/adaptive-unit-state.json` 或 wave 专属 state JSON 保存每个 unit 的最新状态。
+- `state/seen-candidates.jsonl` 保存跨 unit 去重集合。
+
+验收标准：
+
+- 高质量 unit 在 `probe_pages=2` 且 `unit_max_pages>=3` 时会实际请求 page 3。
+- 连续两页低质量 unit 不会请求 page 3，并会切换到下一组条件。
+- broad mode orchestrator 生成的 live gate 命令必须带上 strategy、adaptive state、seen candidates 和 page-quality 输出路径。
+- 平台阻断仍按既有硬停机规则处理，不因 adaptive 逻辑吞掉中断证据。
+
 首版页质判断使用规则评分，不使用 LLM。默认阈值只是实验初值，真实任务后允许调参：
 
 - `page_good_ratio >= 30%`：继续翻页。

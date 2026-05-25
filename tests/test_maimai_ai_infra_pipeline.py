@@ -236,6 +236,28 @@ def test_extract_wave_contacts_skips_non_object_contacts(tmp_path: Path):
     assert payload["contacts"][0]["id"] == "u1"
 
 
+def test_extract_wave_contacts_skips_contacts_missing_name(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "campaign")
+    mark_page_completed(
+        paths,
+        "unit-000001",
+        1,
+        {
+            "wave_id": "wave-001",
+            "contacts": [
+                {"id": "u1", "name": ""},
+                {"id": "u2", "name": "B"},
+            ],
+        },
+    )
+
+    payload = extract_wave_contacts_from_pages(paths, "wave-001")
+
+    assert payload["metadata"]["total_contacts"] == 1
+    assert payload["metadata"]["skipped_missing_name"] == 1
+    assert payload["contacts"][0]["id"] == "u2"
+
+
 def test_import_ledger_blocks_duplicate_wave_apply(tmp_path: Path):
     paths = ensure_campaign(tmp_path / "campaign")
 

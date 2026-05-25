@@ -464,13 +464,46 @@ def test_build_stage_command_plan_for_broad_recall_skips_recommendation_delivery
     )
     stages = [command["stage"] for command in plan]
 
-    assert "evaluate_page_quality" in stages
+    assert "search_live" in stages
+    assert "evaluate_page_quality" not in stages
     assert "detail_priority" in stages
     assert "broad_recall_summary" in stages
     assert "detailed_rank" not in stages
     assert "delivery_report" not in stages
     assert "outreach_package" not in stages
     assert "delivery_package" not in stages
+
+
+def test_build_stage_command_plan_for_broad_recall_passes_adaptive_live_gate_paths(tmp_path: Path) -> None:
+    strategy_path = tmp_path / "strategy.json"
+    strategy_path.write_text(
+        json.dumps(
+            {
+                "strategy_mode": "broad_recall_adaptive_v1",
+                "keyword_packages": [{"id": "p0", "keywords": ["LLM"]}],
+                "company_pools": {"target": ["Acme"]},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    plan = build_stage_command_plan(
+        "data/campaigns/demo",
+        str(strategy_path),
+        policy=DEFAULT_RUN_POLICY,
+    )
+    live_gate = next(command for command in plan if command["stage"] == "search_live")
+    argv = live_gate["argv"]
+
+    assert "--adaptive-config" in argv
+    assert argv[argv.index("--adaptive-config") + 1] == str(strategy_path)
+    assert "--adaptive-state-out" in argv
+    assert argv[argv.index("--adaptive-state-out") + 1].endswith("state\\adaptive-unit-state.json")
+    assert "--seen-out" in argv
+    assert argv[argv.index("--seen-out") + 1].endswith("state\\seen-candidates.jsonl")
+    assert "--page-quality-out" in argv
+    assert argv[argv.index("--page-quality-out") + 1].endswith("reports\\page-quality.jsonl")
 
 
 def test_build_stage_command_plan_links_wave_plan_producer_to_live_gate_consumer():
