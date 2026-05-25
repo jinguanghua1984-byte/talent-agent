@@ -38,6 +38,10 @@ def _unit(index: int, pages: object = 3) -> dict[str, object]:
     }
 
 
+def _portable_path(value: str) -> str:
+    return value.replace("\\", "/")
+
+
 def test_default_policy_counts_search_budget_only():
     assert DEFAULT_RUN_POLICY["daily_search_request_budget"] == 500
     assert DEFAULT_RUN_POLICY["search_wave_max_pages"] == 50
@@ -402,12 +406,11 @@ def test_build_stage_commands_uses_existing_scripts_and_standardizer():
         "maimai_ai_infra_detail_plan" in command and "--pack-size 100" in command
         for command in flattened
     )
-    assert any(
-        "campaign_notify" in command
-        and "--event data\\campaigns\\demo\\state\\continuation-plan.json" in command
-        and "--chat-id oc_demo" in command
-        for command in flattened
+    notify = next(command for command in commands if "scripts.campaign_notify" in command)
+    assert _portable_path(notify[notify.index("--event") + 1]) == (
+        "data/campaigns/demo/state/continuation-plan.json"
     )
+    assert notify[notify.index("--chat-id") + 1] == "oc_demo"
 
 
 def test_build_stage_commands_routes_jd_strategy_to_generic_modules(tmp_path: Path):
@@ -499,11 +502,17 @@ def test_build_stage_command_plan_for_broad_recall_passes_adaptive_live_gate_pat
     assert "--adaptive-config" in argv
     assert argv[argv.index("--adaptive-config") + 1] == str(strategy_path)
     assert "--adaptive-state-out" in argv
-    assert argv[argv.index("--adaptive-state-out") + 1].endswith("state\\adaptive-unit-state.json")
+    assert _portable_path(argv[argv.index("--adaptive-state-out") + 1]).endswith(
+        "state/adaptive-unit-state.json"
+    )
     assert "--seen-out" in argv
-    assert argv[argv.index("--seen-out") + 1].endswith("state\\seen-candidates.jsonl")
+    assert _portable_path(argv[argv.index("--seen-out") + 1]).endswith(
+        "state/seen-candidates.jsonl"
+    )
     assert "--page-quality-out" in argv
-    assert argv[argv.index("--page-quality-out") + 1].endswith("reports\\page-quality.jsonl")
+    assert _portable_path(argv[argv.index("--page-quality-out") + 1]).endswith(
+        "reports/page-quality.jsonl"
+    )
 
 
 def test_build_stage_command_plan_links_wave_plan_producer_to_live_gate_consumer():
