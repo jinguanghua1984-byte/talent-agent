@@ -55,13 +55,14 @@
   - [x] 复核 P0/P1/P2 缺失详情数量、Campaign DB integrity、主库未写边界，写回 Review。
   - Review：已生成 `12` 个独立补抓 pack：`detail-missing-p0-p2-pack-001..012`，目标 `1159` 人，4 并行无人值守抓取完成全部 `1159` 个 live detail job。`pack-006` 抓取 `100/100` 成功但 dry-run 发现 `2` 个候选人无工作经历，触发 `missing_work_experience` apply blocker；已保留原始 capture，生成 `detail-missing-p0-p2-pack-006-clean-98` 派生 capture，排除 `candidate_id=5671/5672` 后 dry-run clean。写入前已备份 Campaign DB：`backups/talent-before-missing-detail-apply-20260525-112017.db`。最终 apply 写入 Campaign DB `1157` 人，`failed_jobs=0/unmatched=0/apply_blockers=0`；`maimai_detail_capture` 覆盖从 `1004` 增至 `2161`。P0-P2 剩余未详情 `2` 人，均为 `detail_p1`：`5671 喻鹿鸣`、`5672 李鑫路`，原因均为 `missing_work_experience`。Campaign DB `PRAGMA integrity_check=ok`，`pending_merges=0/sync_conflicts=0`；主库 `data/talent.db` 未写，mtime 仍为 `2026/5/23 9:46:38`。收尾报告：`reports/missing-detail-p0-p2-capture-summary-2026-05-25.json/.md`、`reports/missing-detail-p0-p2-post-apply-2026-05-25.json`。
 
-- [ ] 提交并推送本次工作树更新（2026-05-25）：按用户要求把当前非忽略变更提交并推送到 `origin/main`，提交前核对敏感/生成物边界、运行测试和 diff hygiene。
+- [x] 提交并推送本次工作树更新（2026-05-25）：按用户要求把当前非忽略变更提交并推送到 `origin/main`，提交前核对敏感/生成物边界、运行测试和 diff hygiene。
   - [x] 审查当前分支、变更文件、未跟踪文件和忽略文件，确认 `data/talent.db`、DB WAL/SHM、zip 等本地产物不进入提交。
   - [x] 检查代码/文档 diff 范围，确认本次提交覆盖标准 JD、JD 画像增强、回归测试、任务账本和经验记录。
   - [x] 运行 `git diff --check`、关键脚本 `py_compile` 和仓库测试。
   - [x] 暂存后运行 `git diff --cached --check`。
-  - [ ] 提交本次非忽略更新并推送到 `origin/main`。
-  - [ ] 验证远端 HEAD、最终 `git status`，写回 Review。
+  - [x] 提交本次非忽略更新并推送到 `origin/main`。
+  - [x] 验证远端 HEAD、最终 `git status`，写回 Review。
+  - Review：提交范围已核对为 8 个非忽略文件：3 个腾讯游戏 JD 标准稿、`scripts/jd_talent_delivery_profile.py` 多模态/训练推理画像提取增强、对应回归测试、`tasks/todo.md`、`tasks/lessons.md` 与 `memory/error-log.md`。`data/talent.db`、DB WAL/SHM、zip、`data/output` 飞书交付产物均未纳入提交。验证：`git diff --check` 通过；`git diff --cached --check` 通过；`python -m py_compile scripts\jd_talent_delivery_profile.py scripts\jd_talent_delivery_scorecard.py scripts\jd_talent_delivery_match.py scripts\jd_talent_delivery_feishu.py` 通过；`python -m pytest tests scripts -q` -> `862 passed, 1 warning`，warning 为既有 `scripts/test_boss.py` event loop deprecation；主库只读校验 `candidates=19881/source_profiles=19881/candidate_details=19881/match_scores=0`，`PRAGMA integrity_check=ok`。主提交 `e38bba0 Add Tencent Games JD delivery updates` 已推送到 `origin/main`；推送后 `git status --short --branch` 为 clean，`git rev-list --left-right --count HEAD...origin/main` 为 `0 0`，远端 `refs/heads/main` 指向 `e38bba04dbfbb6382454ffe6062ecec20b6bde4a`。
 
 - [x] 腾讯游戏 AI 岗位 broad recall follow-up 续跑（换号后解除 500 日护栏，2026-05-24）：从 `state/search-wave-followup-003-resume-after-http-432-plan.json` 的恢复点继续，只写 Campaign DB，不写主库。
   - [x] 更新运行策略，明确本轮不再用旧账号 `500` 页上限截断 follow-up wave。
