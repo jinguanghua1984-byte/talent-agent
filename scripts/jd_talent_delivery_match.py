@@ -41,6 +41,17 @@ CSV_FIELDS = [
     "profile_url",
 ]
 
+FEEDBACK_CSV_FIELDS = [
+    "feedback_label",
+    "feedback_stage",
+    "reason_codes",
+    "hunter_note",
+    "contacted",
+    "submitted_to_client",
+    "interviewed",
+    "offer",
+]
+
 HARD_RISK_FLAGS = {
     "exclusion_terms",
     "low_hunting_status",
@@ -677,13 +688,21 @@ def _outreach_row(rank: int, item: dict[str, Any]) -> dict[str, Any]:
         "risk_summary": item.get("risk_summary") or "无明显硬风险",
         "suggested_outreach_angle": _outreach_angle(item),
         "profile_url": item.get("profile_url", ""),
+        "feedback_label": "",
+        "feedback_stage": "",
+        "reason_codes": "",
+        "hunter_note": "",
+        "contacted": "",
+        "submitted_to_client": "",
+        "interviewed": "",
+        "offer": "",
     }
 
 
 def _write_outreach_csv(path: Path, ranked: list[dict[str, Any]], top_n: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
+        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS + FEEDBACK_CSV_FIELDS)
         writer.writeheader()
         for rank, item in enumerate(ranked[:top_n], start=1):
             writer.writerow(_outreach_row(rank, item))

@@ -4,6 +4,50 @@
 
 ## Active Task
 
+- [x] JD 推荐反馈闭环阶段一实现（2026-05-26）：按 `docs/superpowers/plans/2026-05-26-jd-delivery-feedback-phase1.md` 实现反馈采集和编译第一阶段，保持 `data/talent.db` 只读、不上传猎头备注、不自动修改评分卡。
+  - [x] Plan：按 5 个任务执行：反馈编译器合同、外联表反馈列、发布预检兼容、workflow/skill 文档、最终验证。
+  - [x] Verify Plan：代码改动限定为计划列出的 scripts/schemas/tests/workflow/skill 文件；执行中每个任务遵守 TDD，先红灯再实现；验证使用 `.venv/bin/python`。
+  - [x] Task 1：反馈编译器合同。
+  - [x] Task 2：外联表反馈列。
+  - [x] Task 3：发布预检兼容。
+  - [x] Task 4：workflow/skill 文档。
+  - [x] Task 5：最终验证。
+  - Review：已完成阶段一实现。新增 `scripts/jd_delivery_feedback.py`、`schemas/jd-delivery-feedback.schema.json` 和 `tests/test_jd_delivery_feedback.py`，支持 `delivery-feedback.json` 校验、原因码校验、重复候选/排名校验、Top10/Top30 指标、分档认可率和 CLI 编译 `feedback-summary.json` / `calibration-suggestions.json`；CLI 校验失败返回 1 并输出 `error:`，不打 traceback。`reports/outreach-queue.csv` 现追加 8 个空反馈列：`feedback_label`、`feedback_stage`、`reason_codes`、`hunter_note`、`contacted`、`submitted_to_client`、`interviewed`、`offer`；发布预检测试确认空反馈列不会阻断飞书 Sheet 发布，`scripts/jd_talent_delivery_feishu.py` 无需修改。`agents/workflows/jd-talent-delivery/AGENT.md` 和 `skills/jd-talent-delivery/SKILL.md` 已新增 S9/猎头反馈后续合同，明确可选后续、默认 dry-run、不写 `data/talent.db`、不自动修改评分卡、不自动发布猎头备注。验证：聚焦测试 `81 passed`；编译、schema 校验、`git diff --check` 通过；全量 `.venv/bin/python -m pytest tests scripts -q` -> `879 passed, 1 warning`，warning 为既有 `scripts/test_boss.py` event loop deprecation。
+
+- [x] JD 推荐反馈闭环阶段一实施计划（2026-05-26）：基于 `docs/design-discussions/2026-05-25-jd-delivery-feedback-optimization-design.md`，为反馈采集和编译阶段写可执行 TDD 实施计划。
+  - [x] Plan：只新增实施计划文档，不改业务实现；计划覆盖反馈 schema/编译器、外联表反馈列、发布回读兼容和 workflow/skill 文档同步。
+  - [x] Verify Plan：待修改文件限定为 `docs/superpowers/plans/2026-05-26-jd-delivery-feedback-phase1.md`、`tasks/todo.md`、`tasks/archive/2026-05.md`；验证方式为计划自检、占位符/冲突标记扫描、`git diff --check`。
+  - [x] 梳理阶段一文件边界和任务拆分。
+  - [x] 写入实施计划。
+  - [x] 自检计划覆盖设计文档阶段一要求。
+  - Review：实施计划已写入 `docs/superpowers/plans/2026-05-26-jd-delivery-feedback-phase1.md`，按 writing-plans 格式拆为 5 个任务：反馈编译器合同、外联表反馈列、发布预检兼容、workflow/skill 文档、最终验证。计划明确只做阶段一，不做历史回放、评分卡模板选择和 reranker。未修改业务代码。
+
+- [x] JD 推荐闭环精准度优化设计（2026-05-25）：承接会话 `019e5f8c-5851-7ff1-bae6-3372b3ac5013` 中“同意，设计先行”，设计 JD 画像、评分卡、人选匹配和猎头反馈闭环的可标注、可回放、可校准方案。
+  - [x] Plan：只写设计文档和任务记录，不修改业务代码；先基于当前 `jd-talent-delivery` workflow、画像/评分/匹配脚本和既有 feedback 脚本梳理边界。
+  - [x] Verify Plan：待修改文件限定为 `docs/design-discussions/2026-05-25-jd-delivery-feedback-optimization-design.md`、`tasks/todo.md` 和归档；验证方式为格式检查、占位符/矛盾扫描、`git diff --check`。
+  - [x] 梳理现有 JD delivery 产物链路和反馈脚本能力。
+  - [x] 设计反馈 schema、离线回放指标、评分卡模板库和迭代策略。
+  - [x] 写入设计文档并做自检。
+  - Review：已写入 `docs/design-discussions/2026-05-25-jd-delivery-feedback-optimization-design.md`，方案采用“反馈优先 + 离线回放”的确定性闭环：外联表追加猎头反馈列，新增 JD delivery 反馈 JSON、原因码体系、反馈编译、历史 run 回放指标、评分卡模板库和后续轻量 reranker 触发条件。范围只到设计文档和任务记录，未修改业务代码。完整记录已归档到 `tasks/archive/2026-05.md`。
+
+- [x] 查找项目下最近的对话记录（2026-05-25）：定位 `talent-agent` 相关且不在当前帐户下的最近对话/会话线索，只读检索项目文件、任务归档和本机 agent 会话索引，不修改业务代码。
+  - [x] Plan：先查项目内 `.claude`/`.claudecode`、`tasks/`、`memory/`、`data/output/` 等可能记录对话或交付轨迹的位置，再按项目路径在本机 Codex/Claude 相关会话目录做定向检索。
+  - [x] Verify Plan：边界为只读搜索和任务台账记录；待查看文件为项目工作台、归档、隐藏 agent 配置和本机会话索引；验证方式为文件时间排序、关键词检索、路径匹配和最近候选摘要比对。
+  - [x] 检查项目内最近任务记录、归档和隐藏 agent 配置。
+  - [x] 搜索本机当前/非当前帐户下与 `/Users/eric/workspace/talent-agent` 相关的最近会话索引。
+  - [x] 汇总最近候选的路径、时间、来源帐户线索和可信度。
+  - Review：项目内未发现真实对话正文，`.claude` 为 Claude adapter，`.claudecode` 只有工具参数提示；真实 Codex 会话在 `/Users/eric/.codex/sessions/`。当前对话为 `019e5fb3-3ed6-7ee0-badf-aaab8d384e6d`，`model_provider=openai`，开始 `2026-05-25 23:14:03 +0800`。按“非当前帐户/非当前 provider”理解，最近候选是 `/Users/eric/.codex/sessions/2026/05/25/rollout-2026-05-25T22-31-33-019e5f8c-5851-7ff1-bae6-3372b3ac5013.jsonl`，`model_provider=custom`，`cwd=/Users/eric/workspace/talent-agent`，mtime `2026-05-25 23:07:42 +0800`，主题为“制定人才推荐闭环优化方案”；最近用户消息包括“同意，设计先行”。其他相邻 custom 候选为 `22:55:22`、`22:49:17`、`21:25:07`。本轮未展开完整正文，只提取元数据与首末用户消息。
+
+- [x] 调查 `.agents/skills` 本地代码来源与有效性（2026-05-25）：确认这些技能文件是否属于当前 GitHub 最新版本、何时产生、是否被仓库运行时引用，以及是否可以视为废弃/本地扩展。
+  - [x] Plan：只调查 `.agents/skills` 及相关引用，不删除文件、不改业务逻辑；必要记录写入 `tasks/todo.md` 与归档。
+  - [x] Verify Plan：修改边界为任务台账；调查文件包括 `.agents/skills/**`、仓库 workflow/skill 引用、git 远端与本地历史；验证方式为 `git fetch`、`git status/log/diff/ls-tree`、`rg` 引用搜索、JSON/Python 语法检查和仓库测试。
+  - [x] 检查 `.agents/skills` 的文件清单、git 跟踪状态、创建/修改时间与最近提交归属。
+  - [x] 对比 `origin/main`/GitHub 最新远端，确认远端是否包含 `.agents/skills`。
+  - [x] 搜索仓库运行时、测试、AGENTS/workflow 对 `.agents/skills` 的引用，判断是否参与执行。
+  - [x] 检查 `.agents/skills` 内是否包含可执行 Python/脚本、JSON 是否有效、是否与 canonical `skills/` 或 `agents/workflows/` 重复。
+  - [x] 汇总结论、风险和建议，并运行必要验证。
+  - Review：`.agents/skills` 不在 `HEAD/origin/main`，无 git 历史，当前为未跟踪本地目录；文件创建时间集中在 `2026-05-24 21:14-21:16 +0800`。内容是 `.claude/skills` 的 Codex 适配副本，规则/脚本落后于当前 canonical `rules/` 和 `scripts/`。结论：它不是 GitHub 最新版本的一部分，也不是业务代码权威来源；仅可视作本地 Codex skill 入口/残留 adapter。已按用户确认删除本地 `.agents/skills`，空 `.agents` 目录也已移除。完整记录已归档到 `tasks/archive/2026-05.md`；验证：`git diff --check` 通过，`.agents` JSON/Python 语法检查通过，`.venv/bin/python -m pytest tests scripts -q` -> `862 passed, 1 warning`。
+
 - [x] 本机 Python 环境固定与跨平台路径测试修复（2026-05-25）：按方案 1+2 配置 Homebrew Python + 项目 `.venv`，并修复 `tests/test_maimai_campaign_orchestrator.py` 的 Windows/macOS 路径分隔符断言。
   - [x] 复现路径分隔符测试失败，确认本机 Python/PATH 当前状态。
   - [x] 安装或复用 Homebrew Python 3.12，创建 `.venv` 并安装依赖。

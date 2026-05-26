@@ -108,3 +108,17 @@ def test_skill_feishu_publish_boundary() -> None:
         "不依赖 `sheets +append --file`",
     ]:
         assert token in text
+
+
+def test_skill_documents_feedback_followup_contract() -> None:
+    text = _text()
+
+    for token in [
+        "猎头反馈",
+        "feedback_label",
+        "reason_codes",
+        "delivery-feedback.json",
+        "feedback-summary.json",
+        "只生成校准建议",
+    ]:
+        assert token in text

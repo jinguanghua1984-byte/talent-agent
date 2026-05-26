@@ -45,6 +45,10 @@ description: Use when the user asks to turn a JD into a local talent-library rec
 - `feishu/publish-results.json`
 - `feishu/im-notification-results.json`
 
+## 猎头反馈后续
+
+当用户要求回收或分析猎头反馈时，读取外联表反馈列或本地 `feedback/delivery-feedback.json`，编译 `feedback/feedback-summary.json` 和 `feedback/calibration-suggestions.json`。反馈列包含 `feedback_label`、`feedback_stage`、`reason_codes`、`hunter_note`、`contacted`、`submitted_to_client`、`interviewed` 和 `offer`。本步骤只生成校准建议，不写 `data/talent.db`，不自动修改评分卡，不自动发布猎头备注。
+
 ## 岗位画像 contract
 
 岗位画像必须复用 `hr-talent` 的岗位分析框架，结构参考 `docs/business-requirements/2026-05-21-llm-inference-role-deep-dive.md`。画像至少覆盖结论摘要、岗位真实问题、能力模型、候选人类型、寻访关键点、公司池、关键词、排除项和风险项。

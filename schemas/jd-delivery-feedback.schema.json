@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "JD Delivery Feedback",
+  "type": "object",
+  "required": ["schema", "role_id", "run_id", "profile_version", "scorecard_version", "candidate_feedback"],
+  "properties": {
+    "schema": { "const": "jd_delivery_feedback_v1" },
+    "role_id": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "profile_version": { "type": "string", "minLength": 1 },
+    "scorecard_version": { "type": "string", "minLength": 1 },
+    "source_report": { "type": "string" },
+    "source_outreach_sheet": { "type": "string" },
+    "reviewer_role": { "type": "string" },
+    "candidate_feedback": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["candidate_id", "rank", "original_grade", "original_score", "feedback_label", "feedback_stage", "reason_codes"],
+        "properties": {
+          "candidate_id": { "type": "string", "minLength": 1 },
+          "rank": { "type": "integer", "minimum": 1 },
+          "original_grade": { "enum": ["A", "B", "C", "淘汰"] },
+          "original_score": { "type": "number" },
+          "feedback_label": { "enum": ["认可", "待定", "不认可"] },
+          "feedback_stage": { "enum": ["画像", "评分卡", "匹配", "报告", "候选人状态"] },
+          "reason_codes": { "type": "array", "items": { "type": "string" } },
+          "hunter_note": { "type": "string" },
+          "contacted": { "type": "boolean" },
+          "submitted_to_client": { "type": "boolean" },
+          "interviewed": { "type": "boolean" },
+          "offer": { "type": "boolean" }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -485,6 +485,41 @@ def test_publish_output_reuses_existing_children_without_duplicate_imports(tmp_p
     assert any("sheets +read --as user --spreadsheet-token existing_sheet --sheet-id sheet_1 --range A1:Z5" in call for call in calls)
 
 
+def test_validate_delivery_package_allows_blank_feedback_columns(tmp_path: Path) -> None:
+    root = _safe_output_root(tmp_path)
+    recommendation = {
+        "schema": "jd_talent_delivery_recommendation_v1",
+        "top_n": 1,
+        "ranked": [
+            {
+                "candidate_id": 1,
+                "score": 88,
+                "grade": "A",
+                "recommendation_label": "强推荐",
+                "profile_url": "https://maimai.cn/profile/detail/1",
+                "evidence": {"key_evidence": ["腾讯", "推理系统"]},
+            }
+        ],
+    }
+    _write(root / "reports" / "talent-recommendation.json", json.dumps(recommendation, ensure_ascii=False))
+    _write(root / "scoring" / "detailed-rank.json", json.dumps(recommendation, ensure_ascii=False))
+    _write(
+        root / "reports" / "outreach-queue.csv",
+        (
+            "candidate_id,company,title,score,grade,suggested_outreach_angle,profile_url,"
+            "feedback_label,feedback_stage,reason_codes,hunter_note,contacted,"
+            "submitted_to_client,interviewed,offer\n"
+            "1,腾讯,推理工程师,88,A,建议围绕腾讯推理工程师经历沟通,"
+            "https://maimai.cn/profile/detail/1,,,,,,,,\n"
+        ),
+    )
+
+    result = validate_delivery_package(root)
+
+    assert result["status"] == "passed"
+    assert result["critical_issues"] == []
+
+
 def test_validate_delivery_package_blocks_bad_quality_gate(tmp_path: Path) -> None:
     root = _safe_output_root(tmp_path)
     _write(

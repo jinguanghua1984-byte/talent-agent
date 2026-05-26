@@ -181,6 +181,18 @@ lark-cli im +messages-send --as user --user-id <open_id> --text <message> --idem
 
 通知发送失败属于任务失败，不得只在聊天窗口口头说明。
 
+### S9：猎头反馈回收（可选后续）
+
+S9 不属于默认连续执行链路，只有用户要求回收或编译猎头反馈时才执行。S9 读取已发布的外联表反馈列或本地反馈 JSON，生成本地反馈产物：
+
+- `feedback/delivery-feedback.json`
+- `feedback/feedback-summary.json`
+- `feedback/calibration-suggestions.json`
+
+反馈列至少包含 `feedback_label`、`feedback_stage`、`reason_codes`、`hunter_note`、`contacted`、`submitted_to_client`、`interviewed` 和 `offer`。反馈导入默认 dry-run，不得写入 data/talent.db；也不得写入 `data/talent.db`，不得自动修改 `scoring/scorecard.json`，不得把猎头备注自动发布到 Wiki。
+
+反馈编译指标至少包含 `accepted_at_30`、`actionable_at_30` 和 `bad_at_10`。输出只能作为下一轮岗位画像、评分卡和匹配策略的校准建议。
+
 ## Scorecard 一致性
 
 1. 粗筛和精排必须读取同一个 `scoring/scorecard.json`。

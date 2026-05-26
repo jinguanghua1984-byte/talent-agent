@@ -117,6 +117,22 @@ def test_workflow_codifies_completion_notification() -> None:
         assert token in text
 
 
+def test_workflow_documents_feedback_collection_contract() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    for token in [
+        "feedback/delivery-feedback.json",
+        "feedback/feedback-summary.json",
+        "feedback/calibration-suggestions.json",
+        "反馈导入默认 dry-run",
+        "不得写入 data/talent.db",
+        "reason_codes",
+        "accepted_at_30",
+        "actionable_at_30",
+    ]:
+        assert token in text
+
+
 def test_workflow_does_not_require_second_confirmation_after_publish_dry_run() -> None:
     text = _text()
 
