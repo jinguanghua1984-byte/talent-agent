@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -112,9 +113,19 @@ class LocalFsProvider:
         return {"ok": True, "is_tenant_quota_exceeded": False, "available": None}
 
 
+def _resolve_lark_cli_argv(argv: list[str]) -> list[str]:
+    if not argv or argv[0] != "lark-cli":
+        return argv
+    for candidate in ("lark-cli.cmd", "lark-cli.exe", "lark-cli", "lark-cli.ps1"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return [resolved, *argv[1:]]
+    return argv
+
+
 def _run_lark_cli(argv: list[str]) -> dict[str, Any]:
     completed = subprocess.run(
-        argv,
+        _resolve_lark_cli_argv(argv),
         check=False,
         capture_output=True,
         text=True,

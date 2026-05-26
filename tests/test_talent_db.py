@@ -243,6 +243,29 @@ def test_sync_entity_aliases_requires_source_node_id(tmp_path: Path):
     assert columns["source_node_id"]["notnull"] == 1
 
 
+def test_sync_lookup_indexes_exist_for_import_planning(db: TalentDB):
+    indexes_by_table = {}
+    for table in (
+        "candidates",
+        "candidate_details",
+        "source_profiles",
+        "candidate_wechat_timelines",
+        "score_events",
+        "match_scores",
+    ):
+        indexes_by_table[table] = {
+            row["name"]
+            for row in db._conn.execute(f"PRAGMA index_list({table})").fetchall()
+        }
+
+    assert "idx_candidates_sync_id" in indexes_by_table["candidates"]
+    assert "idx_candidate_details_sync_id" in indexes_by_table["candidate_details"]
+    assert "idx_source_profiles_sync_id" in indexes_by_table["source_profiles"]
+    assert "idx_wechat_timelines_sync_id" in indexes_by_table["candidate_wechat_timelines"]
+    assert "idx_score_events_sync_id" in indexes_by_table["score_events"]
+    assert "idx_match_scores_sync_id" in indexes_by_table["match_scores"]
+
+
 def test_new_candidate_and_related_rows_receive_sync_ids(db: TalentDB):
     candidate_id = db.ingest(
         {

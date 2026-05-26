@@ -554,6 +554,246 @@ def test_import_candidate_detail_merges_raw_data_and_records_conflicts(tmp_path:
     assert json.loads(summary_conflict["remote_value"]) == "remote summary"
 
 
+def test_import_candidate_detail_semantically_merges_maimai_capture_noise(
+    tmp_path: Path,
+):
+    left_db = tmp_path / "left.db"
+    right_db = tmp_path / "right.db"
+    bundle_path = tmp_path / "right.zip"
+    local_projects = [{"project_name": "Local Project", "description": "richer"}]
+
+    left = TalentDB(left_db)
+    try:
+        left_id = left.ingest(
+            {
+                "name": "Alice",
+                "platform_id": "maimai-1",
+                "raw_data": {
+                    "maimai_detail_capture": {
+                        "capture_file": "local.json",
+                        "mode": "direct_page_fetch",
+                        "payload": {
+                            "detail_url": "https://maimai.cn/profile/detail?trackable_token=local",
+                            "trackable_token": "local-token",
+                            "second": "local-second",
+                        },
+                        "endpoints": {
+                            "basic": {
+                                "active_state": "今日活跃",
+                                "age": 30,
+                                "resume": {"tags": ["多模态", "AI产品"]},
+                                "viewed": True,
+                                "job_preferences": {
+                                    "positions": ["AI产品经理"],
+                                    "province_cities": ["深圳"],
+                                    "salary": "30k-50k/月",
+                                },
+                                "exp": [
+                                    {
+                                        "company": "Acme",
+                                        "position": "AI产品经理",
+                                        "friends": {"mmids": [2, 1], "total": 2},
+                                        "hover": {"stage": "已上市"},
+                                        "id": 100,
+                                        "fid": 200,
+                                        "file_md5": "local-md5",
+                                        "crtime": "2026-05-22",
+                                        "uptime": "2026-05-22",
+                                    }
+                                ],
+                                "user_project": local_projects,
+                            },
+                            "contact_btn": {
+                                "contentType": "application/json",
+                                "data": {
+                                    "code": 0,
+                                    "contact_btn_types": {"maimai-1": 6},
+                                },
+                                "httpStatus": 200,
+                                "name": "contact_btn",
+                                "ok": True,
+                                "rawLength": 42,
+                                "rawPreview": "{}",
+                            },
+                        },
+                        "raw_entry": {
+                            "index": 3,
+                            "source_contact": {
+                                "best_campaign_id": "campaign-a",
+                                "grade": "B",
+                                "low_confidence_only": False,
+                                "priority": 2,
+                                "score": 81,
+                                "source_grade_counts": {"B": 1},
+                                "source_role_count": 1,
+                            },
+                            "started_at": "2026-05-22T10:00:00",
+                            "finished_at": "2026-05-22T10:00:01",
+                        },
+                    }
+                },
+            },
+            platform="maimai",
+        )
+    finally:
+        left.close()
+
+    right = TalentDB(right_db)
+    try:
+        right.ingest(
+            {
+                "name": "Alice",
+                "platform_id": "maimai-1",
+                "raw_data": {
+                    "maimai_detail_capture": {
+                        "capture_file": "remote.json",
+                        "mode": "safe",
+                        "payload": {
+                            "detail_url": "https://maimai.cn/profile/detail?trackable_token=remote",
+                            "trackable_token": "remote-token",
+                            "second": "remote-second",
+                        },
+                        "endpoints": {
+                            "basic": {
+                                "active_state": "近1周活跃",
+                                "age": 31,
+                                "resume": {"tags": ["AI产品", "多模态"]},
+                                "viewed": False,
+                                "job_preferences": {
+                                    "id": "maimai-1",
+                                        "job_preference": {
+                                            "positions": "AI产品经理",
+                                            "province_cities": "广东深圳",
+                                            "salary": "30k-50k/月",
+                                        },
+                                        "resume_badges": [],
+                                    },
+                                    "exp": [
+                                        {
+                                            "company": "Acme",
+                                            "position": "AI产品经理",
+                                            "friends": {"mmids": [1, 2], "total": 1},
+                                            "id": 101,
+                                            "fid": 201,
+                                            "file_md5": "remote-md5",
+                                            "crtime": "2026-05-25",
+                                            "uptime": "2026-05-25",
+                                        }
+                                    ],
+                                    "user_project": {"total": 0},
+                                },
+                            "contact_btn": {
+                                "authFailure": False,
+                                "data": {
+                                    "code": 0,
+                                    "contact_btn_types": {"maimai-1": 6},
+                                },
+                                "error": None,
+                                "httpStatus": 200,
+                                "name": "contact_btn",
+                                "ok": True,
+                                "raw": "{}",
+                            },
+                        },
+                        "raw_entry": {
+                            "source_contact": {
+                                "source_contact": {
+                                    "platform": "maimai",
+                                    "platform_id": "maimai-1",
+                                }
+                            },
+                            "started_at": "2026-05-25T10:00:00Z",
+                            "finished_at": "2026-05-25T10:00:01Z",
+                        },
+                    }
+                },
+            },
+            platform="maimai",
+        )
+    finally:
+        right.close()
+
+    export_bundle(right_db, bundle_path, mode="full")
+    result = import_bundle(bundle_path, left_db, apply=True, confirm=CONFIRM_SYNC_TEXT)
+
+    left = TalentDB(left_db)
+    try:
+        detail = left.get_detail(left_id)
+        conflict_count = left._conn.execute(
+            "SELECT COUNT(*) FROM sync_conflicts WHERE entity_type = 'candidate_detail'"
+        ).fetchone()[0]
+    finally:
+        left.close()
+
+    assert result["conflicts"]["candidate_details"] == 0
+    assert conflict_count == 0
+    assert detail is not None
+    capture = detail.raw_data["maimai_detail_capture"]
+    assert capture["endpoints"]["basic"]["user_project"] == local_projects
+
+
+def test_import_candidate_detail_keeps_maimai_capture_conflict_for_real_change(
+    tmp_path: Path,
+):
+    left_db = tmp_path / "left.db"
+    right_db = tmp_path / "right.db"
+    bundle_path = tmp_path / "right.zip"
+
+    left = TalentDB(left_db)
+    try:
+        left.ingest(
+            {
+                "name": "Alice",
+                "platform_id": "maimai-1",
+                "raw_data": {
+                    "maimai_detail_capture": {
+                        "payload": {"current_title": "AI产品经理"}
+                    }
+                },
+            },
+            platform="maimai",
+        )
+    finally:
+        left.close()
+
+    right = TalentDB(right_db)
+    try:
+        right.ingest(
+            {
+                "name": "Alice",
+                "platform_id": "maimai-1",
+                "raw_data": {
+                    "maimai_detail_capture": {
+                        "payload": {"current_title": "算法工程师"}
+                    }
+                },
+            },
+            platform="maimai",
+        )
+    finally:
+        right.close()
+
+    export_bundle(right_db, bundle_path, mode="full")
+    result = import_bundle(bundle_path, left_db, apply=True, confirm=CONFIRM_SYNC_TEXT)
+
+    left = TalentDB(left_db)
+    try:
+        conflicts = left._conn.execute(
+            """
+            SELECT field_name
+            FROM sync_conflicts
+            WHERE entity_type = 'candidate_detail'
+            """
+        ).fetchall()
+    finally:
+        left.close()
+
+    assert result["conflicts"]["candidate_details"] == 1
+    assert [row["field_name"] for row in conflicts] == [
+        "candidate_detail.raw_data.maimai_detail_capture"
+    ]
+
+
 def test_import_uses_source_key_to_merge_independent_candidates(tmp_path: Path):
     left_db = tmp_path / "left.db"
     right_db = tmp_path / "right.db"

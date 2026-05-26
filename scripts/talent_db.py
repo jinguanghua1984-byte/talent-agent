@@ -342,6 +342,7 @@ class TalentDB:
         self._ensure_columns("candidate_wechat_timelines", {"sync_id": "TEXT"})
         self._ensure_columns("score_events", {"sync_id": "TEXT"})
         self._ensure_columns("match_scores", {"sync_id": "TEXT"})
+        self._ensure_sync_indexes()
         self._ensure_node_id()
         self._backfill_sync_ids()
 
@@ -350,6 +351,18 @@ class TalentDB:
         for column, definition in columns.items():
             if column not in existing:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    def _ensure_sync_indexes(self) -> None:
+        self._conn.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_candidates_sync_id ON candidates(sync_id);
+            CREATE INDEX IF NOT EXISTS idx_candidate_details_sync_id ON candidate_details(sync_id);
+            CREATE INDEX IF NOT EXISTS idx_source_profiles_sync_id ON source_profiles(sync_id);
+            CREATE INDEX IF NOT EXISTS idx_wechat_timelines_sync_id ON candidate_wechat_timelines(sync_id);
+            CREATE INDEX IF NOT EXISTS idx_score_events_sync_id ON score_events(sync_id);
+            CREATE INDEX IF NOT EXISTS idx_match_scores_sync_id ON match_scores(sync_id);
+            """
+        )
 
     def _ensure_node_id(self) -> None:
         self._conn.execute(
@@ -3055,11 +3068,261 @@ def _merge_detail_raw_data(
             merged[namespace] = remote_value
             continue
         local_value = merged.get(namespace)
+        if namespace == _MAIMAI_DETAIL_CAPTURE_NAMESPACE and _maimai_detail_capture_compatible(
+            local_value,
+            remote_value,
+        ):
+            merged[namespace] = _merge_maimai_detail_capture_value(
+                local_value,
+                remote_value,
+            )
+            continue
         if canonical_json(local_value) != canonical_json(remote_value):
             conflicts.append(
                 (f"candidate_detail.raw_data.{namespace}", local_value, remote_value)
             )
     return merged, conflicts
+
+
+_MAIMAI_DETAIL_CAPTURE_NAMESPACE = "maimai_detail_capture"
+_MAIMAI_VOLATILE_RAW_KEYS = {
+    "active_state",
+    "active_state_v1",
+    "active_state_v2",
+    "age",
+    "avatar",
+    "candidate_id",
+    "capture_file",
+    "created_at",
+    "crtime",
+    "fid",
+    "file_md5",
+    "finished_at",
+    "friends",
+    "hover",
+    "id",
+    "index",
+    "logo",
+    "mode",
+    "record_url",
+    "second",
+    "source_contact",
+    "started_at",
+    "timestamp",
+    "updated_at",
+    "uptime",
+    "viewed",
+}
+_MAIMAI_RESPONSE_WRAPPER_KEYS = {
+    "authFailure",
+    "contentType",
+    "error",
+    "parseError",
+    "raw",
+    "rawLength",
+    "rawPreview",
+}
+
+
+def _maimai_detail_capture_compatible(local: Any, remote: Any) -> bool:
+    return canonical_json(_normalize_maimai_detail_capture(local)) == canonical_json(
+        _normalize_maimai_detail_capture(remote)
+    )
+
+
+def _normalize_maimai_detail_capture(value: Any) -> Any:
+    if isinstance(value, dict):
+        if _is_maimai_response_wrapper(value):
+            return _normalize_maimai_response_wrapper(value)
+
+        normalized: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            normalized_key = _normalize_maimai_raw_key(key_text)
+            if _ignore_maimai_detail_key(key_text):
+                continue
+            if normalized_key == "job_preferences":
+                normalized_value = _normalize_maimai_job_preferences(item)
+            elif normalized_key == "user_project":
+                continue
+            else:
+                normalized_value = _normalize_maimai_detail_capture(item)
+            if not _is_empty(normalized_value):
+                normalized[normalized_key] = normalized_value
+        return normalized
+
+    if isinstance(value, list):
+        normalized_items = [
+            item
+            for item in (_normalize_maimai_detail_capture(item) for item in value)
+            if not _is_empty(item)
+        ]
+        if all(not isinstance(item, (dict, list)) for item in normalized_items):
+            return sorted(normalized_items, key=lambda item: str(item))
+        return normalized_items
+
+    if isinstance(value, str):
+        return value.strip()
+    return value
+
+
+def _normalize_maimai_raw_key(key: str) -> str:
+    if key == "job_preference":
+        return "job_preferences"
+    return key
+
+
+def _ignore_maimai_detail_key(key: str) -> bool:
+    key_lower = key.lower()
+    if key in _MAIMAI_VOLATILE_RAW_KEYS or key_lower in _MAIMAI_VOLATILE_RAW_KEYS:
+        return True
+    if "token" in key_lower or "url" in key_lower:
+        return True
+    if "avatar" in key_lower or "logo" in key_lower or "image" in key_lower:
+        return True
+    if key.endswith("_at"):
+        return True
+    return key in _MAIMAI_RESPONSE_WRAPPER_KEYS
+
+
+def _is_maimai_response_wrapper(value: dict[str, Any]) -> bool:
+    return (
+        "data" in value
+        and ("ok" in value or "httpStatus" in value)
+        and (
+            "name" in value
+            or any(key in value for key in _MAIMAI_RESPONSE_WRAPPER_KEYS)
+        )
+    )
+
+
+def _normalize_maimai_response_wrapper(value: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for key in ("name", "ok", "httpStatus", "data"):
+        if key in value:
+            normalized[key] = _normalize_maimai_detail_capture(value[key])
+    return {key: item for key, item in normalized.items() if not _is_empty(item)}
+
+
+def _normalize_maimai_job_preferences(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"value": _normalize_maimai_detail_capture(value)}
+
+    source = value.get("job_preference")
+    if not isinstance(source, dict):
+        source = value
+
+    normalized: dict[str, Any] = {}
+    positions = _maimai_text_list(source.get("positions"))
+    cities = _maimai_text_list(
+        source.get("regions") or source.get("province_cities"),
+        normalize_locations=True,
+    )
+    salary = source.get("salary")
+    if positions:
+        normalized["positions"] = positions
+    if cities:
+        normalized["province_cities"] = cities
+    if not _is_empty(salary):
+        normalized["salary"] = str(salary).strip()
+    return normalized
+
+
+def _maimai_text_list(value: Any, normalize_locations: bool = False) -> list[str]:
+    if _is_empty(value):
+        return []
+    if isinstance(value, list):
+        return sorted(
+            {
+                _maimai_location_key(str(item).strip())
+                if normalize_locations
+                else str(item).strip()
+                for item in value
+                if str(item).strip()
+            }
+        )
+    text = str(value).strip()
+    if not text:
+        return []
+    for separator in ("、", "|", "，", ",", "；", ";"):
+        text = text.replace(separator, "\n")
+    parts = {part.strip() for part in text.splitlines() if part.strip()}
+    if normalize_locations:
+        parts = {_maimai_location_key(part) for part in parts}
+    return sorted(parts)
+
+
+_MAIMAI_LOCATION_PREFIXES = (
+    "黑龙江",
+    "内蒙古",
+    "北京",
+    "天津",
+    "上海",
+    "重庆",
+    "河北",
+    "山西",
+    "辽宁",
+    "吉林",
+    "江苏",
+    "浙江",
+    "安徽",
+    "福建",
+    "江西",
+    "山东",
+    "河南",
+    "湖北",
+    "湖南",
+    "广东",
+    "海南",
+    "四川",
+    "贵州",
+    "云南",
+    "陕西",
+    "甘肃",
+    "青海",
+    "台湾",
+    "广西",
+    "西藏",
+    "宁夏",
+    "新疆",
+    "香港",
+    "澳门",
+)
+
+
+def _maimai_location_key(value: str) -> str:
+    if value in {"北京", "上海", "天津", "重庆", "香港", "澳门"}:
+        return value
+    for prefix in _MAIMAI_LOCATION_PREFIXES:
+        if value.startswith(prefix) and len(value) > len(prefix):
+            return value[len(prefix) :]
+    return value
+
+
+def _merge_maimai_detail_capture_value(local: Any, remote: Any) -> Any:
+    if _is_empty(local):
+        return remote
+    if _is_empty(remote):
+        return local
+    if isinstance(local, dict) and isinstance(remote, dict):
+        merged = dict(local)
+        for key, remote_value in remote.items():
+            if key not in merged or _is_empty(merged.get(key)):
+                merged[key] = remote_value
+                continue
+            merged[key] = _merge_maimai_detail_capture_value(merged[key], remote_value)
+        return merged
+    if _maimai_value_richness(remote) > _maimai_value_richness(local):
+        return remote
+    return local
+
+
+def _maimai_value_richness(value: Any) -> int:
+    if _is_empty(value):
+        return 0
+    if isinstance(value, dict) and set(value) == {"total"} and not value.get("total"):
+        return 0
+    return len(canonical_json(value))
 
 
 def _match_score_conflict_payload(row: sqlite3.Row) -> dict[str, Any]:

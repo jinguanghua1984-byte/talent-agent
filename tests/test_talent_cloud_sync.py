@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import talent_cloud_sync_providers as provider_module
 from scripts.talent_db import TalentDB
 from scripts.talent_cloud_sync import (
     CloudSyncConfig,
@@ -562,6 +563,32 @@ def test_doctor_rejects_missing_feishu_scope(tmp_path: Path) -> None:
 
     with pytest.raises(CloudSyncError, match="missing Feishu scopes"):
         provider.doctor()
+
+
+def test_lark_cli_runner_resolves_windows_cmd_shim(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_which(name: str) -> str | None:
+        if name == "lark-cli.cmd":
+            return r"C:\Users\Administrator\AppData\Roaming\npm\lark-cli.cmd"
+        return None
+
+    class Completed:
+        returncode = 0
+        stdout = '{"ok": true}'
+        stderr = ""
+
+    def fake_run(argv: list[str], **kwargs) -> Completed:
+        calls.append(argv)
+        return Completed()
+
+    monkeypatch.setattr(provider_module.shutil, "which", fake_which)
+    monkeypatch.setattr(provider_module.subprocess, "run", fake_run)
+
+    result = provider_module._run_lark_cli(["lark-cli", "--version"])
+
+    assert result == {"ok": True}
+    assert calls[0][0] == r"C:\Users\Administrator\AppData\Roaming\npm\lark-cli.cmd"
 
 
 def test_doctor_warns_when_feishu_quota_check_is_unavailable(tmp_path: Path) -> None:
