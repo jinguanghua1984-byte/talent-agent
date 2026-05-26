@@ -5,6 +5,12 @@ description: 脉脉 unattended campaign 的 canonical workflow，约束搜索、
 
 # maimai-unattended-campaign
 
+## 触发入口
+
+- 从 `agents/skills/maimai-talent-search-campaign/SKILL.md` 完成需求抽取、搜索合同和计划确认后自动交接执行。
+- 用户要求继续执行已有 campaign、恢复中断任务、启动搜索执行、抓取详情、生成交付包或处理平台阻断恢复时，读取本 workflow 并按当前阶段继续。
+- 只接受已经落盘的 campaign 合同作为执行事实来源：`requirements.json`、`strategy.json`、`run-policy.json`、`search-implementation-plan.md` 和 `campaign-manifest.json`。
+
 ## 安全边界
 
 - 真实执行阶段不自动导航、刷新、点击已进入执行态的脉脉业务页面。

@@ -10,7 +10,24 @@ WORKFLOWS = [
     "talent-library",
     "wechat-chat-sync",
     "jd-talent-delivery",
+    "maimai-unattended-campaign",
 ]
+
+CANONICAL_SKILL_WORKFLOWS = {
+    "jd-talent-delivery": "jd-talent-delivery",
+    "maimai-talent-search-campaign": "maimai-unattended-campaign",
+}
+
+CLAUDE_ADAPTER_WORKFLOWS = {
+    "public-search": "public-search",
+    "platform-match": "platform-match",
+    "screen": "screen",
+    "report": "report",
+    "talent-library": "talent-library",
+    "wechat-chat-sync": "wechat-chat-sync",
+    "jd-talent-delivery": "jd-talent-delivery",
+    "maimai-talent-search-campaign": "maimai-unattended-campaign",
+}
 
 
 def test_canonical_workflow_files_exist():
@@ -42,21 +59,35 @@ def test_canonical_workflows_do_not_reference_runtime_private_paths():
         assert hits == [], f"{path} contains runtime-specific terms: {hits}"
 
 
+def test_runtime_neutral_skill_contracts_live_under_agents():
+    for skill_name, workflow_name in CANONICAL_SKILL_WORKFLOWS.items():
+        path = ROOT / "agents" / "skills" / skill_name / "SKILL.md"
+        text = path.read_text(encoding="utf-8")
+        assert f"name: {skill_name}" in text
+        assert f"agents/workflows/{workflow_name}/AGENT.md" in text
+        assert "## 目标" in text
+
+    assert not (ROOT / "skills").exists()
+
+
 def test_claude_skill_files_are_adapters_to_canonical_workflows():
-    for name in WORKFLOWS:
+    for name, workflow_name in CLAUDE_ADAPTER_WORKFLOWS.items():
         path = ROOT / ".claude" / "skills" / name / "SKILL.md"
         assert path.exists(), f"missing Claude adapter: {path}"
         text = path.read_text(encoding="utf-8")
-        assert f"agents/workflows/{name}/AGENT.md" in text
+        assert f"agents/workflows/{workflow_name}/AGENT.md" in text
         assert "Claude Code Adapter" in text
         assert "## Adapter Steps" in text
         assert "agents/capabilities.md" in text
         assert "运行时私有入口" in text
+        if name in CANONICAL_SKILL_WORKFLOWS:
+            assert f"agents/skills/{name}/SKILL.md" in text
 
 
 def test_readme_describes_runtime_neutral_architecture():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "运行时中立" in text
+    assert "agents/skills/" in text
     assert "agents/workflows/" in text
     assert ".claude/skills/ — Claude Code 兼容适配器" in text
 

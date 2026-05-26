@@ -1,7 +1,7 @@
 from pathlib import Path
 
 
-SKILL = Path("skills/jd-talent-delivery/SKILL.md")
+SKILL = Path("agents/skills/jd-talent-delivery/SKILL.md")
 
 
 def _text() -> str:

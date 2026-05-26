@@ -4,6 +4,23 @@
 
 ## Active Task
 
+- [x] Agent skill 分层和 Claude Code adapter 补齐（2026-05-27）：把根目录两个业务入口 skill 迁移到 `agents/skills/`，补齐 Claude Code 适配入口，并同步测试和文档。
+  - [x] Plan：实施计划写入 `docs/superpowers/plans/2026-05-27-agent-skills-claude-adapters.md`；边界为 skill 文档迁移、Claude adapter、架构/skill 测试、README 和任务记录，不改业务脚本、不写 `data/talent.db`、不访问飞书。
+  - [x] Verify Plan：实施前确认待修改文件为 `agents/skills/`、`.claude/skills/`、`agents/workflows/jd-talent-delivery/AGENT.md`、`tests/test_agent_architecture.py`、两个 skill 测试、`README.md`、`agents/README.md` 和任务记录；验证方式为红灯测试、聚焦测试、全量 `.venv/bin/python -m pytest tests scripts -q` 和 `git diff --check`。
+  - [x] 先补失败测试，固定 `agents/skills` 和 Claude adapter 合同。
+  - [x] 迁移两个 canonical skill contract 并同步引用。
+  - [x] 补齐 Claude Code adapter 和说明文档。
+  - [x] 运行聚焦、全量验证和 diff hygiene。
+  - [x] 写入 Review 并归档完整记录。
+  - Review：已新增 `docs/superpowers/plans/2026-05-27-agent-skills-claude-adapters.md`，并把 canonical skill contract 从根目录 `skills/` 迁移到 `agents/skills/`。新增 `.claude/skills/maimai-talent-search-campaign/SKILL.md`，强化 `.claude/skills/jd-talent-delivery/SKILL.md`，让 Claude Code adapter 先读 `agents/capabilities.md`、再读 canonical skill、最后读 canonical workflow；同步更新 `README.md`、`agents/README.md`、`agents/adapters/claude-code/README.md`、相关 workflow 引用和架构/skill 测试。红灯验证：迁移前聚焦测试 `17 failed, 7 passed`，失败点覆盖缺少 `agents/skills`、缺少 maimai Claude adapter、README 未声明新层级和 maimai workflow 缺少触发入口；修复后聚焦测试 `24 passed`，全量 `.venv/bin/python -m pytest tests scripts -q` -> `907 passed, 1 warning`，warning 为既有 `scripts/test_boss.py` event loop deprecation；`git diff --check` 通过。边界：未改业务脚本，未写 `data/talent.db`，未访问飞书；历史 `docs/superpowers/` 计划/规格中的旧路径保留为历史记录。
+
+- [x] 脚本清理优化计划文档（2026-05-26）：把一次性脚本审查结论整理为可执行实施计划并保存。
+  - [x] Plan：基于脚本审查结论和当前代码引用，输出 `docs/superpowers/plans/2026-05-26-script-cleanup-and-hygiene.md`；只写计划和任务记录，不删除、不移动、不重构任何脚本。
+  - [x] Verify Plan：修改边界限定为计划文档、任务台账和归档记录；验证方式为计划占位符/冲突标记扫描、关键证据扫描和 `git diff --check`。
+  - [x] 写入脚本清理实施计划。
+  - [x] 运行计划自检并归档任务记录。
+  - Review：已新增 `docs/superpowers/plans/2026-05-26-script-cleanup-and-hygiene.md`，共 742 行。计划把脚本清理拆成 7 个任务：脚本清单和护栏基线、`scripts/test_*.py` 迁移到 `tests/`、删除已有替代的 `score_candidates.py`、审批后删除 Hunyuan ABC 一次性任务脚本、将 `data-manager.py` 改成 importable module + 兼容 shim、保留并标记 `maimai_ai_infra_*` legacy compatibility layer、最终全量验证和任务归档。计划明确 `hunyuan_abc_*` 删除必须先征得用户确认，`maimai_ai_infra_*` 第一阶段不删除，因为仍被 orchestrator 和回归测试引用。本轮未删除、移动或重构任何脚本，未写 `data/talent.db`，未访问飞书。验证：占位符/冲突标记扫描无命中；关键证据扫描覆盖 `scripts/test_boss.py`、`hunyuan_abc_detail_tasks.py`、`hunyuan_abc_parallel_supervisor.ps1`、`score_candidates.py`、`maimai_campaign_orchestrator.py`、`data-manager.py` 和 `maimai_ai_infra_search_plan.py`；新计划文件 `git diff --no-index --check /dev/null docs/superpowers/plans/2026-05-26-script-cleanup-and-hygiene.md` 无 whitespace 输出，`git diff --check -- tasks/todo.md tasks/archive/2026-05.md` 通过。计划文档任务未运行 pytest。
+
 - [x] 本机人才库同步到飞书（2026-05-26）：执行真实飞书云同步，验证远端加密 bundle 结构和重复同步幂等。
   - [x] Plan：使用已初始化的本机 `.env` 和飞书 Drive 目录执行 `scripts.talent_cloud_sync sync`；只上传 Fernet 加密 bundle/index，不上传 `data/talent.db`；同步后核对远端 `bundle-index` 和 `bundles`；若重复同步暴露幂等问题，先用测试复现再修复。
   - [x] Verify Plan：验证方式为真实 `sync` 输出、飞书端文件列表、聚焦云同步测试、py_compile 和 `git diff --check`；密钥不输出到聊天或任务记录。

@@ -4,7 +4,7 @@ import json
 from scripts.maimai_ai_infra_outreach_export import CSV_FIELDS
 
 
-SKILL = Path("skills/maimai-talent-search-campaign/SKILL.md")
+SKILL = Path("agents/skills/maimai-talent-search-campaign/SKILL.md")
 WORKFLOW = Path("agents/workflows/maimai-unattended-campaign/AGENT.md")
 OUTREACH_TEMPLATE = Path("templates/maimai-campaign/outreach-queue-fields.json")
 EXECUTION_FIELDS = ["owner", "status", "last_touch_at", "next_followup_at", "notes"]

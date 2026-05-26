@@ -26,6 +26,7 @@
 ## 目录结构
 
 - agents/workflows/ — 运行时中立的 agent 工作流定义
+- agents/skills/ — 运行时中立的业务入口合同，定义语义触发、默认值和 workflow 交接
 - agents/capabilities.md — 通用能力契约和运行时工具映射
 - .claude/skills/ — Claude Code 兼容适配器
 - scripts/ — 可执行 Python 代码和 CLI
@@ -37,7 +38,7 @@
 
 1. 复制 `.env.example` 为 `.env`，配置 `LLM_PROVIDER`、`LLM_MODEL`、`LLM_API_KEY`
 2. 创建 JD: `python scripts/data-manager.py jd create jd.json`
-3. 使用任意支持本仓库工作流的 agent 读取 `agents/workflows/`
+3. 使用任意支持本仓库工作流的 agent 读取 `agents/skills/` 和 `agents/workflows/`
 4. Claude Code 用户可继续使用 `/public-search`、`/platform-match`、`/screen`、`/report`
 5. 评分 pipeline: `python scripts/score_pipeline.py run --jd-id <id> --source boss --search-keyword <keyword>`
 

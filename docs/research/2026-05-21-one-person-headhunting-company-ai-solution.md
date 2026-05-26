@@ -86,7 +86,7 @@
 | 环节 | 人负责 | AI 负责 | 当前仓库基础 |
 | --- | --- | --- | --- |
 | 获客与定位 | 选择客户、定价、承诺边界、签约 | 生成行业观点、案例报告、客户邮件草稿 | `docs/research` 可转化为内容营销资产 |
-| 需求 intake | 访谈客户、追问业务优先级、确认硬门槛 | 从 JD/访谈纪要抽取目标角色、能力模型、关键词、排除项 | `docs/design-discussions/2026-05-21-llm-inference-role-deep-dive.md`、`skills/maimai-talent-search-campaign/SKILL.md` |
+| 需求 intake | 访谈客户、追问业务优先级、确认硬门槛 | 从 JD/访谈纪要抽取目标角色、能力模型、关键词、排除项 | `docs/design-discussions/2026-05-21-llm-inference-role-deep-dive.md`、`agents/skills/maimai-talent-search-campaign/SKILL.md` |
 | 搜索策略 | 批准搜索计划、决定平台和风险边界 | 生成公司池、岗位别名、关键词包、wave 计划、run-policy | `maimai-talent-search-campaign` 合同文件 |
 | 平台寻访 | 登录、处理验证码、安全页、人工确认计划 | 在安全边界内执行 search wave、raw 落盘、断点恢复 | `agents/workflows/maimai-unattended-campaign/AGENT.md`、`scripts/maimai_campaign_orchestrator.py` |
 | 人才库召回 | 判断历史人选是否可复用、避免误合并 | 本地检索、只读匹配、评分、生成 TopN | `agents/workflows/talent-library/AGENT.md`、`scripts/llm_inference_talent_match.py` |
