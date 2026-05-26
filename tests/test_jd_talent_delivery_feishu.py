@@ -670,6 +670,12 @@ def test_preview_values_normalizes_multi_segment_rich_text_cells() -> None:
     assert feishu._preview_values(preview) == [["成果展示：https://ai.fe..."]]
 
 
+def test_preview_values_normalizes_boolean_cells_to_sheet_literals() -> None:
+    preview = {"data": {"valueRange": {"values": [["contacted", "offer"], [True, False]]}}}
+
+    assert feishu._preview_values(preview) == [["contacted", "offer"], ["TRUE", "FALSE"]]
+
+
 def test_sheet_readback_allows_trailing_blank_columns(tmp_path: Path) -> None:
     csv_path = tmp_path / "queue.csv"
     _write(csv_path, "a,b\n1,2\n")

@@ -4,6 +4,29 @@
 
 ## Active Task
 
+- [x] 发布 JD 推荐 feedback 指南到飞书（2026-05-26）：把 `docs/manual/jd-delivery-feedback-guide.md` 导入并移动到飞书知识库 `JD需求交付`。
+  - [x] Plan：先检查 `lark-cli` 鉴权；对 Markdown 执行 docx import dry-run 和 wiki move dry-run；真实导入后移动到 `space_id=7642607697183001542` 根目录；最后读回 Wiki 节点和 Doc 内容。
+  - [x] Verify Plan：修改边界限于任务记录；验证方式为 `lark-cli doctor/auth status`、dry-run 成功、真实导入/移动成功、Wiki node get 和 docs fetch 读回成功、`git diff --check`。
+  - [x] Dry-run 导入和 Wiki 移动。
+  - [x] 真实导入、移动和读回。
+  - [x] Review：已将 `docs/manual/jd-delivery-feedback-guide.md` 以 Docx 导入飞书并移动到 `JD需求交付` 知识库根目录。飞书 Wiki 链接：`https://sq8org1v4k6.feishu.cn/wiki/BEjWwIIlGifRWJkUigncAL7tnrb`；Doc 链接：`https://sq8org1v4k6.feishu.cn/docx/QEi2dqbkOo8YLzxBwDlc2ySanRh`。验证：`lark-cli doctor` 和 `lark-cli auth status` 通过；`drive +import --dry-run` 和 `wiki +move --dry-run` 通过；真实导入 ticket `7644044282513656789` 成功；wiki move task `7644044350623845306-290e50094ca80b18149d000d82822cc51f1e429b` 成功；`wiki +node-get` 读回标题 `JD推荐反馈填写指南`、`obj_type=docx`、`space_id=7642607697183001542`；`docs +fetch` 读回正文包含指南标题和 feedback 表字段。
+
+- [x] JD 推荐 feedback 填写用户指南（2026-05-26）：在 `docs/manual/` 写一份面向纯业务人员的 outreach feedback 列填写指南，要求通俗易懂，并包含场景和示例。
+  - [x] Plan：参考现有 manual 文档风格和 `jd_delivery_feedback` 字段合同，新增一份独立指南，不改业务逻辑。
+  - [x] Verify Plan：待修改文件限定为 `docs/manual/jd-delivery-feedback-guide.md`、`tasks/todo.md`、`tasks/archive/2026-05.md`；验证方式为 Markdown 自检、字段名/合法值核对、占位符/冲突标记扫描和 `git diff --check`。
+  - [x] 写入用户指南。
+  - [x] 自检字段、场景、示例和业务可读性。
+  - [x] Review：已新增 `docs/manual/jd-delivery-feedback-guide.md`，面向业务、猎头和招聘同学说明 outreach 表最后 8 个 feedback 列的填写方式。文档覆盖什么时候填、最小填写方法、每列合法值、6 个常见业务场景、原因码选择、填写前后对比和常见问题。验证：字段名和合法值与 `scripts/jd_delivery_feedback.py` 合同一致；`rg -n "TBD|TODO|<<<<<<<|=======|>>>>>>>|待补|占位" docs/manual/jd-delivery-feedback-guide.md` 无命中；`git diff --check -- docs/manual/jd-delivery-feedback-guide.md tasks/todo.md tasks/archive/2026-05.md` 通过。
+
+- [x] JD 推荐 feedback 格式飞书 demo（2026-05-26）：用新开发的 `jd-talent-delivery` workflow 生成一版 demo 人选推荐和 outreach 表，发布到飞书，让用户查看 feedback 列的填写格式。
+  - [x] Plan：使用现有标准 JD 做小规模 demo 推荐；生成独立 `data/output/` 运行目录；在 outreach CSV 的反馈列补入少量示例值；执行飞书 dry-run、真实发布、回读和通知。
+  - [x] Verify Plan：修改边界限于本次 demo 输出和任务记录，不写 `data/talent.db`，不发起新的平台搜索；验证方式为 `lark-cli doctor/auth status`、质量门禁、飞书回读、CSV feedback 列检查和主库只读状态对比。
+  - [x] S0：前置检查和 demo JD 选择。
+  - [x] S1-S6：生成岗位画像、评分卡、推荐报告和 outreach 表。
+  - [x] Demo feedback：在 outreach 表补充示例反馈列值，并编译一份本地反馈样例。
+  - [x] S7-S8：发布飞书、回读 Wiki/Doc/Sheet 并发送完成通知。
+  - [x] Review：已用 `docs/business-requirements/12-tencent-games-multimodal-strategy-product-manager.md` 生成 Top10 demo 交付包，输出目录 `data/output/12-tencent-games-multimodal-strategy-product-manager-2026-05-26`。推荐质量门禁 passed，粗筛 19881 人、精排 536 人，Top10 为 `A=2/B=8/C=0/淘汰=0`。outreach 表包含并展示 8 个 feedback 列：`feedback_label`、`feedback_stage`、`reason_codes`、`hunter_note`、`contacted`、`submitted_to_client`、`interviewed`、`offer`；前两行填入 demo 示例，读回 `R1:Y3` 通过。飞书链接：Wiki `https://sq8org1v4k6.feishu.cn/wiki/YeQMw69ANivOOikdSapcnjLanDg`，JD `https://sq8org1v4k6.feishu.cn/docx/DwjndxnFeoIL0vxqJHEckZXRnMP`，岗位画像 `https://sq8org1v4k6.feishu.cn/docx/GDdydMFFkofJWmx6FXqcLy5KnGb`，推荐报告 `https://sq8org1v4k6.feishu.cn/docx/ORi6dj7Zlo3IKrxyqqDcE8hFnSh`，外联表 `https://sq8org1v4k6.feishu.cn/sheets/UjQJsnyG5hYu1Pt1rKncXKK0n5b`。本地 feedback 样例 `feedback/delivery-feedback-demo.json` 已编译为 `feedback-summary-demo.json` 和 `calibration-suggestions-demo.json`。发布时发现 Sheet 布尔值读回为 API boolean 导致 `TRUE/FALSE` 比对失败，已用 TDD 修复 `scripts/jd_talent_delivery_feishu.py` 的布尔归一化并补测试。完成通知已发 `JD需求协同`，`message_id=om_x100b6e64b451cca4b3c2c8ea302308d`。主库保持只读，`match_scores=0`。验证：`lark-cli doctor/auth status` 通过；`.venv/bin/python -m pytest tests/test_jd_talent_delivery_feishu.py tests/test_jd_delivery_feedback.py -q` -> `54 passed`；全量 `.venv/bin/python -m pytest tests scripts -q` -> `880 passed, 1 warning`；`git diff --check` 和 `py_compile` 通过。
+
 - [x] JD 推荐反馈闭环阶段一实现（2026-05-26）：按 `docs/superpowers/plans/2026-05-26-jd-delivery-feedback-phase1.md` 实现反馈采集和编译第一阶段，保持 `data/talent.db` 只读、不上传猎头备注、不自动修改评分卡。
   - [x] Plan：按 5 个任务执行：反馈编译器合同、外联表反馈列、发布预检兼容、workflow/skill 文档、最终验证。
   - [x] Verify Plan：代码改动限定为计划列出的 scripts/schemas/tests/workflow/skill 文件；执行中每个任务遵守 TDD，先红灯再实现；验证使用 `.venv/bin/python`。

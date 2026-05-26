@@ -695,6 +695,8 @@ def _preview_values(data: dict[str, Any]) -> list[list[str]]:
 
 
 def _preview_cell_value(cell: Any) -> str:
+    if isinstance(cell, bool):
+        return "TRUE" if cell else "FALSE"
     if isinstance(cell, dict):
         for key in ("text", "link"):
             value = cell.get(key)
