@@ -4,6 +4,69 @@
 
 ## Active Task
 
+- [x] 本机人才库同步到飞书（2026-05-26）：执行真实飞书云同步，验证远端加密 bundle 结构和重复同步幂等。
+  - [x] Plan：使用已初始化的本机 `.env` 和飞书 Drive 目录执行 `scripts.talent_cloud_sync sync`；只上传 Fernet 加密 bundle/index，不上传 `data/talent.db`；同步后核对远端 `bundle-index` 和 `bundles`；若重复同步暴露幂等问题，先用测试复现再修复。
+  - [x] Verify Plan：验证方式为真实 `sync` 输出、飞书端文件列表、聚焦云同步测试、py_compile 和 `git diff --check`；密钥不输出到聊天或任务记录。
+  - [x] 完成首次真实飞书同步并确认候选人/详情/source profile 计数。
+  - [x] 读取第二次 `sync` 校验结果，发现重复上传新 bundle。
+  - [x] 用失败测试固定“逻辑数据库未变化时不重复上传”的幂等要求。
+  - [x] 修复云同步数据库指纹，避免 raw SQLite 文件字节变化导致重复上传。
+  - [x] 重新执行飞书同步幂等验证、远端文件核对和测试。
+  - [x] 写入 Review 并归档完整记录。
+  - Review：已把本机人才库同步到飞书 Drive 根目录 `Talent Agent Sync`。真实同步只上传加密 bundle 分片和 index，不上传 `data/talent.db`。首次同步成功上传 bundle `3b06badc-9ccc-4531-83fb-6a9c13f7c0b0`，包含 `candidates=20013`、`candidate_details=20013`、`source_profiles=20013`。第二次旧版幂等校验暴露 raw SQLite 文件哈希不稳定导致重复上传，产生 bundle `c8ab43fd-964e-4ff1-9f2b-224284685711`；已按 TDD 修复为基于同步导出内容的语义指纹，并迁移本机 cloud-state。修复后真实 `sync` 返回 `pull.skipped=2`、`push.uploaded=false`、`reason=unchanged`，远端保持 `bundle-index=2`、加密分片 `bundles=12`，没有第三次上传。已补充同步工作目录清理和 `.gitignore` 的 `data/sync/`，并删除本机明文临时 zip，只保留 `cloud-state.json`。`doctor` 返回 `ok=true`，飞书 quota API `90007001` 继续作为 warning，不阻断同步。验证：`.venv/bin/python -m pytest tests/test_talent_cloud_sync.py -q` -> `25 passed`；`.venv/bin/python -m pytest tests scripts -q` -> `906 passed, 1 warning`；py_compile 和 `git diff --check` 通过。
+
+- [x] 人才库云同步密钥和本机飞书配置初始化（2026-05-26）：引导并完成本机 `.env`、飞书 Drive 根目录和同步目录初始化。
+  - [x] Plan：检查 `lark-cli` 鉴权、`.gitignore`、现有 `.env` 和云同步 CLI 配置读取方式；创建或复用飞书 Drive 根文件夹；生成 Fernet 同步密钥并写入本机 `.env`；初始化远端目录；不执行真实 push/sync，不上传 `data/talent.db`。
+  - [x] Verify Plan：验证 `.env` 权限和忽略状态、CLI 可读取本地 `.env`、飞书目录结构存在、`doctor/status` 可运行、聚焦测试和 py_compile 通过。
+  - [x] 修复 CLI 入口读取 `.env` 的问题，并补测试。
+  - [x] 创建飞书 Drive 根文件夹 `Talent Agent Sync`。
+  - [x] 生成同步密钥并写入本机 `.env`，密钥未输出到聊天。
+  - [x] 初始化飞书同步子目录。
+  - [x] 修复真实 `lark-cli` 返回包装和容量检查兼容问题，并补测试。
+  - Review：本机 `.env` 已新增 `TALENT_SYNC_PROVIDER=feishu`、飞书根目录 token、`TALENT_SYNC_FEISHU_AS=user`、同步状态/工作目录、自动 apply 开关和 Fernet 同步密钥；`.env` 权限为 `rw-------` 且被 `.gitignore` 忽略。已创建飞书 Drive 根文件夹 `Talent Agent Sync`，链接为 `https://sq8org1v4k6.feishu.cn/drive/folder/LtI3f0lKql7RUWdOB8CcQ5CInOb`；远端目录已初始化，包含 `_meta/nodes`、`bundle-index`、`bundles`、`attachments`、`locks`、`tmp`。`status` 返回 `provider=feishu`、本机 `node_id=04e781c4-2c3e-40a3-8ca9-1f8df02c562f`、候选人 `20013`、已应用 bundle `0`。`doctor` 返回 `ok=true`，容量 API 当前因飞书 `quota_details` 接口返回 `90007001` 被降级为 warning，不阻断同步配置。安全边界：未执行 `push/sync`，未上传 raw SQLite，未打印同步密钥。验证：`.venv/bin/python -m pytest tests/test_talent_cloud_sync.py -q` -> `22 passed`；`.venv/bin/python -m py_compile scripts/talent_cloud_sync.py scripts/talent_cloud_sync_providers.py` 通过；`git diff --check -- scripts/talent_cloud_sync.py scripts/talent_cloud_sync_providers.py tests/test_talent_cloud_sync.py` 通过。
+
+- [x] 人才库云端同步非技术使用指南（2026-05-26）：在 `docs/manual/` 写一份面向非技术人士的云同步操作指南。
+  - [x] Plan：参考现有 `docs/manual/talent-sync-guide.md`、云同步 CLI 和飞书 Drive P1 边界，新增独立手册；不改业务逻辑、不写 `data/talent.db`、不访问真实飞书 Drive。
+  - [x] Verify Plan：待修改文件限定为 `docs/manual/talent-cloud-sync-guide.md`、任务台账和可选手册索引；验证方式为文档可读性自检、关键安全边界扫描、占位符/冲突标记扫描和 `git diff --check`。
+  - [x] 写入非技术用户指南。
+  - [x] 自检并归档任务记录。
+  - Review：已新增 `docs/manual/talent-cloud-sync-guide.md`，共 292 行，面向业务、猎头和招聘同学说明人才库云端同步。文档覆盖同步目的、3 条核心规则、加密同步包工作方式、首次配置职责、日常同步话术、多人协作顺序、正常状态含义、冲突处理和常见问题。安全边界明确：不要手动上传/覆盖 `data/talent.db`，不要把同步密钥发群聊/写文档/提交 Git，飞书空间满时不要手删 `bundles` 或 `bundle-index`，冲突时只读查看并停止自动写库。本轮只写 Markdown 和任务记录，未访问真实飞书 Drive，未写 `data/talent.db`，未改业务逻辑。验证：`.venv/bin/python -m scripts.talent_cloud_sync --help` 通过；关键术语扫描覆盖 `sync --provider feishu`、`doctor --provider feishu`、`init-remote --provider feishu`、`data/talent.db`、冲突和加密；`rg -n "TBD|TODO|<<<<<<<|=======|>>>>>>>|待补|占位|implement later|fill in" docs/manual/talent-cloud-sync-guide.md` 无命中；`git diff --check -- docs/manual/talent-cloud-sync-guide.md tasks/todo.md tasks/archive/2026-05.md` 通过。
+
+- [x] 飞书 Drive 版人才库云同步 P1 实现（2026-05-26）：按实施计划开发 Feishu Drive provider 云同步，完成后发飞书通知。
+  - [x] Plan：执行 `docs/superpowers/plans/2026-05-26-feishu-drive-talent-cloud-sync-p1.md`；实现边界为新增云同步 CLI/provider/tests，更新依赖、手册和任务记录；不上传 raw SQLite、不写 `data/talent.db`、测试不创建真实飞书目录。
+  - [x] Verify Plan：遵守 TDD，先用 `tests/test_talent_cloud_sync.py` 红灯验证缺失模块和 Feishu init 行为，再实现；验证方式为聚焦云同步测试、`tests/test_talent_sync.py` 回归、py_compile、全量 pytest、diff hygiene。
+  - [x] 新增 `cryptography>=42.0.0` 并安装到 `.venv`。
+  - [x] 新增云同步 CLI、LocalFs provider、FeishuDriveProvider、加密 bundle push/pull/sync、冲突预览阻断和状态记录。
+  - [x] 拆分 provider 模块，保持主 CLI 文件不过度膨胀。
+  - [x] 更新 `docs/manual/talent-sync-guide.md` 的飞书 Drive P1 使用说明。
+  - [x] 执行聚焦、编译、全量验证和 diff hygiene。
+  - [x] 发送飞书完成通知。
+  - Review：已完成 Feishu Drive P1 云同步实现。新增 `scripts/talent_cloud_sync.py`、`scripts/talent_cloud_sync_common.py`、`scripts/talent_cloud_sync_providers.py` 和 `tests/test_talent_cloud_sync.py`；实现 Fernet 加密、LocalFs provider、FeishuDriveProvider、`keygen/status/init-remote/push/pull/sync/doctor` CLI、不可变加密 bundle + `bundle-index`、错误 key 阻断、冲突预览阻断、tombstone 传播和重复 sync 幂等。更新 `requirements.txt` 增加 `cryptography>=42.0.0`，并补充 `docs/manual/talent-sync-guide.md` 的飞书 Drive P1 使用说明。测试只使用 `tmp_path` 和 fake Feishu runner，未写 `data/talent.db`，未创建真实飞书同步目录，未上传 raw SQLite。验证：`tests/test_talent_cloud_sync.py tests/test_talent_sync.py` -> `56 passed`；全量 `.venv/bin/python -m pytest tests scripts -q` -> `899 passed, 1 warning`；py_compile 和 `git diff --check` 通过。完成通知已发 `JD需求协同`，`message_id=om_x100b6e60e50f3098b2515770c2e1dad`。
+
+- [x] 飞书 Drive 版人才库云同步 P1 实施计划（2026-05-26）：基于已确认的 Feishu Drive provider 设计，写可执行 TDD 实施计划。
+  - [x] Plan：读取 P1 设计、`talent_sync.py`、`tests/test_talent_sync.py` 和飞书 CLI 约束；输出 `docs/superpowers/plans/2026-05-26-feishu-drive-talent-cloud-sync-p1.md`，覆盖文件结构、任务拆分、TDD 步骤、命令、验收和执行方式。
+  - [x] Verify Plan：本轮只新增实施计划和任务记录，不改业务代码、不写 `data/talent.db`、不访问真实飞书 Drive；验证方式为计划占位符扫描、设计覆盖自检和 `git diff --check`。
+  - [x] 写入实施计划文档。
+  - [x] 自检计划覆盖 P1 设计并更新任务记录。
+  - Review：已新增 `docs/superpowers/plans/2026-05-26-feishu-drive-talent-cloud-sync-p1.md`，共 7 个任务：配置/加密/状态、LocalFs provider、加密 bundle push、pull/错误 key/冲突阻断、sync/tombstone/idempotence、FeishuDriveProvider/doctor、CLI/手册/最终验证。计划明确新增 `scripts/talent_cloud_sync.py` 和 `tests/test_talent_cloud_sync.py`，修改 `requirements.txt` 加 `cryptography>=42.0.0`，并在实现完成后更新 `docs/manual/talent-sync-guide.md`。计划覆盖 Feishu Drive provider、不可变 `bundle-index`、不同步 raw SQLite、冲突默认阻断、确认式写入 `sync_conflicts`、容量/scope doctor、错误 key 不导入和本地模拟双库同步验收。本轮未改业务代码、未写 `data/talent.db`、未访问真实飞书 Drive。验证：占位符/冲突标记扫描无命中；设计覆盖自检已写入计划末尾；`git diff --check -- docs/superpowers/plans/2026-05-26-feishu-drive-talent-cloud-sync-p1.md tasks/todo.md` 通过。
+
+- [x] 飞书 Drive 版人才库云同步 P1 设计（2026-05-26）：阅读 `docs/design-discussions/2026-05-25-talent-library-cloud-sync-design.md`，把数据库云端同步 P1 收敛为飞书 Drive 云端环境。
+  - [x] Plan：先读取现有云同步设计、`talent_sync.py` bundle 能力、飞书 CLI/Drive 可用命令和历史任务记录；再更新设计文档中云端选型、P1 架构、manifest/目录、CLI、权限、容量、失败恢复、验收和实施边界；最后做文档自检和 diff 检查。
+  - [x] Verify Plan：修改边界限定为设计文档和任务记录，不实现代码、不写 `data/talent.db`、不创建真实飞书目录；验证方式为占位符/冲突标记扫描、关键术语扫描和 `git diff --check`。
+  - [x] 更新设计文档 P1 为 Feishu Drive provider。
+  - [x] 文档自检和任务记录归档。
+  - Review：已更新 `docs/design-discussions/2026-05-25-talent-library-cloud-sync-design.md`。P1 从 S3/R2/OSS/MinIO 优先改为 Feishu Drive provider 优先；保留“不直接同步 raw SQLite，只同步加密 bundle”的核心原则；新增飞书 Drive 目录模型 `Talent Agent Sync/_meta/bundle-index/bundles/attachments/locks/tmp`；用不可变 bundle + 不可变 `bundle-index/*.json` 规避飞书 Drive 缺少 S3 条件写入的问题；明确不使用 `lark-cli drive +sync` 直接同步目录；补充 `lark-cli` 命令、必要 scope、容量检查、orphan bundle 修复、冲突确认式 apply、验收项和推荐 MVP。验证：`rg -n 'TBD|TODO|<<<<<<<|=======|>>>>>>>|待补|占位|implement later|fill in' docs/design-discussions/2026-05-25-talent-library-cloud-sync-design.md` 无命中；关键 P1 术语扫描通过；`git diff --check -- docs/design-discussions/2026-05-25-talent-library-cloud-sync-design.md tasks/todo.md` 通过。
+
+- [x] 导入脉脉列表和详情 capture 到人才库（2026-05-26）：先导入 `/Users/eric/Downloads/maimai-capture-2026-05-25.json`，完成后再导入 `/Users/eric/Downloads/maimai-detail-capture-2026-05-25.json`。
+  - [x] Plan：读取 `talent_library import` 与 `maimai_detail_import` 合同；列表 capture 先 dry-run，clean 后备份并 apply；详情 capture 在列表 apply 后再 dry-run，检查 matched/unmatched/failed/apply_blockers/capture_blockers，clean 后备份并 apply；最后做写后统计、完整性和报告校验。
+  - [x] Verify Plan：修改边界为 `data/talent.db`、`data/output/` 导入报告和任务记录；不手写 SQL 写库、不直接复制覆盖主库；验证方式为列表 dry-run/apply JSON、详情 dry-run/apply JSON、`PRAGMA integrity_check`、关键表计数、`maimai_detail_capture` 覆盖数和 `git status --short -- data/talent.db`。
+  - [x] 列表 capture dry-run 预检。
+  - [x] 备份主库并执行列表 apply。
+  - [x] 详情 capture dry-run 预检。
+  - [x] 备份主库并执行详情 apply。
+  - [x] 写后验证和任务记录。
+  - Review：列表 capture dry-run/apply 均为 `raw=354/unique=354/created=132/merged=222/pending=0/errors=0`。详情原始 dry-run 为 `matched=354/unmatched=0/failed_jobs=0/capture_blockers=0/apply_blockers=1`，唯一阻断为 `platform_id=237110197`、候选人“无无”、`missing_work_experience`；按既有脚本和测试合同生成过滤副本 `data/output/maimai-detail-capture-2026-05-25-filtered-for-import.json`，记录跳过报告 `data/output/maimai-detail-2026-05-26-skipped-apply-blockers.json`，过滤后 dry-run clean，apply 写入 `353` 条详情并全部 verified。备份：`data/backups/talent-20260526-before-maimai-list-import.db`、`data/backups/talent-20260526-before-maimai-detail-import.db`。写后主库 `PRAGMA integrity_check=ok`，`candidates=20013/source_profiles_maimai=20013/candidate_details=20013/maimai_detail_capture=5802/data_level_detailed=19986/pending_merges=0/sync_conflicts=0`；`talent_sync status` 返回候选人 `20013`、导入记录 `1`。验证：`.venv/bin/python -m pytest tests/test_talent_library_cli.py tests/test_maimai_detail_import.py tests/test_talent_db.py -q` -> `142 passed`；`git diff --check -- tasks/todo.md` 通过。
+
 - [x] 发布 JD 推荐 feedback 指南到飞书（2026-05-26）：把 `docs/manual/jd-delivery-feedback-guide.md` 导入并移动到飞书知识库 `JD需求交付`。
   - [x] Plan：先检查 `lark-cli` 鉴权；对 Markdown 执行 docx import dry-run 和 wiki move dry-run；真实导入后移动到 `space_id=7642607697183001542` 根目录；最后读回 Wiki 节点和 Doc 内容。
   - [x] Verify Plan：修改边界限于任务记录；验证方式为 `lark-cli doctor/auth status`、dry-run 成功、真实导入/移动成功、Wiki node get 和 docs fetch 读回成功、`git diff --check`。

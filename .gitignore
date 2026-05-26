@@ -41,6 +41,7 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 data/backups/
+data/sync/
 *.pyc
 __pycache__/
 

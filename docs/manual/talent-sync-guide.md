@@ -9,14 +9,15 @@
 1. [什么是数据同步](#什么是数据同步)
 2. [什么时候需要同步](#什么时候需要同步)
 3. [准备工作](#准备工作)
-4. [场景一：把人才库备份到另一台电脑](#场景一把人才库备份到另一台电脑)
-5. [场景二：两台电脑互相同步](#场景二两台电脑互相同步)
-6. [场景三：同事之间合并人才数据](#场景三同事之间合并人才数据)
-7. [场景四：在一台电脑删了人，另一台也要删](#场景四在一台电脑删了人另一台也要删)
-8. [场景五：检查同步包是否完好](#场景五检查同步包是否完好)
-9. [场景六：重复导入同一个包会怎样](#场景六重复导入同一个包会怎样)
-10. [遇到冲突怎么办](#遇到冲突怎么办)
-11. [常见问题](#常见问题)
+4. [通过飞书 Drive 云同步（P1）](#通过飞书-drive-云同步p1)
+5. [场景一：把人才库备份到另一台电脑](#场景一把人才库备份到另一台电脑)
+6. [场景二：两台电脑互相同步](#场景二两台电脑互相同步)
+7. [场景三：同事之间合并人才数据](#场景三同事之间合并人才数据)
+8. [场景四：在一台电脑删了人，另一台也要删](#场景四在一台电脑删了人另一台也要删)
+9. [场景五：检查同步包是否完好](#场景五检查同步包是否完好)
+10. [场景六：重复导入同一个包会怎样](#场景六重复导入同一个包会怎样)
+11. [遇到冲突怎么办](#遇到冲突怎么办)
+12. [常见问题](#常见问题)
 
 ---
 
@@ -60,6 +61,84 @@
    - **同步包会生成为一个 zip 压缩文件**
 
 你不需要了解压缩文件里面有什么，系统会自动处理。
+
+---
+
+## 通过飞书 Drive 云同步（P1）
+
+飞书 Drive 云同步适合多台电脑长期共用一套人才库。P1 的做法不是把 `data/talent.db` 直接放进飞书盘，而是先用系统导出安全同步包，再加密上传到飞书 Drive。
+
+### 重要规则
+
+- 只上传加密后的同步包和索引，不上传原始 SQLite 数据库。
+- 每台电脑使用同一个加密 key，key 丢失后旧同步包无法解密。
+- 不要把 `TALENT_SYNC_ENCRYPTION_KEY` 写进 Git、文档或聊天记录。
+- 飞书空间是否够用以飞书后台和 `doctor` 检查为准。
+- 如果发现同步冲突，云同步会停止自动写入，等你确认后再处理。
+
+### 第一次设置
+
+生成一个加密 key：
+
+```bash
+.venv/bin/python -m scripts.talent_cloud_sync keygen
+```
+
+把 key 和飞书 Drive 根目录 token 配到当前终端环境：
+
+```bash
+export TALENT_SYNC_PROVIDER=feishu
+export TALENT_SYNC_FEISHU_ROOT_FOLDER_TOKEN='<飞书文件夹 token>'
+export TALENT_SYNC_ENCRYPTION_KEY='<上一步生成的 key>'
+```
+
+初始化飞书目录：
+
+```bash
+.venv/bin/python -m scripts.talent_cloud_sync init-remote --provider feishu
+```
+
+系统会在指定根目录下准备这些子目录：`_meta`、`bundle-index`、`bundles`、`attachments`、`locks`、`tmp`。
+
+### 同步前检查
+
+每次正式同步前，先跑检查：
+
+```bash
+.venv/bin/python -m scripts.talent_cloud_sync doctor --provider feishu
+```
+
+检查会确认 `lark-cli`、飞书授权、必要权限、容量状态和加密配置是否可用。
+
+### 推送和拉取
+
+把本机人才库推到飞书：
+
+```bash
+.venv/bin/python -m scripts.talent_cloud_sync push --provider feishu
+```
+
+从飞书拉取别人推送的同步包：
+
+```bash
+.venv/bin/python -m scripts.talent_cloud_sync pull --provider feishu
+```
+
+常规使用可以直接执行双向同步：
+
+```bash
+.venv/bin/python -m scripts.talent_cloud_sync sync --provider feishu
+```
+
+`sync` 会先拉取远端新包，确认没有冲突后再推送本机最新包。重复执行同一次同步不会重复导入。
+
+### 冲突时怎么办
+
+如果 `pull` 或 `sync` 返回 `blocked`，说明远端数据和本机数据存在需要人工判断的冲突。此时系统不会自动改写本机人才库。你需要先查看返回的冲突摘要，再按团队流程决定是否用传统同步包导入并确认：
+
+```bash
+.venv/bin/python -m scripts.talent_sync import --bundle <bundle.zip> --db data/talent.db --apply --confirm "确认同步人才库"
+```
 
 ---
 
