@@ -367,8 +367,15 @@ def _copy_db_snapshot(source_path: Path, target_path: Path) -> None:
     if not source_path.exists():
         return
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(str(source_path)) as source, sqlite3.connect(str(target_path)) as target:
-        source.backup(target)
+    source = sqlite3.connect(str(source_path))
+    try:
+        target = sqlite3.connect(str(target_path))
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+    finally:
+        source.close()
 
 
 def _preview_import_bundle(bundle_path: Path, db_path: Path, work_dir: Path) -> dict[str, Any]:

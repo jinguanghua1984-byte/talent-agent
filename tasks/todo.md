@@ -94,7 +94,9 @@
   - [x] Verify Plan：本次提交边界为当前工作区所有非忽略变更；不纳入 `.gstack/`、数据库、临时 Cookie/token/密码、真实候选人隐私或本地浏览器会话产物。
   - [x] Task 1：完成 scope 复查和验证。当前变更集中在 CRM 新增人才 API/CLI、脱敏研究文档、`.gstack/` 忽略、任务账本和经验记录；`git diff --check`、凭据扫描、`python -m py_compile scripts\crm_cli.py` 通过；全量 `python -m pytest tests scripts -q` -> `903 passed, 1 warning`，warning 为既有 `scripts/test_boss.py` event loop deprecation。
   - [x] Task 2：暂存全部非忽略变更并复查 staged diff。staged 范围为 9 个文件：CRM API 合同/调查文档、脱敏 payload 样例、`scripts/crm_cli.py`、`tests/test_crm_cli.py`、`.gitignore`、任务账本、经验记录和 error log；`git diff --cached --check` 通过。
-  - [ ] Task 3：推送到 `origin/main`，验证 status clean 且 ahead/behind 为 `0 0`。
+  - [x] Task 3：处理远端先行提交并完成 rebase。首次 push 被拒绝，因为 `origin/main` 领先 2 个提交；已 fetch 后把本地 CRM 提交 rebase 到最新远端，保留远端飞书云同步任务记录和本地 CRM 任务记录。
+  - [x] Task 4：修复 rebase 后暴露的 Windows 云同步回归。全量测试首次失败为 `talent_cloud_sync` 预览库 `preview.db` 句柄未关闭；已改为显式关闭 SQLite source/target 连接，并记录到 `memory/error-log.md`。聚焦回归 `2 passed`；合并后全量 `python -m pytest tests scripts -q` -> `930 passed, 1 warning`，warning 仍为既有 `scripts/test_boss.py` event loop deprecation。
+  - [ ] Task 5：推送到 `origin/main`，验证 status clean 且 ahead/behind 为 `0 0`。
 
 - [ ] CRM 新增人才 API 调用方式调查（2026-05-26）：在用户授权和手动登录前提下，观察 `http://101.200.132.164/crm` 新增人才流程的真实网络请求，整理可复现 API 合同，并评估 CLI 封装路径。
   - [x] Plan：先打开 CRM 并确认页面状态；再由用户手动登录/必要时接管；随后清空 network、执行一次“新增人才”；最后提取 method/path/headers/payload/response，脱敏后写出接口合同。
