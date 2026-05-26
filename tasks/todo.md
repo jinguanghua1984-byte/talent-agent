@@ -4,6 +4,15 @@
 
 ## Active Task
 
+- [x] 归档 2026-05-24 前的 superpowers 文档（2026-05-27）：将 `docs/superpowers/plans/` 和 `docs/superpowers/specs/` 中早于 2026-05-24 的 Markdown 按类别和月份移动到各自 archive 子目录。
+  - [x] Plan：归档范围为日期早于 `2026-05-24` 的 superpowers 文档；`plans` 归入 `docs/superpowers/plans/archive/YYYY-MM/`，`specs` 归入 `docs/superpowers/specs/archive/YYYY-MM/`；保留 `2026-05-24` 及之后文件在原位；`FEAT-017-boss-zhipin-channel-design.md` 依据 frontmatter `created: 2026-04-20` 归入 specs 的 `2026-04`。
+  - [x] Verify Plan：移动前盘点为 28 个 plan、13 个 spec；边界为文档路径整理和任务记录，不改业务脚本、不写 `data/talent.db`、不访问飞书；验证方式为移动后文件存在性、原目录剩余文件日期检查、当前文档引用扫描、`git diff --check` 和聚焦 pytest。
+  - [x] 创建 archive 子目录并用 `git mv` 移动归档文件。
+  - [x] 修复当前非历史文档中的必要路径引用。
+  - [x] 运行归档验证和 diff hygiene。
+  - [x] 写入 Review 并归档完整记录。
+  - Review：已按“早于 2026-05-24，不含 5 月 24 日当天”归档 superpowers 文档。移动 `28` 个 plan 到 `docs/superpowers/plans/archive/2026-04/` 和 `docs/superpowers/plans/archive/2026-05/`，移动 `13` 个 spec 到 `docs/superpowers/specs/archive/2026-03/`、`2026-04/`、`2026-05/`；`FEAT-017-boss-zhipin-channel-design.md` 按 frontmatter `created: 2026-04-20` 归入 specs 的 `2026-04`。顶层保留 `2026-05-24` 及之后文档；已更新 `agents/workflows/talent-library/AGENT.md` 和 `tasks/todo.md` 中当前非历史旧路径引用。验证：归档计数 `plans_archived=28/specs_archived=13`，顶层旧日期文件 `0/0`；当前非归档路径引用扫描无命中；`.venv/bin/python -m pytest tests/test_agent_architecture.py tests/test_talent_library_workflow.py -q` -> `12 passed`；`.venv/bin/python -m pytest tests scripts -q` -> `931 passed, 1 warning`，warning 为既有 `scripts/test_boss.py` event loop deprecation；`git diff --check` 通过。
+
 - [x] Agent skill 分层和 Claude Code adapter 补齐（2026-05-27）：把根目录两个业务入口 skill 迁移到 `agents/skills/`，补齐 Claude Code 适配入口，并同步测试和文档。
   - [x] Plan：实施计划写入 `docs/superpowers/plans/2026-05-27-agent-skills-claude-adapters.md`；边界为 skill 文档迁移、Claude adapter、架构/skill 测试、README 和任务记录，不改业务脚本、不写 `data/talent.db`、不访问飞书。
   - [x] Verify Plan：实施前确认待修改文件为 `agents/skills/`、`.claude/skills/`、`agents/workflows/jd-talent-delivery/AGENT.md`、`tests/test_agent_architecture.py`、两个 skill 测试、`README.md`、`agents/README.md` 和任务记录；验证方式为红灯测试、聚焦测试、全量 `.venv/bin/python -m pytest tests scripts -q` 和 `git diff --check`。
@@ -466,7 +475,7 @@
   - [x] 产出同步预检报告和下一步确认口令。
   - [x] 测试库累计 apply 模拟因耗时过长中止并清理临时 DB；真实写入前改为即时备份 + 顺序 apply + 完整性验证。
 
-- [x] 混元 AI DATA 8JD batch campaign 搜索执行与 Campaign DB 扩库（2026-05-22）：基于 `docs/superpowers/plans/2026-05-22-hunyuan-8jd-maimai-sourcing-plan.md`，已按 8 个 JD campaign root 完成首轮 campaign-local 人才池扩充；主库同步与逐 JD 精排等待单独授权。
+- [x] 混元 AI DATA 8JD batch campaign 搜索执行与 Campaign DB 扩库（2026-05-22）：基于 `docs/superpowers/plans/archive/2026-05/2026-05-22-hunyuan-8jd-maimai-sourcing-plan.md`，已按 8 个 JD campaign root 完成首轮 campaign-local 人才池扩充；主库同步与逐 JD 精排等待单独授权。
   - [x] 生成 batch manifest、`jd-index.json`、8 个 campaign 的 `requirements.json`、`strategy.json`、`run-policy.json`、`campaign-manifest.json` 和 `search-implementation-plan.md`。
   - [x] 编译 8 个 campaign 的 `search-plan.json`、`search-units.jsonl` 和 `state/search-wave-plan.json`。
   - [x] 校验 query-only filters、manifest schema、03/04 低置信度缺失字段、样板词扫描和聚焦测试。
@@ -501,7 +510,7 @@
 - 2026-05-22：混元 8JD 主库级 detailed rank 已生成，汇总见 `data/output/hunyuan-8jd-main-db-match-2026-05-22/main-db-detailed-rank-summary.md`。
 - 2026-05-22：已开始核查通用化改造后 AI Infra schema 残留问题，并记录 lesson。
 - 2026-05-22：已核对混元数据策略负责人 campaign 的 JD、requirements、strategy、search-units、wave plan、live plan 和执行 raw 证据，未修改 campaign 计划。
-- 2026-05-22：已形成并执行 todo token 治理实施计划，详见 `docs/superpowers/plans/2026-05-22-todo-governance.md`。
+- 2026-05-22：已形成并执行 todo token 治理实施计划，详见 `docs/superpowers/plans/archive/2026-05/2026-05-22-todo-governance.md`。
 - 2026-05-21：混元大模型数据策略负责人脉脉寻访继续执行已完成，完整记录见 `tasks/archive/2026-05.md`。
 - 2026-05-21：飞书 Wiki JD requirements export、混元寻访计划等已归档，完整记录见 `tasks/archive/2026-05.md`。
 
@@ -564,18 +573,18 @@
 - 用户确认 batch 搜索计划后，已更新 8 个 campaign 的 `run-policy.json` 和 `state/stage-state.json`，并启动 CDP 浏览器；session manifest 写入 `data/campaigns/hunyuan-ai-data-8jd-batch-2026-05-22/state/browser-bootstrap.json`。
 - CDP 预检：启动前 `http://127.0.0.1:9888/json/version` 不可用；启动后返回 Chrome CDP version 信息，说明端口可用。当前状态为 `browser_bootstrap_launched_waiting_manual_handoff`。
 - 当前仍未执行真实脉脉搜索，未写 Campaign DB，未写主库 `data/talent.db`；下一步需要人工在该浏览器内登录脉脉、进入人才银行页并手动执行一次搜索模板。
-- 2026-05-22：已阅读 `docs/business-requirements/` 下 8 个文件名含 `hunyuan` 的 JD，并生成综合扩库型脉脉寻访计划：`docs/superpowers/plans/2026-05-22-hunyuan-8jd-maimai-sourcing-plan.md`。
+- 2026-05-22：已阅读 `docs/business-requirements/` 下 8 个文件名含 `hunyuan` 的 JD，并生成综合扩库型脉脉寻访计划：`docs/superpowers/plans/archive/2026-05/2026-05-22-hunyuan-8jd-maimai-sourcing-plan.md`。
 - 本计划采用“1 个 batch 计划 + 8 个 JD campaign root”的结构，先用共享公司池/关键词簇扩充 Campaign DB 与本地人才库，再用每个 JD 的 `strategy.json` 对 `data/talent.db` 做独立精排。
 - 已明确首轮 500 页预算分配、6 类人才画像簇、query-only 搜索边界、排除规则、详情抓取规则、Campaign DB 到主库的人工同步边界和逐 JD 本地精排命令形态。
 - 03/04 两个 JD 正文为“待补充”，计划中已标为低置信度；后续不能用它们给强结论，精排前需补正式 JD 或通过交付反馈校准。
-- 校验：计划文档样板词扫描无命中；`git diff --check -- docs/superpowers/plans/2026-05-22-hunyuan-8jd-maimai-sourcing-plan.md tasks/todo.md` 通过。
+- 校验：计划文档样板词扫描无命中；`git diff --check -- docs/superpowers/plans/archive/2026-05/2026-05-22-hunyuan-8jd-maimai-sourcing-plan.md tasks/todo.md` 通过。
 - 本轮未执行真实脉脉搜索，未写 Campaign DB，未写主库 `data/talent.db`。
 - 本轮调查中，重点区分“搜索执行真实使用的计划”和“后续评分/交付复用的通用脚本 schema”，避免把 AI Infra 样板残留误判成单点文案错误。
 - 本轮完成解释性核查和实施计划设计，未改 `data/campaigns/hunyuan-data-strategy-lead-2026-05-21/` 计划文件，也未运行全量 pytest。
 - 关键发现：`search-units.jsonl`、`state/search-wave-*.json`、`state/live-search-wave-*.json` 是混元岗位实际搜索计划；根目录 `search-plan.json` 和最终报告标题/方向仍带有 AI Infra V2 痕迹，应作为后续调整的高优先级复核点。
 - 进一步证据：严格 `allcompanies/positions` smoke 返回 0 人，query-only company anchor 返回 30 人，因此放弃严格结构化过滤有依据；但 wave002 resume 的真实请求出现 `allcompanies=BAT` 残留，说明 query-only 计划仍需显式清空高风险结构化过滤字段。
 - 提案方向：将 `maimai_ai_infra_*` 搜索计划、评分、方向覆盖、交付报告脚本拆为 campaign-generic runtime + role-specific strategy；新增公司/产品线 alias registry 与交付评价 feedback contract，让下次 JD campaign 能动态生成公司映射、评分维度和下一轮搜索策略。
-- 已将实施计划写入 `docs/superpowers/plans/2026-05-22-maimai-jd-campaign-generalization.md`，按 8 个工程任务拆分：先修 query-only 模板过滤残留，再补公司/产品线 registry、通用 search-plan 编译、通用 ranking、通用交付报告、feedback contract、混元 guardrail fixture/test 和最终回归。
+- 已将实施计划写入 `docs/superpowers/plans/archive/2026-05/2026-05-22-maimai-jd-campaign-generalization.md`，按 8 个工程任务拆分：先修 query-only 模板过滤残留，再补公司/产品线 registry、通用 search-plan 编译、通用 ranking、通用交付报告、feedback contract、混元 guardrail fixture/test 和最终回归。
 - 本计划阶段不执行真实脉脉搜索、不修改历史 campaign raw、不写 `data/talent.db`；后续实现必须先跑聚焦测试，再跑相关回归与 `git diff --check`。
 - `tasks/todo.md` 已缩减为当前工作台；完整历史迁移到 `tasks/archive/2026-05.md`。
 - 迁移前：`2621` lines，`364242` bytes；迁移后：`18` lines，`1503` bytes。

@@ -41,7 +41,7 @@ description: "猎头顾问人才库管理。用于人才导入、人才查询、
 | `agents/workflows/wechat-chat-sync/AGENT.md` | 微信聊天记录手动同步、markdown 归档和时间线索引 |
 | `agents/workflows/screen/AGENT.md` | JD 筛选和匹配评分 workflow |
 | `scripts/score_pipeline.py` | 批量评分和排序流水线 |
-| `docs/superpowers/specs/2026-05-10-talent-library-skill-design.md` | talent-library 设计规格 |
+| `docs/superpowers/specs/archive/2026-05/2026-05-10-talent-library-skill-design.md` | talent-library 设计规格 |
 
 ## 场景路由
 
