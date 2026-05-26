@@ -1,5 +1,7 @@
 # Lessons
 
+- 2026-05-26：当用户明确说某个 CRM 子表能力“暂时不用做/保持 TODO”（例如 `candidateproject_set`）时，不要为了推进产品化而补离线候选结构；应撤回实现、测试和文档结论，只保留待 live 抓包确认的 TODO，避免把未验证字段固化进 CLI 合同。
+- 2026-05-26：在 Codex App 内做网页调查、登录后抓包或页面协作时，应优先使用 Codex App 集成的 Browser 插件；不要因为仓库 AGENTS 提到 gstack 就先切到外部 gstack/browser，除非内置 Browser 不可用或用户明确要求 gstack。
 - 2026-05-24：脉脉 campaign 的 `account_day_page_guardrail` 是账号级执行护栏，不是业务需求硬上限；当用户明确换号并解除旧 500 上限时，必须同步更新 run-policy、后续 resume plan 和任务账本，不要继续用旧账号剩余额度截断 follow-up wave，但登录/验证码/403/429/432/非 JSON/模板漂移等平台安全停机规则仍然不变。
 - 2026-05-24：实现或验收带有“自适应/动态”语义的脉脉 campaign 时，不能只验证评分函数、状态文件和报告产物；必须验证 live gate/orchestrator 是否实际消费 `next_page`/`adaptive-unit-state` 生成后续执行计划，并用 raw 页分布证明存在 page 3-N，否则只能称为 probe-only 后置评估。
 - 2026-05-18：工作台里的默认说明文字不要复用日志/代码块样式，尤其不要用深色背景包裹普通提示；说明文本应使用浅色 hint 样式，日志列表、请求预览和提示条也要共享同一套浅色 surface token，避免同一界面出现两套日志背景。

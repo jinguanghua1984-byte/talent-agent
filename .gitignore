@@ -73,3 +73,4 @@ runtime/
 
 # Task process artifacts (local draft sources)
 tasks/*-doc.xml
+.gstack/

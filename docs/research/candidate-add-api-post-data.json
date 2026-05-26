@@ -1,0 +1,76 @@
+{
+  "attachments": "",
+  "avatar_id": null,
+  "email": "candidate@example.com",
+  "email1": "work@example.com",
+  "email2": "",
+  "mobile": "10000000000",
+  "mobile1": "",
+  "mobile2": "",
+  "englishName": "Test Candidate",
+  "chineseName": "测试候选人",
+  "gllueext113": "",
+  "gllueextWechat": "",
+  "gender": true,
+  "_ext4": "2000-01-01",
+  "locations": "<city_id>",
+  "citys": "<city_id>,<city_id>",
+  "industrys": "<industry_id>",
+  "functions": "<function_id>",
+  "gllueextfirstdegree": "n75722502808443490",
+  "annualSalary": 0,
+  "channel": "<channel_id>",
+  "owner": "<user_id>",
+  "shares": [],
+  "_ext1": "未婚",
+  "folders": [
+    "<folder_id>"
+  ],
+  "source": "gllue",
+  "type": "coldcall",
+  "gllueext112": "n81682323688982850",
+  "gllueext114": "n73407498137465810",
+  "gllueextNBC": "n51095470956125190",
+  "candidateexperience_set": [
+    {
+      "department": "",
+      "title": "示例职位",
+      "description": "示例工作经历描述",
+      "gllueextTitle": "",
+      "is_current": 1,
+      "client": {
+        "industrys": "",
+        "citys": "",
+        "id": "<company_id>",
+        "name": "示例公司"
+      },
+      "start": "2020-01",
+      "end": null,
+      "lang": "default"
+    }
+  ],
+  "candidateproject_set": [],
+  "candidateeducation_set": [
+    {
+      "school": "示例学校",
+      "degree": "Bachelor",
+      "major": "示例专业",
+      "is_current": 0,
+      "start": "2016-09",
+      "end": "2020-07",
+      "lang": "default"
+    }
+  ],
+  "note_set": {
+    "status": "Active",
+    "content_69": "示例备注",
+    "category": "Candidate Call",
+    "date": "2026-05-26 10:35:00",
+    "noteuser_set": [
+      {
+        "user": "<user_id>"
+      }
+    ]
+  },
+  "record_type": "coldcall"
+}
