@@ -29,12 +29,13 @@
   - [x] 写入脚本清理实施计划。
   - [x] 运行计划自检并归档任务记录。
   - Review：已新增 `docs/superpowers/plans/2026-05-26-script-cleanup-and-hygiene.md`，共 742 行。计划把脚本清理拆成 7 个任务：脚本清单和护栏基线、`scripts/test_*.py` 迁移到 `tests/`、删除已有替代的 `score_candidates.py`、审批后删除 Hunyuan ABC 一次性任务脚本、将 `data-manager.py` 改成 importable module + 兼容 shim、保留并标记 `maimai_ai_infra_*` legacy compatibility layer、最终全量验证和任务归档。计划明确 `hunyuan_abc_*` 删除必须先征得用户确认，`maimai_ai_infra_*` 第一阶段不删除，因为仍被 orchestrator 和回归测试引用。本轮未删除、移动或重构任何脚本，未写 `data/talent.db`，未访问飞书。验证：占位符/冲突标记扫描无命中；关键证据扫描覆盖 `scripts/test_boss.py`、`hunyuan_abc_detail_tasks.py`、`hunyuan_abc_parallel_supervisor.ps1`、`score_candidates.py`、`maimai_campaign_orchestrator.py`、`data-manager.py` 和 `maimai_ai_infra_search_plan.py`；新计划文件 `git diff --no-index --check /dev/null docs/superpowers/plans/2026-05-26-script-cleanup-and-hygiene.md` 无 whitespace 输出，`git diff --check -- tasks/todo.md tasks/archive/2026-05.md` 通过。计划文档任务未运行 pytest。
-- [ ] 推送全部更新（2026-05-27）：提交当前非忽略工作区更新，排除本地 DB/zip/同步状态等数据产物，变基到最新 `origin/main` 后验证并推送。
+- [x] 推送全部更新（2026-05-27）：提交当前非忽略工作区更新，排除本地 DB/zip/同步状态等数据产物，变基到最新 `origin/main` 后验证并推送。
   - [x] Plan：确认当前分支落后远端 2 个提交；仅纳入 7 个已跟踪代码/测试/任务/错误日志文件；不纳入 `data/talent.db`、`data/sync/cloud-state.json`、`data/output/*.zip`、`data/backups/*.db` 等本地数据产物。
   - [x] Task 1：暂存并提交当前非忽略更新。
   - [x] Task 2：rebase 到 `origin/main` 并处理冲突。
   - [x] Task 3：运行 diff hygiene、聚焦测试和必要全量验证。
-  - [ ] Task 4：推送 `main` 并核对本地/远端一致。
+  - [x] Task 4：推送 `main` 并核对本地/远端一致。
+  - Review：已提交并推送 `fc65729 Fix talent cloud sync detail merge` 到 `origin/main`，随后补充本条推送收口记录。提交范围为 7 个已跟踪文件：`memory/error-log.md`、`scripts/talent_cloud_sync_providers.py`、`scripts/talent_db.py`、`tasks/todo.md`、`tests/test_talent_cloud_sync.py`、`tests/test_talent_db.py`、`tests/test_talent_sync.py`；`data/talent.db`、`data/sync/cloud-state.json`、`data/output/*.zip`、`data/backups/*.db` 未纳入提交。rebase 时仅 `tasks/todo.md` 与远端文档归档记录发生冲突，已保留双方记录。验证：`git diff --check` 通过；`python -m py_compile scripts\talent_db.py scripts\talent_sync.py scripts\talent_cloud_sync.py scripts\talent_cloud_sync_providers.py` 通过；聚焦 `python -m pytest tests\test_talent_sync.py tests\test_talent_db.py tests\test_talent_cloud_sync.py -q` -> `192 passed`；全量 `python -m pytest tests scripts -q` -> `935 passed, 1 warning`，warning 为既有 `scripts/test_boss.py` event loop deprecation；首次推送输出 `b4c91a0..fc65729 main -> main`。
 
 - [x] 按字段级策略执行人才库云同步（2026-05-27）：在备份主库后真实导入已解析的远端 bundle；格里吸收远端更丰富的米哈游第一段履历描述，华珊保留本地旧版履历主体，避免盲目覆盖。
   - [x] Plan：先备份 `data/talent.db` 并记录同步前计数；基于已下载 bundle 生成一个“策略化 resolved bundle”，只改 2 个冲突详情：格里用远端米哈游第一段更细描述增强本地 raw，华珊用本地 raw 替代远端冲突 raw；重算 checksum；用正常 `import_bundle(... apply=True ...)` 写主库；最后更新 `data/sync/cloud-state.json` 使已处理 bundle 不再阻断，保留重复 bundle 待校验/跳过策略。
