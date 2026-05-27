@@ -4,6 +4,14 @@
 
 ## Active Task
 
+- [ ] 脚本清理和 hygiene 第一轮实施（2026-05-27）：执行 `docs/superpowers/plans/2026-05-26-script-cleanup-and-hygiene.md`，将测试文件迁出 `scripts/`，移除已替代 legacy 入口，建立脚本清单和护栏测试，并停在 Hunyuan ABC 一次性脚本删除审批门。
+  - [x] Plan：按既有实施计划分任务推进；Task 1 建立 `docs/dev/script-inventory.md` 和 `tests/test_script_hygiene.py`，Task 2 迁移 `scripts/test_*.py`，Task 3 删除已有替代的 `score_candidates.py`，Task 4 只推进到 Hunyuan 删除确认点；未获确认前不删除 `scripts/hunyuan_abc_detail_tasks.py` 和 `scripts/hunyuan_abc_parallel_supervisor.ps1`，也不继续后续任务。
+  - [x] Verify Plan：边界为脚本层、测试、当前有效文档/workflow 和任务记录；不写 `data/talent.db`，不移动 `data/output/`、`data/campaigns/`，不访问飞书或云同步状态。验证方式为计划内红灯测试、聚焦 pytest、引用扫描、`py_compile`（到 data manager 任务时）、`git diff --check` 和分任务提交。
+  - [x] Task 1：新增脚本清单和 hygiene 基线测试。验证：红灯 `FileNotFoundError: docs/dev/script-inventory.md`；绿灯 `.venv/bin/python -m pytest tests/test_script_hygiene.py::test_script_inventory_exists_and_names_cleanup_boundaries -q` -> `1 passed`。
+  - [ ] Task 2：迁移运行时目录内的 pytest 文件。
+  - [ ] Task 3：移除 `score_candidates.py` legacy 入口。
+  - [ ] Task 4：添加 Hunyuan 一次性脚本护栏并请求明确删除确认。
+
 - [x] 归档 2026-05-24 前的 superpowers 文档（2026-05-27）：将 `docs/superpowers/plans/` 和 `docs/superpowers/specs/` 中早于 2026-05-24 的 Markdown 按类别和月份移动到各自 archive 子目录。
   - [x] Plan：归档范围为日期早于 `2026-05-24` 的 superpowers 文档；`plans` 归入 `docs/superpowers/plans/archive/YYYY-MM/`，`specs` 归入 `docs/superpowers/specs/archive/YYYY-MM/`；保留 `2026-05-24` 及之后文件在原位；`FEAT-017-boss-zhipin-channel-design.md` 依据 frontmatter `created: 2026-04-20` 归入 specs 的 `2026-04`。
   - [x] Verify Plan：移动前盘点为 28 个 plan、13 个 spec；边界为文档路径整理和任务记录，不改业务脚本、不写 `data/talent.db`、不访问飞书；验证方式为移动后文件存在性、原目录剩余文件日期检查、当前文档引用扫描、`git diff --check` 和聚焦 pytest。
