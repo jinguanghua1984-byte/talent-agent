@@ -11,6 +11,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from scripts.maimai_url import is_openable_maimai_profile_url
+
 
 SCHEMA = "jd_talent_delivery_feishu_manifest_v1"
 PUBLISH_RESULT_SCHEMA = "jd_talent_delivery_feishu_publish_result_v1"
@@ -71,6 +73,23 @@ def _assert_no_exact_marker(value: str, *, label: str) -> None:
             _raise_sensitive(marker, label)
 
 
+def _marker_allowed_in_field(marker: str, field_name: str, value: str) -> bool:
+    return (
+        marker == "trackable_token"
+        and field_name == "profile_url"
+        and is_openable_maimai_profile_url(value)
+    )
+
+
+def _assert_safe_field_value(value: Any, *, field_name: str = "", label: str) -> None:
+    text = "" if value is None else str(value)
+    normalized = _normalize_text(text)
+    for marker in ARTIFACT_MARKERS:
+        if marker in normalized and not _marker_allowed_in_field(marker, field_name, text):
+            _raise_sensitive(marker, label)
+    _assert_no_exact_marker(text, label=label)
+
+
 def _assert_safe_path(value: str | Path, *, label: str) -> None:
     _assert_no_artifact_marker(value, label=label)
     parts = [part.strip() for part in _normalize_text(value).split("/") if part.strip()]
@@ -86,6 +105,47 @@ def _assert_safe_content(value: str, *, label: str) -> None:
     for row in csv.reader(value.splitlines()):
         for cell in row:
             _assert_no_exact_marker(cell, label=label)
+
+
+def _assert_safe_csv_content(value: str, *, label: str) -> None:
+    rows = list(csv.reader(value.splitlines()))
+    if not rows:
+        return
+    headers = [str(item) for item in rows[0]]
+    for header in headers:
+        _assert_safe_field_value(header, label=label)
+    for row in rows[1:]:
+        for index, cell in enumerate(row):
+            field_name = headers[index] if index < len(headers) else ""
+            _assert_safe_field_value(cell, field_name=field_name, label=label)
+
+
+def _assert_safe_json_value(value: Any, *, field_name: str = "", label: str) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_text = str(key)
+            _assert_safe_field_value(key_text, label=label)
+            _assert_safe_json_value(item, field_name=key_text, label=label)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _assert_safe_json_value(item, field_name=field_name, label=label)
+        return
+    _assert_safe_field_value(value, field_name=field_name, label=label)
+
+
+def _assert_safe_file_content(path: Path, value: str, *, label: str) -> None:
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        _assert_safe_csv_content(value, label=label)
+        return
+    if suffix == ".json":
+        try:
+            _assert_safe_json_value(json.loads(value), label=label)
+            return
+        except json.JSONDecodeError:
+            pass
+    _assert_safe_content(value, label=label)
 
 
 def _iter_manifest_strings(value: Any) -> list[str]:
@@ -124,7 +184,11 @@ def _required_files(root: Path) -> dict[str, Path]:
 def _read_safe_file(path: Path, root: Path) -> None:
     _assert_safe_path(path, label=f"path {path}")
     _assert_safe_path(_relative_to_root(path, root), label=f"relative path {path}")
-    _assert_safe_content(path.read_text(encoding="utf-8-sig"), label=f"content {path}")
+    _assert_safe_file_content(
+        path,
+        path.read_text(encoding="utf-8-sig"),
+        label=f"content {path}",
+    )
 
 
 def _argv_step(stage: str, argv: list[str]) -> dict[str, Any]:
@@ -541,7 +605,7 @@ def _scan_output_tree(root: Path) -> list[str]:
         text = path.read_text(encoding="utf-8-sig", errors="replace")
         try:
             _assert_safe_path(path, label=relative)
-            _assert_safe_content(text, label=relative)
+            _assert_safe_file_content(path, text, label=relative)
         except ValueError as exc:
             issues.append(str(exc))
         for marker in MOJIBAKE_MARKERS:

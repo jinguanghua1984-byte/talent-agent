@@ -198,7 +198,6 @@ def test_run_match_outputs_reports_and_outreach(tmp_path: Path, monkeypatch) -> 
     assert rows[0]["priority"] in {"P0", "P1"}
     assert rows[0]["grade"]
     assert rows[0]["profile_url"].startswith("https://maimai.cn/profile/detail")
-    assert "trackable_token" not in rows[0]["profile_url"]
     assert result["ranked"][0]["grade"]
     assert (out_dir / "reports" / "quality-gates.json").exists()
 
@@ -235,7 +234,9 @@ def test_score_candidate_caps_broad_must_have_dilution_and_expands_company_alias
     assert scored["evidence"]["key_evidence"]
 
 
-def test_outreach_url_is_sanitized_and_angle_keeps_company_and_title(tmp_path: Path, monkeypatch) -> None:
+def test_outreach_url_retains_profile_token_and_angle_keeps_company_and_title(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setattr(match, "TalentDB", TrackingUrlTalentDB)
     scorecard_path = tmp_path / "scorecard.json"
     scorecard_path.write_text(
@@ -253,9 +254,83 @@ def test_outreach_url_is_sanitized_and_angle_keeps_company_and_title(tmp_path: P
 
     with (out_dir / "reports" / "outreach-queue.csv").open(encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
-    assert rows[0]["profile_url"] == "https://maimai.cn/profile/detail?dstu=p101"
+    assert rows[0]["profile_url"] == (
+        "https://maimai.cn/profile/detail?dstu=p101&trackable_token=secret-token"
+    )
+    assert result_url(out_dir / "reports" / "talent-recommendation.json") == rows[0]["profile_url"]
+    assert "show_tip" not in rows[0]["profile_url"]
     assert "字节跳动" in rows[0]["suggested_outreach_angle"]
     assert "推理框架工程师" in rows[0]["suggested_outreach_angle"]
+
+
+def result_url(path: Path) -> str:
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    return data["ranked"][0]["profile_url"]
+
+
+def test_quality_gate_allows_profile_url_trackable_token(tmp_path: Path) -> None:
+    root = tmp_path / "delivery"
+    root.mkdir()
+    ranked = [
+        {
+            "candidate_id": 1,
+            "name": "候选人1",
+            "grade": "A",
+            "recommendation_label": "强推荐",
+            "score": 91,
+            "current_company": "公司",
+            "current_title": "职位",
+            "profile_url": (
+                "https://maimai.cn/profile/detail?dstu=1&trackable_token=secret-token"
+            ),
+            "evidence": {"key_evidence": ["评分证据：数据质量"]},
+        }
+    ]
+    (root / "reports").mkdir()
+    (root / "reports" / "outreach-queue.csv").write_text(
+        "candidate_id,name,company,title,score,grade,suggested_outreach_angle,profile_url\n"
+        "1,候选人1,公司,职位,91,A,围绕 公司 的 职位 经历确认岗位匹配深度.,"
+        "https://maimai.cn/profile/detail?dstu=1&trackable_token=secret-token\n",
+        encoding="utf-8-sig",
+    )
+
+    quality = match.validate_delivery_outputs(root, ranked=ranked, top_n=1)
+
+    assert quality["status"] == "passed"
+    assert quality["critical_issues"] == []
+
+
+def test_quality_gate_rejects_trackable_token_outside_profile_url(tmp_path: Path) -> None:
+    root = tmp_path / "delivery"
+    root.mkdir()
+    ranked = [
+        {
+            "candidate_id": 1,
+            "name": "候选人1",
+            "grade": "A",
+            "recommendation_label": "强推荐",
+            "score": 91,
+            "current_company": "公司",
+            "current_title": "职位",
+            "profile_url": (
+                "https://maimai.cn/profile/detail?dstu=1&trackable_token=secret-token"
+            ),
+            "evidence": {"key_evidence": ["评分证据：数据质量"]},
+        }
+    ]
+    (root / "reports").mkdir()
+    (root / "reports" / "outreach-queue.csv").write_text(
+        "candidate_id,name,company,title,score,grade,suggested_outreach_angle,profile_url,note\n"
+        "1,候选人1,公司,职位,91,A,围绕 公司 的 职位 经历确认岗位匹配深度.,"
+        "https://maimai.cn/profile/detail?dstu=1&trackable_token=secret-token,"
+        "trackable_token=secret-token\n",
+        encoding="utf-8-sig",
+    )
+
+    quality = match.validate_delivery_outputs(root, ranked=ranked, top_n=1)
+
+    assert quality["status"] == "blocked"
+    assert any("trackable_token" in issue for issue in quality["critical_issues"])
 
 
 def test_validate_delivery_outputs_blocks_all_c_topn(tmp_path: Path) -> None:

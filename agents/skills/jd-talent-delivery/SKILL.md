@@ -59,7 +59,7 @@ description: Use when the user asks to turn a JD into a local talent-library rec
 
 本 Skill 不要求 campaign `strategy.json` 或历史 `*rank*.json` 作为前置流程。标准路径必须能仅凭 JD 生成的 `scorecard.json` 和只读 `data/talent.db` 完成匹配、精排、报告和外联表；历史 campaign artifact 只能作为参考或排障材料。
 
-脉脉 URL 必须清洗 `trackable_token` 等 tracking 参数后才能进入推荐报告、外联表、manifest 或飞书发布包。发布前必须检查 `reports/quality-gates.json`，包括 TopN 分层、CSV 行数、关键列、外联角度、敏感路径/token 和乱码标记。
+脉脉详情页 URL 必须保留可打开所需的 `trackable_token`，同时清洗 UTM、`show_tip` 和详情抓取用非必要参数，只保留 `dstu` 与 `trackable_token`。发布前必须检查 `reports/quality-gates.json`，包括 TopN 分层、CSV 行数、关键列、外联角度、敏感路径/token 和乱码标记；除 `profile_url` 字段里的脉脉详情页 `trackable_token` 外，其他 token 仍必须拦截。
 
 ## 安全边界
 

@@ -42,3 +42,48 @@ def sanitize_maimai_profile_url(value: str | None) -> str:
             "",
         )
     )
+
+
+def build_openable_maimai_profile_url(value: str | None) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = urlparse(text)
+    if "maimai.cn" not in parsed.netloc:
+        return text
+    query = parse_qsl(parsed.query, keep_blank_values=True)
+    dstu = next((item for key, item in query if key == "dstu" and item), "")
+    trackable_token = next(
+        (
+            item
+            for key, item in query
+            if key in {"trackable_token", "trackableToken", "trackable"} and item
+        ),
+        "",
+    )
+    if parsed.path.rstrip("/") != "/profile/detail" or not dstu:
+        return sanitize_maimai_profile_url(text)
+    safe_query = [("dstu", dstu)]
+    if trackable_token:
+        safe_query.append(("trackable_token", trackable_token))
+    return urlunparse(
+        (
+            parsed.scheme or "https",
+            parsed.netloc,
+            parsed.path,
+            "",
+            urlencode(safe_query),
+            "",
+        )
+    )
+
+
+def is_openable_maimai_profile_url(value: str | None) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    parsed = urlparse(text)
+    if "maimai.cn" not in parsed.netloc or parsed.path.rstrip("/") != "/profile/detail":
+        return False
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    return bool(query.get("dstu") and query.get("trackable_token"))

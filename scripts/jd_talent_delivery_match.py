@@ -15,7 +15,10 @@ from typing import Any
 
 from scripts.jd_talent_delivery_scorecard import validate_scorecard
 from scripts.maimai_company_registry import expand_company_pool_terms
-from scripts.maimai_url import sanitize_maimai_profile_url
+from scripts.maimai_url import (
+    build_openable_maimai_profile_url,
+    is_openable_maimai_profile_url,
+)
 from scripts.talent_db import TalentDB
 from scripts.talent_models import Candidate, CandidateDetail, SortSpec
 
@@ -226,7 +229,7 @@ def _source_url(bundle: CandidateBundle) -> str:
     for source in bundle.sources:
         url = getattr(source, "profile_url", "") or ""
         if url:
-            return sanitize_maimai_profile_url(str(url))
+            return build_openable_maimai_profile_url(str(url))
     return ""
 
 
@@ -738,34 +741,98 @@ def _read_outreach_rows(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+SENSITIVE_OUTPUT_MARKERS = (
+    "trackable_token",
+    "access_token",
+    "authorization: bearer",
+    "sessionid",
+    "raw/search",
+    "raw/detail",
+    "raw_capture",
+    "sync_bundle",
+    ".sqlite",
+    ".db",
+    ".zip",
+)
+
+
+def _marker_allowed_in_field(marker: str, field_name: str, value: str) -> bool:
+    return (
+        marker == "trackable_token"
+        and field_name == "profile_url"
+        and is_openable_maimai_profile_url(value)
+    )
+
+
+def _scan_value_for_delivery_issues(
+    value: Any, *, field_name: str = "", label: str
+) -> list[str]:
+    issues: list[str] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            issues.extend(_scan_value_for_delivery_issues(str(key), label=label))
+            issues.extend(
+                _scan_value_for_delivery_issues(item, field_name=str(key), label=label)
+            )
+        return issues
+    if isinstance(value, list):
+        for item in value:
+            issues.extend(_scan_value_for_delivery_issues(item, field_name=field_name, label=label))
+        return issues
+    text = str(value or "")
+    normalized = text.lower().replace("\\", "/")
+    for marker in SENSITIVE_OUTPUT_MARKERS:
+        if marker in normalized and not _marker_allowed_in_field(marker, field_name, text):
+            issues.append(f"sensitive_marker:{marker}:{label}")
+    return issues
+
+
+def _scan_csv_for_delivery_issues(text: str, label: str) -> list[str]:
+    try:
+        rows = list(csv.reader(text.splitlines()))
+    except csv.Error:
+        return _scan_value_for_delivery_issues(text, label=label)
+    if not rows:
+        return []
+    headers = [str(item) for item in rows[0]]
+    issues: list[str] = []
+    for header in headers:
+        issues.extend(_scan_value_for_delivery_issues(header, label=label))
+    for row in rows[1:]:
+        for index, cell in enumerate(row):
+            field_name = headers[index] if index < len(headers) else ""
+            issues.extend(
+                _scan_value_for_delivery_issues(cell, field_name=field_name, label=label)
+            )
+    return issues
+
+
+def _scan_file_for_delivery_issues(path: Path, root: Path) -> list[str]:
+    label = path.relative_to(root).as_posix()
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
+    if path.suffix.lower() == ".csv":
+        issues = _scan_csv_for_delivery_issues(text, label)
+    elif path.suffix.lower() == ".json":
+        try:
+            issues = _scan_value_for_delivery_issues(json.loads(text), label=label)
+        except json.JSONDecodeError:
+            issues = _scan_value_for_delivery_issues(text, label=label)
+    else:
+        issues = _scan_value_for_delivery_issues(text, label=label)
+    for marker in MOJIBAKE_MARKERS:
+        if marker in text:
+            issues.append(f"mojibake_marker:{marker}:{label}")
+    return issues
+
+
 def _scan_text_for_delivery_issues(root: Path) -> list[str]:
     issues: list[str] = []
-    sensitive_markers = (
-        "trackable_token",
-        "access_token",
-        "authorization: bearer",
-        "sessionid",
-        "raw/search",
-        "raw/detail",
-        "raw_capture",
-        "sync_bundle",
-        ".sqlite",
-        ".db",
-        ".zip",
-    )
     for path in root.rglob("*"):
         if not path.is_file() or path.suffix.lower() not in {".json", ".md", ".csv", ".txt"}:
             continue
         if path.name == "quality-gates.json":
             continue
-        text = path.read_text(encoding="utf-8-sig", errors="replace")
-        normalized = text.lower().replace("\\", "/")
-        for marker in sensitive_markers:
-            if marker in normalized:
-                issues.append(f"sensitive_marker:{marker}:{path.relative_to(root).as_posix()}")
-        for marker in MOJIBAKE_MARKERS:
-            if marker in text:
-                issues.append(f"mojibake_marker:{marker}:{path.relative_to(root).as_posix()}")
+        issues.extend(_scan_file_for_delivery_issues(path, root))
     return issues
 
 
@@ -799,8 +866,9 @@ def validate_delivery_outputs(
             critical.append(
                 f"candidate_missing_fields:{item.get('candidate_id', '<unknown>')}:{','.join(missing_fields)}"
             )
-        if "trackable_token" in str(item.get("profile_url") or ""):
-            critical.append(f"profile_url_tracking_token:{item.get('candidate_id', '<unknown>')}")
+        profile_url = str(item.get("profile_url") or "")
+        if "trackable_token" in profile_url and not is_openable_maimai_profile_url(profile_url):
+            critical.append(f"profile_url_invalid_trackable:{item.get('candidate_id', '<unknown>')}")
 
     outreach_path = root / "reports" / "outreach-queue.csv"
     try:
@@ -827,8 +895,9 @@ def validate_delivery_outputs(
         missing = sorted(field for field in required_csv_fields if not row.get(field))
         if missing:
             critical.append(f"outreach_row_missing_fields:{index}:{','.join(missing)}")
-        if "trackable_token" in str(row.get("profile_url") or ""):
-            critical.append(f"outreach_url_tracking_token:{index}")
+        profile_url = str(row.get("profile_url") or "")
+        if "trackable_token" in profile_url and not is_openable_maimai_profile_url(profile_url):
+            critical.append(f"outreach_url_invalid_trackable:{index}")
         angle = row.get("suggested_outreach_angle") or ""
         company = row.get("company") or ""
         title = row.get("title") or ""
