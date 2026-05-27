@@ -20,3 +20,8 @@ def test_script_inventory_exists_and_names_cleanup_boundaries() -> None:
     ]
     missing = [marker for marker in required_markers if marker not in text]
     assert missing == []
+
+
+def test_runtime_scripts_do_not_contain_pytest_modules() -> None:
+    offenders = sorted(path.name for path in (ROOT / "scripts").glob("test_*.py"))
+    assert offenders == []

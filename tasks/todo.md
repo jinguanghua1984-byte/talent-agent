@@ -8,7 +8,7 @@
   - [x] Plan：按既有实施计划分任务推进；Task 1 建立 `docs/dev/script-inventory.md` 和 `tests/test_script_hygiene.py`，Task 2 迁移 `scripts/test_*.py`，Task 3 删除已有替代的 `score_candidates.py`，Task 4 只推进到 Hunyuan 删除确认点；未获确认前不删除 `scripts/hunyuan_abc_detail_tasks.py` 和 `scripts/hunyuan_abc_parallel_supervisor.ps1`，也不继续后续任务。
   - [x] Verify Plan：边界为脚本层、测试、当前有效文档/workflow 和任务记录；不写 `data/talent.db`，不移动 `data/output/`、`data/campaigns/`，不访问飞书或云同步状态。验证方式为计划内红灯测试、聚焦 pytest、引用扫描、`py_compile`（到 data manager 任务时）、`git diff --check` 和分任务提交。
   - [x] Task 1：新增脚本清单和 hygiene 基线测试。验证：红灯 `FileNotFoundError: docs/dev/script-inventory.md`；绿灯 `.venv/bin/python -m pytest tests/test_script_hygiene.py::test_script_inventory_exists_and_names_cleanup_boundaries -q` -> `1 passed`。
-  - [ ] Task 2：迁移运行时目录内的 pytest 文件。
+  - [x] Task 2：迁移运行时目录内的 pytest 文件。验证：红灯 `.venv/bin/python -m pytest tests/test_script_hygiene.py::test_runtime_scripts_do_not_contain_pytest_modules -q` -> `1 failed`，offenders 为 5 个 `scripts/test_*.py`；`git status --short` 显示 5 个 rename；绿灯 `.venv/bin/python -m pytest tests/test_boss.py tests/test_data_manager.py tests/test_enrich.py tests/test_maimai.py tests/test_rate_limiter.py tests/test_script_hygiene.py -q` -> `143 passed, 1 warning`（既有 event loop deprecation，现位于 `tests/test_boss.py`）。
   - [ ] Task 3：移除 `score_candidates.py` legacy 入口。
   - [ ] Task 4：添加 Hunyuan 一次性脚本护栏并请求明确删除确认。
 
