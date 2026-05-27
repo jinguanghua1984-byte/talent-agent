@@ -22,7 +22,21 @@
 
 - `scripts/data_manager.py`：JSON 数据管理 CLI 的 importable module。
 - `scripts/data-manager.py`：旧命令兼容 shim；只转发到 `scripts.data_manager.main()`。
-- `scripts/maimai_ai_infra_search_plan.py`、`scripts/maimai_ai_infra_rank.py`、`scripts/maimai_ai_infra_delivery_report.py`：legacy AI Infra strategy 兼容层，仍由 `scripts/maimai_campaign_orchestrator.py` 在旧策略下路由使用。
+- `scripts/maimai_ai_infra_*`：legacy AI Infra strategy 兼容模块组，仍由 `scripts/maimai_campaign_orchestrator.py`、脉脉 campaign pipeline 和回归测试在旧策略路径下使用；当前整组受兼容层保护。现有模块包括：
+  - `scripts/maimai_ai_infra_campaign.py`
+  - `scripts/maimai_ai_infra_delivery_report.py`
+  - `scripts/maimai_ai_infra_detail_live_gate.py`
+  - `scripts/maimai_ai_infra_detail_plan.py`
+  - `scripts/maimai_ai_infra_detail_report.py`
+  - `scripts/maimai_ai_infra_outreach_export.py`
+  - `scripts/maimai_ai_infra_pipeline.py`
+  - `scripts/maimai_ai_infra_rank.py`
+  - `scripts/maimai_ai_infra_review.py`
+  - `scripts/maimai_ai_infra_search_live_gate.py`
+  - `scripts/maimai_ai_infra_search_plan.py`
+  - `scripts/maimai_ai_infra_search_runner.py`
+
+清理原则：`maimai_ai_infra_*` 当前不是一次性脚本；它们是旧策略兼容层。只有在 `maimai_campaign_*` 完成等价迁移、orchestrator 不再路由到旧模块、并且对应回归测试移除旧路径后，才能另起计划删除。
 
 ## Removed Or Approval-Gated Scripts
 

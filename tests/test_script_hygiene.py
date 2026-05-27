@@ -45,3 +45,18 @@ def test_runtime_scripts_do_not_hardcode_dated_campaign_paths() -> None:
         if has_dated_campaign_path:
             offenders.append(path.name)
     assert offenders == []
+
+
+def test_ai_infra_legacy_modules_are_documented_as_compatibility_layer() -> None:
+    text = INVENTORY.read_text(encoding="utf-8")
+    legacy_modules = sorted(
+        path.name for path in (ROOT / "scripts").glob("maimai_ai_infra_*.py")
+    )
+    required = [
+        "Legacy Compatibility",
+        "maimai_ai_infra_*",
+        "legacy AI Infra strategy",
+        *legacy_modules,
+    ]
+    missing = [item for item in required if item not in text]
+    assert missing == []
