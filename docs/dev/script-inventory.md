@@ -25,7 +25,7 @@
 
 ## Removed Or Approval-Gated Scripts
 
-- `scripts/score_candidates.py`：已被 `scripts/score_pipeline.py` 替代，计划从运行时目录删除。
+- `scripts/score_candidates.py`：已移出运行时目录；历史评分入口由 `scripts/score_pipeline.py` 取代。
 - `scripts/hunyuan_abc_detail_tasks.py`：Hunyuan 8JD ABC 详情补抓一次性任务脚本，删除需要用户明确确认。
 - `scripts/hunyuan_abc_parallel_supervisor.ps1`：Hunyuan ABC 详情补抓监督脚本，删除需要用户明确确认。
 

@@ -25,3 +25,7 @@ def test_script_inventory_exists_and_names_cleanup_boundaries() -> None:
 def test_runtime_scripts_do_not_contain_pytest_modules() -> None:
     offenders = sorted(path.name for path in (ROOT / "scripts").glob("test_*.py"))
     assert offenders == []
+
+
+def test_legacy_score_candidates_is_not_a_runtime_script() -> None:
+    assert not (ROOT / "scripts" / "score_candidates.py").exists()
