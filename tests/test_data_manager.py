@@ -14,16 +14,25 @@ import unittest
 
 # 项目根目录
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPT_PATH = os.path.join(PROJECT_ROOT, "scripts", "data-manager.py")
+LEGACY_SCRIPT_PATH = os.path.join(PROJECT_ROOT, "scripts", "data-manager.py")
 PYTHON = sys.executable
 
 
-def run_cli(*args, cwd=None):
-    """运行 data-manager.py CLI 并返回 (returncode, stdout, stderr)。"""
+def run_cli(*args, cwd=None, use_legacy=False):
+    """运行 data manager CLI 并返回 (returncode, stdout, stderr)。"""
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
+    if use_legacy:
+        env.pop("PYTHONPATH", None)
+        command = [PYTHON, LEGACY_SCRIPT_PATH]
+    else:
+        pythonpath = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = (
+            PROJECT_ROOT if not pythonpath else os.pathsep.join([PROJECT_ROOT, pythonpath])
+        )
+        command = [PYTHON, "-m", "scripts.data_manager"]
     result = subprocess.run(
-        [PYTHON, SCRIPT_PATH] + list(args),
+        command + list(args),
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -69,6 +78,38 @@ class BaseTestCase(unittest.TestCase):
         data = {"name": "张三", "current_company": "某公司", **overrides}
         self.write_json(path, data)
         return path
+
+
+class TestEntrypoints(BaseTestCase):
+    """入口兼容性测试。"""
+
+    def test_module_entrypoint_prints_help(self):
+        rc, out, err = run_cli(cwd=self.tmpdir)
+        self.assertEqual(rc, 1)
+        self.assertIn("usage:", out)
+        self.assertEqual(err, "")
+
+    def test_legacy_hyphen_script_still_delegates(self):
+        rc, out, err = run_cli(cwd=self.tmpdir, use_legacy=True)
+        self.assertEqual(rc, 1)
+        self.assertIn("usage:", out)
+        self.assertEqual(err, "")
+
+    def test_legacy_hyphen_script_runs_from_repo_root_without_pythonpath(self):
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env.pop("PYTHONPATH", None)
+        result = subprocess.run(
+            [PYTHON, os.path.join("scripts", "data-manager.py")],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            cwd=PROJECT_ROOT,
+            env=env,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("usage:", result.stdout.strip())
+        self.assertEqual(result.stderr.strip(), "")
 
 
 class TestJDCommands(BaseTestCase):

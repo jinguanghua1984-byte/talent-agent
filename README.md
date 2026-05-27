@@ -37,7 +37,7 @@
 ## 快速开始
 
 1. 复制 `.env.example` 为 `.env`，配置 `LLM_PROVIDER`、`LLM_MODEL`、`LLM_API_KEY`
-2. 创建 JD: `python scripts/data-manager.py jd create jd.json`
+2. 创建 JD: `python -m scripts.data_manager jd create jd.json`
 3. 使用任意支持本仓库工作流的 agent 读取 `agents/skills/` 和 `agents/workflows/`
 4. Claude Code 用户可继续使用 `/public-search`、`/platform-match`、`/screen`、`/report`
 5. 评分 pipeline: `python scripts/score_pipeline.py run --jd-id <id> --source boss --search-keyword <keyword>`
@@ -45,9 +45,9 @@
 ## 数据管理
 
 ```bash
-python scripts/data-manager.py validate    # 校验数据
-python scripts/data-manager.py jd list       # 列出JD
-python scripts/data-manager.py candidate list # 列出候选人
+python -m scripts.data_manager validate    # 校验数据
+python -m scripts.data_manager jd list       # 列出JD
+python -m scripts.data_manager candidate list # 列出候选人
 ```
 
 多台机器同步本地人才库时，不要直接覆盖 `data/talent.db`，使用同步 bundle：

@@ -20,7 +20,8 @@
 
 ## Legacy Compatibility
 
-- `scripts/data-manager.py`：当前为旧 JSON 数据管理 CLI；Task 5 后保留为兼容 shim，新调用使用 `python -m scripts.data_manager ...`。
+- `scripts/data_manager.py`：JSON 数据管理 CLI 的 importable module。
+- `scripts/data-manager.py`：旧命令兼容 shim；只转发到 `scripts.data_manager.main()`。
 - `scripts/maimai_ai_infra_search_plan.py`、`scripts/maimai_ai_infra_rank.py`、`scripts/maimai_ai_infra_delivery_report.py`：legacy AI Infra strategy 兼容层，仍由 `scripts/maimai_campaign_orchestrator.py` 在旧策略下路由使用。
 
 ## Removed Or Approval-Gated Scripts
