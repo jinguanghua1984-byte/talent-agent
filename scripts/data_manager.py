@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""data-manager.py — Talent Agent 数据管理 CLI
+"""Talent Agent JSON 数据管理 CLI。
 
 管理 JD、候选人、Screening 结果和客户偏好的轻量级 CLI 工具。
+当前入口为 `python -m scripts.data_manager ...`；`scripts/data-manager.py` 仅保留为旧命令兼容 shim。
 
 用法:
-    python scripts/data-manager.py jd create <file>
-    python scripts/data-manager.py jd list
-    python scripts/data-manager.py jd get <id>
-    python scripts/data-manager.py candidate create <file>
-    python scripts/data-manager.py candidate list [--enrichment raw|partial|enriched]
-    python scripts/data-manager.py candidate get <id>
-    python scripts/data-manager.py candidate update <id> <file>
-    python scripts/data-manager.py candidate merge <id>
-    python scripts/data-manager.py candidate dedup
-    python scripts/data-manager.py screen create <jd-id> <candidate-id> <score>
-    python scripts/data-manager.py screen list <jd-id>
-    python scripts/data-manager.py screen update <jd-id> <candidate-id> <file>
-    python scripts/data-manager.py rules get <client>
-    python scripts/data-manager.py rules add-correction <client> <json-data>
-    python scripts/data-manager.py validate
+    python -m scripts.data_manager jd create <file>
+    python -m scripts.data_manager jd list
+    python -m scripts.data_manager jd get <id>
+    python -m scripts.data_manager candidate create <file>
+    python -m scripts.data_manager candidate list [--enrichment raw|partial|enriched]
+    python -m scripts.data_manager candidate get <id>
+    python -m scripts.data_manager candidate update <id> <file>
+    python -m scripts.data_manager candidate merge <id>
+    python -m scripts.data_manager candidate dedup
+    python -m scripts.data_manager screen create <jd-id> <candidate-id> <score>
+    python -m scripts.data_manager screen list <jd-id>
+    python -m scripts.data_manager screen update <jd-id> <candidate-id> <file>
+    python -m scripts.data_manager rules get <client>
+    python -m scripts.data_manager rules add-correction <client> <json-data>
+    python -m scripts.data_manager validate
 """
 
 import argparse
