@@ -77,7 +77,7 @@ def test_skill_requires_scorecard_consistency_and_read_only_db() -> None:
     for token in [
         "粗筛和精排必须引用同一个 `scorecard.json`",
         "不要求 campaign `strategy.json` 或历史 `*rank*.json`",
-        "脉脉 URL 必须清洗 `trackable_token`",
+        "脉脉详情页 URL 必须保留可打开所需的 `trackable_token`",
         "发布前必须检查 `reports/quality-gates.json`",
         "data/talent.db 默认只读",
         "不写 `match_scores`",

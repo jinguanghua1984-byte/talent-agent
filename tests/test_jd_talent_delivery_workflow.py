@@ -83,7 +83,7 @@ def test_workflow_declares_independent_match_and_quality_gates() -> None:
     for token in [
         "不要求存在 campaign `strategy.json`",
         "不要求存在历史 `*rank*.json`",
-        "脉脉 URL 必须清洗 `trackable_token`",
+        "脉脉详情页 URL 必须保留可打开所需的 `trackable_token`",
         "`reports/quality-gates.json`",
         "TopN 全部为 C/淘汰时必须停止发布",
         "CSV 必须可解析且行数等于 TopN",

@@ -275,7 +275,7 @@ def test_manifest_rejects_sensitive_paths(tmp_path: Path) -> None:
         build_publish_manifest(root, jd_title="Demo", wiki_space_id="7642607697183001542", dry_run=True)
 
 
-def test_manifest_rejects_tracking_tokens_in_publish_sources(tmp_path: Path) -> None:
+def test_manifest_allows_trackable_token_in_profile_url_column(tmp_path: Path) -> None:
     root = tmp_path / "demo"
     _write(root / "source" / "jd.md", "# JD\n")
     _write(root / "profile" / "role-deep-dive.md", "# Role profile\n")
@@ -283,6 +283,30 @@ def test_manifest_rejects_tracking_tokens_in_publish_sources(tmp_path: Path) -> 
     _write(
         root / "reports" / "outreach-queue.csv",
         "profile_url\nhttps://maimai.cn/profile/detail?dstu=p1&trackable_token=secret\n",
+    )
+
+    manifest = build_publish_manifest(
+        root,
+        jd_title="Demo",
+        wiki_space_id="7642607697183001542",
+        dry_run=True,
+    )
+
+    assert manifest["source_files"]["outreach"] == "reports/outreach-queue.csv"
+
+
+def test_manifest_rejects_tracking_tokens_outside_profile_url_column(tmp_path: Path) -> None:
+    root = tmp_path / "demo"
+    _write(root / "source" / "jd.md", "# JD\n")
+    _write(root / "profile" / "role-deep-dive.md", "# Role profile\n")
+    _write(root / "reports" / "talent-recommendation.md", "# Recommendations\n")
+    _write(
+        root / "reports" / "outreach-queue.csv",
+        (
+            "profile_url,note\n"
+            "https://maimai.cn/profile/detail?dstu=p1&trackable_token=secret,"
+            "trackable_token=secret\n"
+        ),
     )
 
     with pytest.raises(ValueError, match="sensitive marker"):
@@ -496,7 +520,7 @@ def test_validate_delivery_package_allows_blank_feedback_columns(tmp_path: Path)
                 "score": 88,
                 "grade": "A",
                 "recommendation_label": "强推荐",
-                "profile_url": "https://maimai.cn/profile/detail/1",
+                "profile_url": "https://maimai.cn/profile/detail?dstu=1&trackable_token=secret",
                 "evidence": {"key_evidence": ["腾讯", "推理系统"]},
             }
         ],
@@ -510,7 +534,7 @@ def test_validate_delivery_package_allows_blank_feedback_columns(tmp_path: Path)
             "feedback_label,feedback_stage,reason_codes,hunter_note,contacted,"
             "submitted_to_client,interviewed,offer\n"
             "1,腾讯,推理工程师,88,A,建议围绕腾讯推理工程师经历沟通,"
-            "https://maimai.cn/profile/detail/1,,,,,,,,\n"
+            "https://maimai.cn/profile/detail?dstu=1&trackable_token=secret,,,,,,,,\n"
         ),
     )
 

@@ -119,11 +119,11 @@ S1 至少写入：
 
 发布前质量门禁必须检查：
 
-- 脉脉 URL 必须清洗 `trackable_token`、UTM 和详情抓取用 tracking 参数，只保留可交付 profile URL。
+- 脉脉详情页 URL 必须保留可打开所需的 `trackable_token`，同时清洗 UTM、`show_tip` 和详情抓取用非必要参数，只保留 `dstu` 与 `trackable_token`。
 - TopN 全部为 C/淘汰时必须停止发布，并报告需要人工复核或重跑评分卡。
 - CSV 必须可解析且行数等于 TopN，关键列必须包含 `candidate_id`、公司、职位、分数、评级、外联角度和 profile URL。
 - 候选人卡片必须包含可追溯关键证据，外联角度应包含公司和职位。
-- 发布包不得包含 token、cookie、DB/zip/raw/sync bundle 路径或乱码标记。
+- 除 `profile_url` 字段里的脉脉详情页 `trackable_token` 外，发布包不得包含 token、cookie、DB/zip/raw/sync bundle 路径或乱码标记。
 
 ### S7：飞书发布
 
