@@ -66,6 +66,22 @@
       "confidence": "curated"
     },
     {
+      "term": "蚂蚁金服",
+      "canonical_company": "蚂蚁集团",
+      "company_aliases": ["蚂蚁", "蚂蚁集团", "Ant Group", "支付宝"],
+      "org_product_terms": ["阿福", "灵光", "大模型", "金融科技"],
+      "preferred_search_mode": "hybrid",
+      "confidence": "curated"
+    },
+    {
+      "term": "百川智能",
+      "canonical_company": "百川智能",
+      "company_aliases": ["百川", "Baichuan"],
+      "org_product_terms": ["Baichuan", "大模型", "医疗"],
+      "preferred_search_mode": "hybrid",
+      "confidence": "curated"
+    },
+    {
       "term": "快手可灵",
       "canonical_company": "快手",
       "company_aliases": ["快手", "Kuaishou"],

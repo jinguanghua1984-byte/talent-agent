@@ -544,6 +544,43 @@ def test_validate_delivery_package_allows_blank_feedback_columns(tmp_path: Path)
     assert result["critical_issues"] == []
 
 
+def test_validate_delivery_package_ignores_internal_feishu_result_files(tmp_path: Path) -> None:
+    root = _safe_output_root(tmp_path)
+    _write(
+        root / "feishu" / "dry-run-results.json",
+        json.dumps(
+            {
+                "schema": "jd_talent_delivery_feishu_dry_run_results_v1",
+                "results": [
+                    {
+                        "argv": [
+                            "lark-cli",
+                            "sheets",
+                            "+write",
+                            "--values",
+                            json.dumps(
+                                [
+                                    ["profile_url"],
+                                    [
+                                        "https://maimai.cn/profile/detail?dstu=1&trackable_token=secret"
+                                    ],
+                                ],
+                                ensure_ascii=False,
+                            ),
+                        ]
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+    result = validate_delivery_package(root)
+
+    assert result["status"] == "passed"
+    assert result["critical_issues"] == []
+
+
 def test_validate_delivery_package_blocks_bad_quality_gate(tmp_path: Path) -> None:
     root = _safe_output_root(tmp_path)
     _write(

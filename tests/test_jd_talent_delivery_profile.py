@@ -74,6 +74,27 @@ def test_build_role_profile_extracts_training_inference_data_engineering_signals
     assert "纯应用层" in profile["exclusion_terms"]
 
 
+def test_build_role_profile_extracts_llm_product_vertical_signals_without_operations_exclusion() -> None:
+    jd_text = """
+    # 大模型数据策略产品经理（金融）
+
+    负责大模型产品、模型评估、数据生产、SFT、系统指令、数据质量管控和评估流程。
+    方向包括知识问答、逻辑推理、金融市场、财务分析、风险管理和合规。
+    目标公司包括字节 Seed、豆包、阿里千问、腾讯混元、蚂蚁金服、阿福、灵光、百度和百川智能。
+    有用户研究、社区运营或金融分析经验优先，但不把运营作为排除项。
+    """
+
+    profile = build_role_profile(jd_text, source_path="jd.md", role_id="jiukun-finance-product")
+
+    for term in ["大模型产品", "模型评估", "SFT", "金融市场", "财务分析", "合规"]:
+        assert term in profile["must_have"]
+    for company in ["字节 Seed", "豆包", "阿里千问", "腾讯混元", "蚂蚁金服", "百川智能"]:
+        assert company in profile["company_pools"]["目标公司"]
+    for alias in ["AI产品经理", "数据策略产品经理", "产品经理", "金融产品经理"]:
+        assert alias in profile["title_aliases"]
+    assert "运营" not in profile["exclusion_terms"]
+
+
 def test_render_profile_markdown_matches_deep_dive_shape() -> None:
     profile = build_role_profile(
         "# 数据平台负责人\n负责数据质量、标注平台和团队管理。",

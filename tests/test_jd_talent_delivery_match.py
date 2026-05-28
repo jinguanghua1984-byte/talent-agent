@@ -89,6 +89,19 @@ def _data_product_candidate() -> Candidate:
     )
 
 
+def _sparse_product_candidate() -> Candidate:
+    return Candidate(
+        id=303,
+        name="候选人C",
+        current_company="腾讯",
+        current_title="数据产品负责人",
+        education="复旦大学 本科",
+        work_years=8,
+        skill_tags=("大模型",),
+        hunting_status="在职观望",
+    )
+
+
 class FakeTalentDB:
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = db_path
@@ -128,6 +141,24 @@ class FakeTalentDB:
 
     def close(self) -> None:
         pass
+
+
+class SparseCoarseTalentDB(FakeTalentDB):
+    def search(self, **kwargs) -> PageResult:
+        return PageResult(items=[_sparse_product_candidate()], total=1, page=1, page_size=1)
+
+    def get_detail(self, candidate_id: int) -> CandidateDetail:
+        return CandidateDetail(
+            candidate_id=candidate_id,
+            work_experience=[
+                {
+                    "company": "腾讯",
+                    "title": "数据产品负责人",
+                    "description": "负责混元大模型后训练数据策略、数据标注、数据质量、SFT 和交付体系。",
+                }
+            ],
+            education_experience=[{"school": "复旦大学", "description": "本科"}],
+        )
 
 
 class TrackingUrlTalentDB(FakeTalentDB):
@@ -232,6 +263,65 @@ def test_score_candidate_caps_broad_must_have_dilution_and_expands_company_alias
     assert scored["evidence"]["title_level"] == "precision"
     assert "腾讯" in scored["evidence"]["company_matches"]
     assert scored["evidence"]["key_evidence"]
+
+
+def test_score_candidate_recommends_precise_title_with_four_broad_must_have_hits() -> None:
+    scorecard = _broad_scorecard()
+    detail = CandidateDetail(
+        candidate_id=202,
+        work_experience=[
+            {
+                "company": "腾讯",
+                "title": "数据产品负责人",
+                "description": "负责混元大模型数据策略、数据标注和数据质量体系。",
+            }
+        ],
+    )
+    candidate = _data_product_candidate()
+    candidate = Candidate(
+        id=candidate.id,
+        name=candidate.name,
+        current_company=candidate.current_company,
+        current_title=candidate.current_title,
+        education=candidate.education,
+        work_years=candidate.work_years,
+        skill_tags=("大模型",),
+        hunting_status=candidate.hunting_status,
+    )
+    bundle = match.CandidateBundle(candidate=candidate, detail=detail, sources=[])
+
+    scored = match.score_candidate(bundle, scorecard, mode="detailed")
+
+    assert scored["matched_terms_by_dimension"]["must_have"] == [
+        "大模型",
+        "数据策略",
+        "数据质量",
+        "数据标注",
+    ]
+    assert scored["recommendation_label"] in {"强推荐", "推荐"}
+
+
+def test_run_match_sends_sparse_but_relevant_coarse_candidate_to_detailed_rank(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(match, "TalentDB", SparseCoarseTalentDB)
+    scorecard_path = tmp_path / "scorecard.json"
+    scorecard_path.write_text(
+        json.dumps(_broad_scorecard(), ensure_ascii=False), encoding="utf-8"
+    )
+    out_dir = tmp_path / "delivery"
+
+    result = match.run_match(
+        db_path=tmp_path / "talent.db",
+        scorecard_path=scorecard_path,
+        out_dir=out_dir,
+        top_n=1,
+        limit=10,
+    )
+
+    assert result["summary"]["total_scored"] == 1
+    assert result["ranked"][0]["candidate_id"] == 303
+    assert result["ranked"][0]["recommendation_label"] in {"强推荐", "推荐"}
 
 
 def test_outreach_url_retains_profile_token_and_angle_keeps_company_and_title(
@@ -372,6 +462,13 @@ def test_coarse_and_detailed_share_dimension_ids() -> None:
     detailed = match.score_candidate(bundle, scorecard, mode="detailed")
 
     assert set(coarse["dimensions"]) == set(detailed["dimensions"])
+
+
+def test_education_score_recognizes_c9_schools() -> None:
+    assert match._education_score("南京大学 金融学 本科", 8) == 8
+    assert match._education_score("中国科学技术大学 硕士", 8) == 8
+    assert match._education_score("哈尔滨工业大学 本科", 8) == 8
+    assert match._education_score("西安交通大学 本科", 8) == 8
 
 
 def test_load_bundles_uses_talentdb_read_methods_only(

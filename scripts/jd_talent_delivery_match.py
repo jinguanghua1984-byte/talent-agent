@@ -244,7 +244,7 @@ def _platform_id(bundle: CandidateBundle) -> str:
 def _weighted_hits(hit_count: int, total_terms: int, weight: int) -> int:
     if total_terms <= 0 or hit_count <= 0:
         return 0
-    denominator = min(total_terms, 6)
+    denominator = min(total_terms, 4)
     return min(weight, round(weight * hit_count / denominator))
 
 
@@ -388,7 +388,22 @@ def _outreach_angle(item: dict[str, Any]) -> str:
 
 
 def _education_score(education: str, weight: int) -> int:
-    elite_terms = ["清华", "北京大学", "上海交通", "浙江大学", "复旦", "985", "211"]
+    elite_terms = [
+        "清华",
+        "北京大学",
+        "上海交通",
+        "浙江大学",
+        "复旦",
+        "南京大学",
+        "中国科学技术大学",
+        "中科大",
+        "哈尔滨工业大学",
+        "哈工大",
+        "西安交通大学",
+        "C9",
+        "985",
+        "211",
+    ]
     if any(term in education for term in elite_terms):
         return weight
     return weight // 2 if education else 0
@@ -587,6 +602,19 @@ def _sort_scores(scores: list[dict[str, Any]]) -> list[dict[str, Any]]:
             int(item["candidate_id"]),
         ),
     )
+
+
+def _should_detailed_score(coarse_item: dict[str, Any]) -> bool:
+    if coarse_item["recommendation_label"] != "不推荐":
+        return True
+    dimensions = coarse_item.get("dimensions") if isinstance(coarse_item.get("dimensions"), dict) else {}
+    evidence = coarse_item.get("evidence") if isinstance(coarse_item.get("evidence"), dict) else {}
+    has_title_focus = int(dimensions.get("title_focus") or 0) > 0
+    has_recall_context = (
+        int(dimensions.get("company_context") or 0) > 0
+        or int(dimensions.get("must_have") or 0) > 0
+    )
+    return has_title_focus and has_recall_context and evidence.get("title_level") == "precision"
 
 
 def _priority(item: dict[str, Any]) -> str:
@@ -942,9 +970,7 @@ def run_match(
     coarse = _sort_scores(
         [score_candidate(bundle, scorecard, mode="coarse") for bundle in bundles]
     )
-    detailed_candidate_ids = {
-        item["candidate_id"] for item in coarse if item["recommendation_label"] != "不推荐"
-    }
+    detailed_candidate_ids = {item["candidate_id"] for item in coarse if _should_detailed_score(item)}
     detailed = _sort_scores(
         [
             score_candidate(bundle, scorecard, mode="detailed")

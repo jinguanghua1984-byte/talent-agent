@@ -4,7 +4,7 @@
 
 ## Active Task
 
-- 当前无进行中的任务。
+无。
 
 ## Open Items
 
@@ -14,9 +14,9 @@
 
 ## Recent Done
 
+- 2026-05-28：已完成九坤大模型产品 7 个 JD 拆解、本地人才库 Top30 推荐、飞书 Wiki 发布和 `JD需求协同` 群通知；质量门禁全部 passed，验证 `.venv/bin/python -m pytest tests -q` 为 `952 passed, 1 warning`。完整记录见 `tasks/archive/2026-05.md`。
 - 2026-05-27：已将 `codex/script-cleanup-hygiene` 合并到 `main` 并推送 GitHub；关键提交为 `eb4b4e6`（JD `profile_url` 修复）和 `5066466`（merge commit）。完整记录见 `tasks/archive/2026-05.md`。
 - 2026-05-27：已按同一规则批量修复 11 个飞书外联表 `profile_url`。11 个 Wiki URL 均解析为 Sheet；共 330 条外联行，均按平台 ID 从 `data/talent.db` 找到完整 URL 并只更新 `profile_url` 列；回读验证 `profile_failures=0`、`non_profile_changes=0`。完整记录见 `tasks/archive/2026-05.md`。
-- 2026-05-27：人才库云同步 detail merge 修复已在远端 `main` 记录并推送；本次合并保留相关代码、测试和任务台账更新。
 
 ## Archive Index
 

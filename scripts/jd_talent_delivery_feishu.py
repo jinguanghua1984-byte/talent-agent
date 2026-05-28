@@ -48,6 +48,11 @@ REQUIRED_SOURCE_FILES: dict[str, str] = {
     "recommendation": "reports/talent-recommendation.md",
     "outreach": "reports/outreach-queue.csv",
 }
+INTERNAL_FEISHU_RESULT_FILES = {
+    "feishu/dry-run-results.json",
+    "feishu/publish-results.json",
+    "feishu/im-notification-results.json",
+}
 Runner = Callable[[list[str], str | None], subprocess.CompletedProcess]
 
 
@@ -602,6 +607,8 @@ def _scan_output_tree(root: Path) -> list[str]:
         if not path.is_file() or path.suffix.lower() not in {".json", ".md", ".csv", ".txt", ".xml"}:
             continue
         relative = path.relative_to(root).as_posix()
+        if relative in INTERNAL_FEISHU_RESULT_FILES:
+            continue
         text = path.read_text(encoding="utf-8-sig", errors="replace")
         try:
             _assert_safe_path(path, label=relative)

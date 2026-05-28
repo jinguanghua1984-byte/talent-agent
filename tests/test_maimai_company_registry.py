@@ -80,6 +80,21 @@ def test_expand_company_pool_terms_keeps_unknown_terms_as_query_only(tmp_path: P
     assert expanded[1]["preferred_search_mode"] == "query_only"
 
 
+def test_default_registry_expands_jiukun_target_company_terms() -> None:
+    expanded = expand_company_pool_terms(["蚂蚁金服", "百川智能"])
+
+    ant = expanded[0]
+    assert ant["canonical_company"] == "蚂蚁集团"
+    assert "蚂蚁" in ant["company_aliases"]
+    assert "阿福" in ant["org_product_terms"]
+    assert "灵光" in ant["org_product_terms"]
+
+    baichuan = expanded[1]
+    assert baichuan["canonical_company"] == "百川智能"
+    assert "百川" in baichuan["company_aliases"]
+    assert "医疗" in baichuan["org_product_terms"]
+
+
 def test_load_company_product_registry_rejects_duplicate_terms(tmp_path: Path) -> None:
     path = tmp_path / "bad.json"
     path.write_text(
