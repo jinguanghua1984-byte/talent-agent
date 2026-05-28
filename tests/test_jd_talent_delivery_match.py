@@ -76,6 +76,20 @@ def _candidate() -> Candidate:
     )
 
 
+def _candidate_with_work_years(work_years: int | None) -> Candidate:
+    candidate = _candidate()
+    return Candidate(
+        id=candidate.id,
+        name=candidate.name,
+        current_company=candidate.current_company,
+        current_title=candidate.current_title,
+        education=candidate.education,
+        work_years=work_years,
+        skill_tags=candidate.skill_tags,
+        hunting_status=candidate.hunting_status,
+    )
+
+
 def _data_product_candidate() -> Candidate:
     return Candidate(
         id=202,
@@ -462,6 +476,65 @@ def test_coarse_and_detailed_share_dimension_ids() -> None:
     detailed = match.score_candidate(bundle, scorecard, mode="detailed")
 
     assert set(coarse["dimensions"]) == set(detailed["dimensions"])
+
+
+def test_young_high_potential_policy_prefers_five_year_candidates() -> None:
+    scorecard = _scorecard()
+    for dimension in scorecard["dimensions"]:
+        if dimension["id"] == "seniority":
+            dimension["weight"] = 18
+        elif dimension["id"] == "risk":
+            dimension["weight"] = 0
+    scorecard["seniority_policy"] = {
+        "mode": "young_high_potential",
+        "preferred_max_work_years": 5,
+        "soft_max_work_years": 8,
+    }
+    detail = CandidateDetail(
+        candidate_id=101,
+        work_experience=[
+            {
+                "company": "字节跳动",
+                "title": "推理框架工程师",
+                "description": "负责 vLLM KV Cache Prefill Decode SGLang 量化和 CUDA Graph 优化。",
+            }
+        ],
+    )
+
+    young = match.score_candidate(
+        match.CandidateBundle(
+            candidate=_candidate_with_work_years(5),
+            detail=detail,
+            sources=[],
+        ),
+        scorecard,
+        mode="detailed",
+    )
+    above_preferred = match.score_candidate(
+        match.CandidateBundle(
+            candidate=_candidate_with_work_years(7),
+            detail=detail,
+            sources=[],
+        ),
+        scorecard,
+        mode="detailed",
+    )
+    senior = match.score_candidate(
+        match.CandidateBundle(
+            candidate=_candidate_with_work_years(10),
+            detail=detail,
+            sources=[],
+        ),
+        scorecard,
+        mode="detailed",
+    )
+
+    assert young["dimensions"]["seniority"] == 18
+    assert above_preferred["dimensions"]["seniority"] == 9
+    assert senior["dimensions"]["seniority"] == 0
+    assert "seniority_above_preferred:7>5" in above_preferred["risk_flags"]
+    assert "seniority_above_soft_max:10>8" in senior["risk_flags"]
+    assert young["score"] > above_preferred["score"] > senior["score"]
 
 
 def test_education_score_recognizes_c9_schools() -> None:

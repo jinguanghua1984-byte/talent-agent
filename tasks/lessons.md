@@ -1,5 +1,6 @@
 # Lessons
 
+- 2026-05-28：`broad_recall_adaptive_v1` 的 `detail_concurrency=4` 表示最多并行 4 个不同 detail pack，每个 pack 仍按自身 100 人上限串行抓取；不要误读成同一个 pack 内开 4 个请求并发，也不要只串行跑单个 pack 后等待人工继续。
 - 2026-05-26：当用户明确说某个 CRM 子表能力“暂时不用做/保持 TODO”（例如 `candidateproject_set`）时，不要为了推进产品化而补离线候选结构；应撤回实现、测试和文档结论，只保留待 live 抓包确认的 TODO，避免把未验证字段固化进 CLI 合同。
 - 2026-05-26：在 Codex App 内做网页调查、登录后抓包或页面协作时，应优先使用 Codex App 集成的 Browser 插件；不要因为仓库 AGENTS 提到 gstack 就先切到外部 gstack/browser，除非内置 Browser 不可用或用户明确要求 gstack。
 - 2026-05-24：脉脉 campaign 的 `account_day_page_guardrail` 是账号级执行护栏，不是业务需求硬上限；当用户明确换号并解除旧 500 上限时，必须同步更新 run-policy、后续 resume plan 和任务账本，不要继续用旧账号剩余额度截断 follow-up wave，但登录/验证码/403/429/432/非 JSON/模板漂移等平台安全停机规则仍然不变。

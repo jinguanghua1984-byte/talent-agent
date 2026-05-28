@@ -362,11 +362,17 @@ def _risk_summary(flags: list[str]) -> str:
         "company_not_targeted": "公司不在目标池",
         "title_not_targeted": "职位方向不明确",
         "keyword_evidence_missing": "关键词证据不足",
+        "seniority_above_preferred": "工作年限超过年轻高潜优先范围",
+        "seniority_above_soft_max": "工作年限超过年轻高潜软上限",
     }
     result: list[str] = []
     for flag in flags:
         if flag.startswith("exclusion_terms:"):
             result.append("命中排除项：" + flag.split(":", 1)[1])
+        elif flag.startswith("seniority_above_preferred:"):
+            result.append(labels["seniority_above_preferred"] + "：" + flag.split(":", 1)[1])
+        elif flag.startswith("seniority_above_soft_max:"):
+            result.append(labels["seniority_above_soft_max"] + "：" + flag.split(":", 1)[1])
         else:
             result.append(labels.get(flag, flag))
     return "；".join(result)
@@ -409,12 +415,51 @@ def _education_score(education: str, weight: int) -> int:
     return weight // 2 if education else 0
 
 
+def _young_high_potential_policy(scorecard: dict[str, Any]) -> dict[str, int] | None:
+    policy = scorecard.get("seniority_policy")
+    if not isinstance(policy, dict) or policy.get("mode") != "young_high_potential":
+        return None
+    try:
+        preferred = int(policy.get("preferred_max_work_years"))
+        soft_max = int(policy.get("soft_max_work_years"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid young_high_potential seniority policy") from exc
+    if preferred <= 0 or soft_max < preferred:
+        raise ValueError("invalid young_high_potential seniority policy")
+    return {"preferred": preferred, "soft_max": soft_max}
+
+
+def _seniority_score(work_years: int | None, weight: int, scorecard: dict[str, Any]) -> int:
+    policy = _young_high_potential_policy(scorecard)
+    if policy is None:
+        return weight if work_years and 2 <= work_years <= 12 else weight // 2
+    if work_years is None:
+        return 0
+    if work_years <= policy["preferred"]:
+        return weight
+    if work_years <= policy["soft_max"]:
+        return weight // 2
+    return 0
+
+
+def _seniority_risk_flags(candidate: Candidate, scorecard: dict[str, Any]) -> list[str]:
+    policy = _young_high_potential_policy(scorecard)
+    if policy is None or candidate.work_years is None:
+        return []
+    if candidate.work_years > policy["soft_max"]:
+        return [f"seniority_above_soft_max:{candidate.work_years}>{policy['soft_max']}"]
+    if candidate.work_years > policy["preferred"]:
+        return [f"seniority_above_preferred:{candidate.work_years}>{policy['preferred']}"]
+    return []
+
+
 def _risk_flags(
     candidate: Candidate,
     exclusion_hits: list[str],
     *,
     mode: str,
     detail_present: bool,
+    scorecard: dict[str, Any],
 ) -> list[str]:
     flags: list[str] = []
     if exclusion_hits:
@@ -424,6 +469,7 @@ def _risk_flags(
         flags.append("low_hunting_status")
     if mode == "detailed" and not detail_present:
         flags.append("missing_detail_for_detailed_score")
+    flags.extend(_seniority_risk_flags(candidate, scorecard))
     return flags
 
 
@@ -503,10 +549,10 @@ def score_candidate(
         )
     if "seniority" in dimension_scores:
         seniority_weight = weights.get("seniority", 0)
-        dimension_scores["seniority"] = (
-            seniority_weight
-            if candidate.work_years and 2 <= candidate.work_years <= 12
-            else seniority_weight // 2
+        dimension_scores["seniority"] = _seniority_score(
+            candidate.work_years,
+            seniority_weight,
+            scorecard,
         )
     if "education" in dimension_scores:
         dimension_scores["education"] = _education_score(
@@ -516,7 +562,13 @@ def score_candidate(
         dimension_scores["risk"] = -abs(weights.get("risk", 0))
 
     score = max(0, min(100, sum(dimension_scores.values())))
-    risks = _risk_flags(candidate, exclusion_hits, mode=mode, detail_present=detail_present)
+    risks = _risk_flags(
+        candidate,
+        exclusion_hits,
+        mode=mode,
+        detail_present=detail_present,
+        scorecard=scorecard,
+    )
     matched_terms = list(dict.fromkeys(company_hits + title_hits + must_hits + nice_hits))
     key_evidence = _key_evidence(bundle, company_hits, candidate.current_title or "", matched_terms)
     directions = _direction_labels(text, scorecard, level)

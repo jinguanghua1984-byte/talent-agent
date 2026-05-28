@@ -1,5 +1,6 @@
 | 日期 | 错误 | 根因 | 修复 |
 | --- | --- | --- | --- |
+| 2026-05-28 | 对已 partial/stopped 的详情包执行 `--health-check-only` 时复用了正式 `*-capture.json` 输出路径，导致 `pack-010` capture 被健康检查结果覆盖 | `maimai_ai_infra_detail_live_gate --health-check-only` 也会 `_write_json(out_path, result)`；如果 `out_path` 指向正式 capture 文件，会覆盖原 capture metadata 和 detailJobs | 后续只读健康检查必须使用临时 out 路径或专用 healthcheck 文件；若已覆盖，从 `raw/detail-live/<pack>/job-*.json`、原 plan、interruption report 和 continuation plan 调 `_write_capture(... status='stopped')` 重建 capture |
 | 2026-05-25 | P0-P2 补抓详情 4 并行 supervisor 在 `pack-006` 后停止 | live 抓取 100/100 成功且匹配 100/100，但 2 个候选人详情页无工作经历，`maimai_detail_import` dry-run 触发 `missing_work_experience` apply blocker，supervisor 把 dry-run dirty 当作停止条件 | 保留原始 capture，生成排除 blocker 候选人的 `clean-98` 派生 capture 并 dry-run/apply；后续补抓 supervisor 应区分平台阻断和可隔离的 apply blocker，允许 clean 子集继续 |
 | 2026-05-25 | `tests/test_maimai_campaign_orchestrator.py` 在 macOS 下因 `data\campaigns\...` 路径断言失败 | 测试把 Windows 路径分隔符写死，但生产命令按当前平台字符串化路径，macOS 会输出 `/` | 测试断言读取 argv 中的路径参数后归一化分隔符，再比较语义路径或后缀；避免把平台分隔符写死 |
 | 2026-05-25 | Homebrew 安装 `python@3.12` 从 `ghcr.io` 下载 bottle 长时间卡住 | 当前网络访问 GitHub Container Registry bottle 不稳定；Homebrew 本体已使用 USTC，但 bottle domain 未显式切换 | 使用 `HOMEBREW_BOTTLE_DOMAIN=https://mirrors.ustc.edu.cn/homebrew-bottles /opt/homebrew/bin/brew install python@3.12`，安装后再用 `zsh -ic` 验证 PATH |
