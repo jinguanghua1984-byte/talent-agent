@@ -10,6 +10,7 @@
 | `web.search` | 搜索公开网页 | WebSearch / MCP search | web search / browser skill |
 | `web.fetch` | 抓取网页正文 | MCP fetch / reader | web open / browser skill |
 | `browser.operate` | 操作本地浏览器或调试端口 | MCP browser / Playwright | browser plugin / Playwright |
+| `computer.operate` | 操作本地 App UI，例如读取屏幕、点击、滚动、输入、返回 | Computer Use / desktop automation | Computer Use |
 | `human.confirm` | 需要用户确认后继续 | 直接询问用户 | 直接询问用户 |
 
 工作流规则：
@@ -17,3 +18,4 @@
 1. `agents/workflows/*/AGENT.md` 只使用上表中的通用能力名称。
 2. 运行时私有工具名称只能出现在 `agents/adapters/*` 或对应运行时目录中。
 3. 可执行 Python 代码必须放在项目根目录 `scripts/` 包内，不能放在运行时私有目录中。
+4. 涉及第三方沟通、发送消息、上传文件、修改账号状态或其他外部副作用时，`computer.operate` 必须先经过 `human.confirm` 动作级确认。

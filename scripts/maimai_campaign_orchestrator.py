@@ -951,7 +951,13 @@ def _cmd_plan_waves(args: argparse.Namespace) -> int:
         units = _load_jsonl_objects(args.units)
     except ValueError as exc:
         raise ValueError(f"invalid search units JSONL: {exc}") from exc
-    plan = build_wave_plan(args.campaign_root, units, policy=DEFAULT_RUN_POLICY)
+    policy = dict(DEFAULT_RUN_POLICY)
+    if args.policy:
+        loaded_policy = load_json(args.policy)
+        if not isinstance(loaded_policy, dict):
+            raise ValueError("policy JSON must be an object")
+        policy.update(loaded_policy)
+    plan = build_wave_plan(args.campaign_root, units, policy=policy)
     if args.out:
         plan = write_wave_plan_with_sidecars(args.out, plan)
     _print_json(plan)
@@ -980,6 +986,7 @@ def _build_parser() -> argparse.ArgumentParser:
     plan_waves = subparsers.add_parser("plan-waves")
     plan_waves.add_argument("--campaign-root", required=True)
     plan_waves.add_argument("--units", required=True)
+    plan_waves.add_argument("--policy", default="")
     plan_waves.add_argument("--out", default="")
     plan_waves.set_defaults(func=_cmd_plan_waves)
 

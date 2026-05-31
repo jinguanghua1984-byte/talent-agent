@@ -10,6 +10,7 @@
 - `scripts/jd_talent_delivery.py`：JD 推荐交付 workflow 入口。
 - `scripts/maimai_campaign_orchestrator.py`：脉脉 campaign 阶段编排入口。
 - `scripts/score_pipeline.py`：JD 驱动评分 pipeline 入口。
+- `scripts/boss_app_sourcing.py`：BOSS App 推荐列表寻访合同和状态初始化入口。
 
 ## Library Modules
 

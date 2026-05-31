@@ -56,6 +56,28 @@ def test_build_broad_recall_units_use_strategy_mode_and_probe_pages() -> None:
     assert any("腾讯混元" in unit["query"] for unit in units)
 
 
+def test_build_broad_recall_units_can_order_by_company_before_keyword() -> None:
+    strategy = _broad_strategy()
+    strategy["unit_order"] = "company_first"
+    strategy["keyword_packages"].append(
+        {
+            "id": "p1-inference",
+            "priority": "P1",
+            "position_terms": ["推理框架工程师"],
+            "keywords": ["推理框架"],
+        }
+    )
+
+    units = build_broad_recall_search_units(strategy)
+
+    assert [(unit["source_company_terms"][0], unit["keyword_package"]) for unit in units[:4]] == [
+        ("腾讯混元", "p0-data"),
+        ("腾讯混元", "p1-inference"),
+        ("阿里千问", "p0-data"),
+        ("阿里千问", "p1-inference"),
+    ]
+
+
 def _contact(platform_id: str, company: str, title: str, text: str = "") -> dict:
     return {
         "id": platform_id,

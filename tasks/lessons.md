@@ -1,5 +1,7 @@
 # Lessons
 
+- 2026-05-31：写一次性 `sync_conflicts` 处理脚本前必须先查目标表 schema；`candidate_details` 的主键列是 `candidate_id`，不是通用 `id`。事务脚本应先做只读 drift 预检，任何 schema/校验错误都必须在提交前失败回滚。
+- 2026-05-31：设计 BOSS 推荐列表寻访时，不能默认按网页端/CDP/`platform-match` 推进；用户目标是用 Computer Use 操作本机 BOSS App。`platform-match` 最多参考候选人数据结构、评分和报告产物，真实执行链路应按 App UI 截图、点击、滚动、返回、展开和沟通按钮 dry-run 审计重新设计。
 - 2026-05-28：`broad_recall_adaptive_v1` 的 `detail_concurrency=4` 表示最多并行 4 个不同 detail pack，每个 pack 仍按自身 100 人上限串行抓取；不要误读成同一个 pack 内开 4 个请求并发，也不要只串行跑单个 pack 后等待人工继续。
 - 2026-05-26：当用户明确说某个 CRM 子表能力“暂时不用做/保持 TODO”（例如 `candidateproject_set`）时，不要为了推进产品化而补离线候选结构；应撤回实现、测试和文档结论，只保留待 live 抓包确认的 TODO，避免把未验证字段固化进 CLI 合同。
 - 2026-05-26：在 Codex App 内做网页调查、登录后抓包或页面协作时，应优先使用 Codex App 集成的 Browser 插件；不要因为仓库 AGENTS 提到 gstack 就先切到外部 gstack/browser，除非内置 Browser 不可用或用户明确要求 gstack。

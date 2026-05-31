@@ -101,35 +101,40 @@ def build_broad_recall_search_units(strategy: dict[str, Any]) -> list[dict[str, 
     policy = adaptive_policy_from_strategy(strategy)
     packages = _keyword_packages(strategy)
     expanded_companies = expand_company_pool_terms(_company_pool_terms(strategy))
+    unit_order = str(strategy.get("unit_order") or "keyword_first").strip()
 
     units: list[dict[str, Any]] = []
-    for package in packages:
-        for company in expanded_companies:
-            raw_company = str(company.get("raw_term") or "").strip()
-            query_terms = _wide_query_terms(raw_company, package)
-            units.append(
-                {
-                    "unit_id": f"unit-{len(units) + 1:06d}",
-                    "strategy_mode": STRATEGY_MODE,
-                    "source_company_terms": [raw_company],
-                    "canonical_company": company.get("canonical_company") or raw_company,
-                    "company_aliases": company.get("company_aliases") or [],
-                    "org_product_terms": company.get("org_product_terms") or [],
-                    "preferred_search_mode": company.get("preferred_search_mode") or "",
-                    "priority": package.get("priority") or "P1",
-                    "keyword_package": package.get("id") or "",
-                    "position_terms": _unique_text(package.get("position_terms") or []),
-                    "broad_keywords": _unique_text(package.get("keywords") or []),
-                    "long_tail_keywords": _unique_text(package.get("long_tail_keywords") or []),
-                    "query": " ".join(query_terms),
-                    "query_relation": 0,
-                    "page_size": 30,
-                    "max_pages": policy["probe_pages"],
-                    "unit_max_pages": policy["unit_max_pages"],
-                    "adaptive_search": deepcopy(policy),
-                    "search_filters": dict(BROAD_RECALL_QUERY_FILTERS),
-                }
-            )
+    if unit_order == "company_first":
+        pairs = [(package, company) for company in expanded_companies for package in packages]
+    else:
+        pairs = [(package, company) for package in packages for company in expanded_companies]
+
+    for package, company in pairs:
+        raw_company = str(company.get("raw_term") or "").strip()
+        query_terms = _wide_query_terms(raw_company, package)
+        units.append(
+            {
+                "unit_id": f"unit-{len(units) + 1:06d}",
+                "strategy_mode": STRATEGY_MODE,
+                "source_company_terms": [raw_company],
+                "canonical_company": company.get("canonical_company") or raw_company,
+                "company_aliases": company.get("company_aliases") or [],
+                "org_product_terms": company.get("org_product_terms") or [],
+                "preferred_search_mode": company.get("preferred_search_mode") or "",
+                "priority": package.get("priority") or "P1",
+                "keyword_package": package.get("id") or "",
+                "position_terms": _unique_text(package.get("position_terms") or []),
+                "broad_keywords": _unique_text(package.get("keywords") or []),
+                "long_tail_keywords": _unique_text(package.get("long_tail_keywords") or []),
+                "query": " ".join(query_terms),
+                "query_relation": 0,
+                "page_size": 30,
+                "max_pages": policy["probe_pages"],
+                "unit_max_pages": policy["unit_max_pages"],
+                "adaptive_search": deepcopy(policy),
+                "search_filters": dict(BROAD_RECALL_QUERY_FILTERS),
+            }
+        )
     return units
 
 

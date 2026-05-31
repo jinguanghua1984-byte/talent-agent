@@ -1,0 +1,691 @@
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+from copy import deepcopy
+from collections import Counter
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any
+
+
+MANIFEST_SCHEMA = "boss_app_recommendation_sourcing_manifest_v1"
+
+DEFAULT_RUN_POLICY: dict[str, Any] = {
+    "execution_surface": "boss_app_computer_use",
+    "contact_mode": "dry_run",
+    "allow_real_contact": False,
+    "allow_live_contact_test": False,
+    "live_contact_test_limit": 0,
+    "require_action_time_confirmation_for_real_contact": True,
+    "capture_real_name_after_contact": True,
+    "stop_on_login_or_security_page": True,
+    "stop_on_captcha": True,
+    "stop_on_ui_template_drift": True,
+    "list_end_stall_scrolls": 3,
+}
+
+REQUIRED_EMPTY_FILES = [
+    "raw/list-cards.jsonl",
+    "raw/detail-pages.jsonl",
+    "raw/communication-pages.jsonl",
+    "raw/screen-hashes.jsonl",
+    "state/events.jsonl",
+    "state/processed-cards.jsonl",
+    "structured/candidates.jsonl",
+    "structured/contact-decisions.jsonl",
+]
+
+BOOLEAN_POLICY_FIELDS = [
+    "allow_real_contact",
+    "allow_live_contact_test",
+    "require_action_time_confirmation_for_real_contact",
+    "capture_real_name_after_contact",
+    "stop_on_login_or_security_page",
+    "stop_on_captcha",
+    "stop_on_ui_template_drift",
+]
+
+INTEGER_POLICY_FIELDS = [
+    "live_contact_test_limit",
+    "list_end_stall_scrolls",
+]
+
+
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^\w\u4e00-\u9fff.-]+", "-", value, flags=re.UNICODE).strip("-._")
+    return slug or "boss-app-sourcing"
+
+
+def _json_dumps(data: Any) -> str:
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def write_json(path: str | Path, data: Any) -> None:
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(_json_dumps(data), encoding="utf-8")
+
+
+def load_json(path: str | Path, default: Any = None) -> Any:
+    file = Path(path)
+    if not file.exists():
+        return default
+    return json.loads(file.read_text(encoding="utf-8-sig"))
+
+
+def append_jsonl(path: str | Path, record: dict[str, Any]) -> dict[str, Any]:
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    needs_separator = False
+    if out.exists() and out.stat().st_size > 0:
+        with out.open("rb") as handle:
+            handle.seek(-1, 2)
+            needs_separator = handle.read(1) != b"\n"
+    with out.open("a", encoding="utf-8") as handle:
+        if needs_separator:
+            handle.write("\n")
+        handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return record
+
+
+def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
+    file = Path(path)
+    if not file.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line_number, line in enumerate(file.read_text(encoding="utf-8-sig").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{file} line {line_number}: invalid JSON: {exc.msg}") from exc
+        if not isinstance(value, dict):
+            raise ValueError(f"{file} line {line_number}: must be an object")
+        rows.append(value)
+    return rows
+
+
+def screen_hash(text: str | bytes) -> str:
+    data = text if isinstance(text, bytes) else text.encode("utf-8")
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def build_candidate_key(card: dict[str, Any]) -> str:
+    parts = [
+        str(card.get("display_name") or "").strip(),
+        str(card.get("current_company") or "").strip(),
+        str(card.get("current_title") or "").strip(),
+        str(card.get("education") or "").strip(),
+        str(card.get("city") or "").strip(),
+        str(card.get("expected_salary") or "").strip(),
+        str(card.get("screenshot_hash") or "").strip(),
+        str(card.get("list_scroll_batch") or "").strip(),
+        str(card.get("card_position") or "").strip(),
+    ]
+    return "boss-app:" + hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:24]
+
+
+def validate_run_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(DEFAULT_RUN_POLICY)
+    merged.update(policy)
+    for field in BOOLEAN_POLICY_FIELDS:
+        if not isinstance(merged[field], bool):
+            raise ValueError(f"{field} must be boolean")
+    for field in INTEGER_POLICY_FIELDS:
+        if isinstance(merged[field], bool) or not isinstance(merged[field], int):
+            raise ValueError(f"{field} must be integer")
+    if merged["execution_surface"] != "boss_app_computer_use":
+        raise ValueError("execution_surface must be boss_app_computer_use")
+    if merged["contact_mode"] not in {"dry_run", "live_test"}:
+        raise ValueError("contact_mode must be dry_run or live_test")
+    if merged["contact_mode"] == "live_test":
+        if not merged["allow_real_contact"]:
+            raise ValueError("contact_mode live_test requires allow_real_contact")
+        if not merged["allow_live_contact_test"]:
+            raise ValueError("contact_mode live_test requires allow_live_contact_test")
+        if merged["live_contact_test_limit"] <= 0:
+            raise ValueError("contact_mode live_test requires live_contact_test_limit")
+    if merged["allow_real_contact"] and not merged["require_action_time_confirmation_for_real_contact"]:
+        raise ValueError("real contact requires action-time confirmation")
+    if merged["allow_live_contact_test"] and not merged["allow_real_contact"]:
+        raise ValueError("allow_live_contact_test requires allow_real_contact")
+    if merged["allow_live_contact_test"] and merged["live_contact_test_limit"] <= 0:
+        raise ValueError("live_contact_test_limit must be positive when live-contact test is enabled")
+    if merged["live_contact_test_limit"] < 0:
+        raise ValueError("live_contact_test_limit must be non-negative")
+    if merged["list_end_stall_scrolls"] <= 0:
+        raise ValueError("list_end_stall_scrolls must be positive")
+    if merged["allow_live_contact_test"]:
+        merged["contact_mode"] = "live_test"
+    if not merged["allow_live_contact_test"]:
+        merged["live_contact_test_limit"] = 0
+    return merged
+
+
+def _initial_requirements(filters_text: str, campaign_id: str, date_text: str) -> dict[str, Any]:
+    return {
+        "campaign_id": campaign_id,
+        "input_mode": "post_jd_recommendation_filters",
+        "filters_text": filters_text,
+        "confirmed_defaults": {
+            "source_list": "boss_app_jd_recommendation_list",
+            "details_store": "structured_text_and_screenshot_hash",
+            "real_name_backfill": "live_test_or_manual_communication_page",
+        },
+        "created_date": date_text,
+    }
+
+
+def _initial_strategy(filters_text: str) -> dict[str, Any]:
+    return {
+        "strategy_version": "boss_app_recommendation_sourcing_v1",
+        "list_screening": {
+            "input_text": filters_text,
+            "enter_detail_when": "candidate appears likely to satisfy the filters",
+        },
+        "detail_screening": {
+            "recommendation_values": ["contact", "hold", "skip"],
+            "would_contact_requires": ["positive evidence", "no hard exclusion"],
+        },
+    }
+
+
+def init_campaign(
+    campaign_id: str,
+    filters_text: str,
+    out_base: str | Path = "data/campaigns",
+    date_text: str | None = None,
+    allow_real_contact: bool = False,
+    allow_live_contact_test: bool = False,
+    live_contact_test_limit: int = 0,
+) -> dict[str, Any]:
+    if not campaign_id.strip():
+        raise ValueError("campaign_id is required")
+    if not filters_text.strip():
+        raise ValueError("filters_text is required")
+
+    date_value = date_text or date.today().isoformat()
+    normalized_campaign_id = slugify(campaign_id)
+    root = Path(out_base) / normalized_campaign_id
+    if root.exists() and ((root / "campaign-manifest.json").exists() or any(root.iterdir())):
+        raise ValueError(f"campaign already exists: {root}")
+    root.mkdir(parents=True, exist_ok=True)
+
+    policy = validate_run_policy({
+        "allow_real_contact": allow_real_contact,
+        "allow_live_contact_test": allow_live_contact_test,
+        "live_contact_test_limit": live_contact_test_limit,
+    })
+    requirements = _initial_requirements(filters_text, normalized_campaign_id, date_value)
+    strategy = _initial_strategy(filters_text)
+    manifest = {
+        "schema": MANIFEST_SCHEMA,
+        "campaign_id": normalized_campaign_id,
+        "campaign_root": str(root),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "requirements_path": str(root / "requirements.json"),
+        "strategy_path": str(root / "strategy.json"),
+        "run_policy_path": str(root / "run-policy.json"),
+        "status": "initialized",
+    }
+
+    write_json(root / "requirements.json", requirements)
+    write_json(root / "strategy.json", strategy)
+    write_json(root / "run-policy.json", policy)
+    write_json(root / "campaign-manifest.json", manifest)
+    write_json(root / "state/continuation-plan.json", {
+        "stage": "initialized",
+        "status": "ready_for_app_preflight",
+        "campaign_root": str(root),
+    })
+    write_json(root / "reports/sourcing-summary.json", {
+        "campaign_id": normalized_campaign_id,
+        "status": "initialized",
+    })
+    (root / "reports/sourcing-summary.md").parent.mkdir(parents=True, exist_ok=True)
+    (root / "reports/sourcing-summary.md").write_text("# BOSS App 寻访摘要\n\n状态：initialized\n", encoding="utf-8")
+    for relative in REQUIRED_EMPTY_FILES:
+        file = root / relative
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.touch(exist_ok=True)
+    append_jsonl(root / "state/events.jsonl", {
+        "stage": "init",
+        "status": "ready",
+        "at": datetime.now().isoformat(timespec="seconds"),
+    })
+    return manifest
+
+
+def _now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _campaign_path(campaign_root: str | Path, relative: str) -> Path:
+    return Path(campaign_root) / relative
+
+
+def _base_candidate(card: dict[str, Any], candidate_key: str) -> dict[str, Any]:
+    now = _now()
+    return {
+        "candidate_key": candidate_key,
+        "platform": "boss_app",
+        "display_name": card.get("display_name"),
+        "real_name": None,
+        "real_name_status": "not_available_dry_run",
+        "real_name_source": None,
+        "name_confidence": "masked",
+        "current_company": card.get("current_company", ""),
+        "current_title": card.get("current_title", ""),
+        "city": card.get("city", ""),
+        "work_years": card.get("work_years"),
+        "education": card.get("education", ""),
+        "expected_salary": card.get("expected_salary", ""),
+        "active_state": card.get("active_state", ""),
+        "list_snapshot": dict(card),
+        "detail_sections": {},
+        "screen_evidence": [
+            {
+                "page": "list",
+                "screenshot_hash": card.get("screenshot_hash", ""),
+                "screen_region": card.get("screen_region"),
+                "captured_at": now,
+            }
+        ],
+        "screening": {
+            "list_decision": card.get("list_decision", ""),
+            "detail_decision": "",
+            "score": 0,
+            "reasons": [],
+            "risks": [],
+        },
+        "contact": {
+            "would_contact": False,
+            "contact_mode": "dry_run",
+            "contacted": False,
+            "live_contact_test": False,
+            "contact_button_seen": False,
+            "communication_page_seen": False,
+            "preset_message_auto_sent": False,
+        },
+        "updated_at": now,
+    }
+
+
+def _all_candidates(campaign_root: str | Path) -> list[dict[str, Any]]:
+    return load_jsonl(_campaign_path(campaign_root, "structured/candidates.jsonl"))
+
+
+def latest_candidate(campaign_root: str | Path, candidate_key: str) -> dict[str, Any]:
+    matches = [row for row in _all_candidates(campaign_root) if row.get("candidate_key") == candidate_key]
+    if not matches:
+        raise ValueError(f"candidate not found: {candidate_key}")
+    return matches[-1]
+
+
+def _append_candidate(campaign_root: str | Path, candidate: dict[str, Any]) -> dict[str, Any]:
+    candidate["updated_at"] = _now()
+    append_jsonl(_campaign_path(campaign_root, "structured/candidates.jsonl"), candidate)
+    return candidate
+
+
+def record_list_card(campaign_root: str | Path, card: dict[str, Any]) -> dict[str, Any]:
+    if not str(card.get("display_name") or "").strip():
+        raise ValueError("display_name is required")
+    enriched_card = dict(card)
+    if not enriched_card.get("screenshot_hash"):
+        enriched_card["screenshot_hash"] = screen_hash(json.dumps(enriched_card, ensure_ascii=False, sort_keys=True))
+    candidate_key = build_candidate_key(enriched_card)
+    now = _now()
+    list_evidence = {
+        "page": "list",
+        "screenshot_hash": enriched_card["screenshot_hash"],
+        "screen_region": enriched_card.get("screen_region"),
+        "captured_at": now,
+    }
+    try:
+        candidate = deepcopy(latest_candidate(campaign_root, candidate_key))
+        candidate["list_snapshot"] = dict(enriched_card)
+        candidate["screen_evidence"] = list(candidate.get("screen_evidence") or [])
+        candidate["screen_evidence"].append(list_evidence)
+        for field in ["current_company", "current_title", "city", "work_years", "education", "expected_salary", "active_state"]:
+            if enriched_card.get(field) not in (None, ""):
+                candidate[field] = enriched_card.get(field)
+        if enriched_card.get("list_decision"):
+            candidate["screening"] = dict(candidate.get("screening") or {})
+            candidate["screening"]["list_decision"] = enriched_card["list_decision"]
+    except ValueError:
+        candidate = _base_candidate(enriched_card, candidate_key)
+        candidate["screen_evidence"] = [list_evidence]
+    append_jsonl(_campaign_path(campaign_root, "raw/list-cards.jsonl"), enriched_card | {
+        "candidate_key": candidate_key,
+        "captured_at": now,
+    })
+    append_jsonl(_campaign_path(campaign_root, "raw/screen-hashes.jsonl"), {
+        "candidate_key": candidate_key,
+        "page": "list",
+        "screenshot_hash": enriched_card["screenshot_hash"],
+        "captured_at": now,
+    })
+    append_jsonl(_campaign_path(campaign_root, "state/processed-cards.jsonl"), {
+        "candidate_key": candidate_key,
+        "stage": "list",
+        "status": "captured",
+        "captured_at": now,
+    })
+    return _append_candidate(campaign_root, candidate)
+
+
+def record_detail_update(
+    campaign_root: str | Path,
+    candidate_key: str,
+    detail_sections: dict[str, Any],
+    recommendation: str,
+    score: int,
+    reasons: list[str],
+    risks: list[str] | None = None,
+) -> dict[str, Any]:
+    if recommendation not in {"contact", "hold", "skip"}:
+        raise ValueError("recommendation must be contact, hold, or skip")
+    candidate = dict(latest_candidate(campaign_root, candidate_key))
+    candidate["detail_sections"] = dict(detail_sections)
+    candidate["screening"] = dict(candidate.get("screening") or {})
+    candidate["screening"].update({
+        "detail_decision": recommendation,
+        "score": int(score),
+        "reasons": list(reasons),
+        "risks": list(risks or []),
+    })
+    append_jsonl(_campaign_path(campaign_root, "raw/detail-pages.jsonl"), {
+        "candidate_key": candidate_key,
+        "detail_sections": detail_sections,
+        "recommendation": recommendation,
+        "score": int(score),
+        "reasons": list(reasons),
+        "risks": list(risks or []),
+        "captured_at": _now(),
+    })
+    return _append_candidate(campaign_root, candidate)
+
+
+def _live_contact_count(campaign_root: str | Path) -> int:
+    return sum(
+        1
+        for row in load_jsonl(_campaign_path(campaign_root, "structured/contact-decisions.jsonl"))
+        if row.get("mode") == "live_test" and row.get("contacted")
+    )
+
+
+def record_contact_decision(
+    campaign_root: str | Path,
+    candidate_key: str,
+    mode: str,
+    button_seen: bool,
+    action_confirmed: bool,
+    preset_message_auto_sent: bool = False,
+) -> dict[str, Any]:
+    if mode not in {"dry_run", "live_test"}:
+        raise ValueError("mode must be dry_run or live_test")
+    policy = validate_run_policy(load_json(_campaign_path(campaign_root, "run-policy.json"), default={}))
+    candidate = dict(latest_candidate(campaign_root, candidate_key))
+    contact_state = candidate.get("contact") or {}
+    if mode == "live_test":
+        if not policy["allow_live_contact_test"]:
+            raise ValueError("live contact test is not enabled")
+        if not action_confirmed:
+            raise ValueError("live contact requires action confirmation")
+        if _live_contact_count(campaign_root) >= policy["live_contact_test_limit"]:
+            raise ValueError("live contact test limit reached")
+        if contact_state.get("contacted") or any(
+            row.get("candidate_key") == candidate_key and row.get("mode") == "live_test" and row.get("contacted")
+            for row in load_jsonl(_campaign_path(campaign_root, "structured/contact-decisions.jsonl"))
+        ):
+            raise ValueError("candidate already contacted")
+        screening = candidate.get("screening") or {}
+        if screening.get("detail_decision") != "contact":
+            raise ValueError("live contact requires detail recommendation contact")
+        if not contact_state.get("would_contact"):
+            raise ValueError("live contact requires existing would_contact decision")
+
+    decision = {
+        "candidate_key": candidate_key,
+        "mode": mode,
+        "would_contact": True,
+        "button_seen": bool(button_seen),
+        "action_confirmed": bool(action_confirmed),
+        "contacted": mode == "live_test",
+        "preset_message_auto_sent": bool(preset_message_auto_sent),
+        "decided_at": _now(),
+    }
+    append_jsonl(_campaign_path(campaign_root, "structured/contact-decisions.jsonl"), decision)
+
+    candidate["contact"] = dict(candidate.get("contact") or {})
+    previous_contacted = bool(candidate["contact"].get("contacted"))
+    current_contacted = previous_contacted or mode == "live_test"
+    current_live_test = bool(candidate["contact"].get("live_contact_test")) or mode == "live_test"
+    current_auto_sent = bool(candidate["contact"].get("preset_message_auto_sent")) or bool(preset_message_auto_sent)
+    contact_mode = candidate["contact"].get("contact_mode") if previous_contacted and mode == "dry_run" else mode
+    candidate["contact"].update({
+        "would_contact": True,
+        "contact_mode": contact_mode,
+        "contacted": current_contacted,
+        "live_contact_test": current_live_test,
+        "contact_button_seen": bool(button_seen),
+        "preset_message_auto_sent": current_auto_sent,
+    })
+    _append_candidate(campaign_root, candidate)
+    return decision
+
+
+def backfill_real_name(
+    campaign_root: str | Path,
+    candidate_key: str,
+    real_name: str,
+    source: str,
+    page_text: str | None = None,
+    screenshot_hash: str | None = None,
+) -> dict[str, Any]:
+    if source not in {"communication_page_after_live_contact_test", "manual_opened_communication_page"}:
+        raise ValueError("invalid real name source")
+    normalized_real_name = real_name.strip()
+    if not normalized_real_name:
+        raise ValueError("real_name is required")
+    candidate = dict(latest_candidate(campaign_root, candidate_key))
+    contact_state = candidate.get("contact") or {}
+    if source == "communication_page_after_live_contact_test" and not contact_state.get("contacted"):
+        raise ValueError("communication page live source requires live contacted candidate")
+    existing_real_name = candidate.get("real_name")
+    existing_source = candidate.get("real_name_source")
+    if existing_real_name and (existing_real_name != normalized_real_name or existing_source != source):
+        raise ValueError("real_name already captured")
+    if screenshot_hash is None and page_text:
+        screenshot_hash = screen_hash(page_text)
+    candidate["real_name"] = normalized_real_name
+    candidate["real_name_status"] = "captured"
+    candidate["real_name_source"] = source
+    candidate["contact"] = dict(contact_state)
+    candidate["contact"]["communication_page_seen"] = True
+    append_jsonl(_campaign_path(campaign_root, "raw/communication-pages.jsonl"), {
+        "candidate_key": candidate_key,
+        "real_name": normalized_real_name,
+        "real_name_source": source,
+        "page_text": page_text,
+        "screenshot_hash": screenshot_hash,
+        "captured_at": _now(),
+    })
+    return _append_candidate(campaign_root, candidate)
+
+
+def write_continuation_plan(
+    campaign_root: str | Path,
+    stage: str,
+    status: str,
+    reason: str,
+    next_action: str,
+) -> dict[str, Any]:
+    plan = {
+        "stage": stage,
+        "status": status,
+        "reason": reason,
+        "next_action": next_action,
+        "updated_at": _now(),
+    }
+    write_json(_campaign_path(campaign_root, "state/continuation-plan.json"), plan)
+    append_jsonl(_campaign_path(campaign_root, "state/events.jsonl"), plan)
+    return plan
+
+
+def _latest_candidates_by_key(campaign_root: str | Path) -> dict[str, dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for row in _all_candidates(campaign_root):
+        latest[str(row.get("candidate_key"))] = row
+    return latest
+
+
+def _load_required_json_object(path: str | Path) -> dict[str, Any]:
+    file = Path(path)
+    if not file.exists():
+        raise ValueError(f"required JSON file is missing: {file}")
+    try:
+        value = json.loads(file.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{file}: invalid JSON: {exc.msg}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{file}: must be a JSON object")
+    return value
+
+
+def summarize_campaign(campaign_root: str | Path) -> dict[str, Any]:
+    root = Path(campaign_root)
+    candidates = list(_latest_candidates_by_key(root).values())
+    decisions = load_jsonl(root / "structured/contact-decisions.jsonl")
+    continuation_plan = load_json(root / "state/continuation-plan.json", default={})
+    run_policy = validate_run_policy(_load_required_json_object(root / "run-policy.json"))
+    real_name_status_distribution = Counter(str(item.get("real_name_status") or "unknown") for item in candidates)
+    skipped_candidates = [
+        item for item in candidates if (item.get("screening") or {}).get("detail_decision") == "skip"
+    ]
+    skip_reason_distribution: Counter[str] = Counter()
+    for item in skipped_candidates:
+        reasons = (item.get("screening") or {}).get("reasons") or ["未记录原因"]
+        for reason in reasons:
+            skip_reason_distribution[str(reason)] += 1
+    manual_review_candidates = [
+        {
+            "candidate_key": item.get("candidate_key"),
+            "display_name": item.get("display_name"),
+            "detail_decision": (item.get("screening") or {}).get("detail_decision"),
+            "reasons": (item.get("screening") or {}).get("reasons", []),
+        }
+        for item in candidates
+        if (item.get("screening") or {}).get("detail_decision") in {"hold", "skip"}
+        or not (item.get("screening") or {}).get("detail_decision")
+    ]
+    live_contact_count = sum(1 for item in candidates if (item.get("contact") or {}).get("contacted"))
+    detail_count = sum(1 for item in candidates if (item.get("screening") or {}).get("detail_decision"))
+    summary = {
+        "campaign_root": str(root),
+        "candidate_count": len(candidates),
+        "list_card_count": len(load_jsonl(root / "raw/list-cards.jsonl")),
+        "detail_count": detail_count,
+        "would_contact_count": sum(1 for item in candidates if (item.get("contact") or {}).get("would_contact")),
+        "live_contact_count": live_contact_count,
+        "live_contact_limit": run_policy["live_contact_test_limit"],
+        "live_contact_remaining": max(0, run_policy["live_contact_test_limit"] - live_contact_count),
+        "real_name_captured_count": sum(1 for item in candidates if item.get("real_name_status") == "captured"),
+        "real_name_status_distribution": dict(sorted(real_name_status_distribution.items())),
+        "skip_count": len(skipped_candidates),
+        "skip_reason_distribution": dict(sorted(skip_reason_distribution.items())),
+        "manual_review_candidates": manual_review_candidates,
+        "contact_decision_count": len(decisions),
+        "continuation": continuation_plan,
+        "updated_at": _now(),
+    }
+    write_json(root / "reports/sourcing-summary.json", summary)
+    manual_review_lines = [
+        f"- {item['display_name']} ({item['candidate_key']}): {item['detail_decision'] or 'pending'}"
+        for item in manual_review_candidates
+    ] or ["- 无"]
+    skip_reason_lines = [
+        f"- {reason}：{count}" for reason, count in summary["skip_reason_distribution"].items()
+    ] or ["- 无"]
+    real_name_status_lines = [
+        f"- {status}：{count}" for status, count in summary["real_name_status_distribution"].items()
+    ] or ["- 无"]
+    markdown = "\n".join([
+        "# BOSS App 寻访摘要",
+        "",
+        f"- 候选人总数：{summary['candidate_count']}",
+        f"- 列表卡片采集：{summary['list_card_count']}",
+        f"- 详情采集：{summary['detail_count']}",
+        f"- Would contact：{summary['would_contact_count']}",
+        f"- Live-test 真实沟通：{summary['live_contact_count']}",
+        f"- Live-test 剩余额度：{summary['live_contact_remaining']}",
+        f"- 真实姓名补全：{summary['real_name_captured_count']}",
+        f"- 详情淘汰：{summary['skip_count']}",
+        f"- 恢复状态：{continuation_plan.get('status', '')}",
+        f"- 下一步：{continuation_plan.get('next_action', '')}",
+        "",
+        "## 跳过原因分布",
+        "",
+        *skip_reason_lines,
+        "",
+        "## 真实姓名补全状态",
+        "",
+        *real_name_status_lines,
+        "",
+        "## 人工复核清单",
+        "",
+        *manual_review_lines,
+        "",
+    ])
+    (root / "reports/sourcing-summary.md").write_text(markdown, encoding="utf-8")
+    return summary
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="BOSS App recommendation sourcing helper")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    init_parser = subparsers.add_parser("init")
+    init_parser.add_argument("--campaign-id", required=True)
+    init_parser.add_argument("--filters-text", required=True)
+    init_parser.add_argument("--out-base", default="data/campaigns")
+    init_parser.add_argument("--date", default=date.today().isoformat())
+    init_parser.add_argument("--allow-real-contact", action="store_true")
+    init_parser.add_argument("--allow-live-contact-test", action="store_true")
+    init_parser.add_argument("--live-contact-test-limit", type=int, default=0)
+
+    summarize_parser = subparsers.add_parser("summarize")
+    summarize_parser.add_argument("--campaign-root", required=True)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "init":
+        manifest = init_campaign(
+            campaign_id=args.campaign_id,
+            filters_text=args.filters_text,
+            out_base=args.out_base,
+            date_text=args.date,
+            allow_real_contact=args.allow_real_contact,
+            allow_live_contact_test=args.allow_live_contact_test,
+            live_contact_test_limit=args.live_contact_test_limit,
+        )
+        print(json.dumps(manifest, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "summarize":
+        summary = summarize_campaign(args.campaign_root)
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return 0
+    raise ValueError(args.command)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

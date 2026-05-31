@@ -11,11 +11,13 @@ WORKFLOWS = [
     "wechat-chat-sync",
     "jd-talent-delivery",
     "maimai-unattended-campaign",
+    "boss-app-recommendation-sourcing",
 ]
 
 CANONICAL_SKILL_WORKFLOWS = {
     "jd-talent-delivery": "jd-talent-delivery",
     "maimai-talent-search-campaign": "maimai-unattended-campaign",
+    "boss-app-recommendation-sourcing": "boss-app-recommendation-sourcing",
 }
 
 CLAUDE_ADAPTER_WORKFLOWS = {
@@ -27,7 +29,17 @@ CLAUDE_ADAPTER_WORKFLOWS = {
     "wechat-chat-sync": "wechat-chat-sync",
     "jd-talent-delivery": "jd-talent-delivery",
     "maimai-talent-search-campaign": "maimai-unattended-campaign",
+    "boss-app-recommendation-sourcing": "boss-app-recommendation-sourcing",
 }
+
+
+def markdown_section(text: str, heading: str) -> str:
+    marker = f"### {heading}"
+    start = text.index(marker)
+    next_heading = text.find("\n### ", start + len(marker))
+    if next_heading == -1:
+        return text[start:]
+    return text[start:next_heading]
 
 
 def test_canonical_workflow_files_exist():
@@ -98,3 +110,54 @@ def test_env_example_uses_generic_llm_settings():
     assert "LLM_MODEL=" in text
     assert "LLM_API_KEY=" in text
     assert "ANTHROPIC_API_KEY" in text
+
+
+def test_capabilities_include_local_app_operations():
+    text = (ROOT / "agents" / "capabilities.md").read_text(encoding="utf-8")
+    assert "`computer.operate`" in text
+    assert "本地 App" in text
+
+
+def test_boss_app_sourcing_contracts_define_contact_audit_gates():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-app-recommendation-sourcing"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-app-recommendation-sourcing"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+    s6b = markdown_section(workflow, "S6b live-test 真实沟通")
+    s6c = markdown_section(workflow, "S6c 人工已沟通页面回采")
+
+    for text in (skill, workflow):
+        assert "`allow_real_contact=true`" in text
+        assert "`allow_live_contact_test=true`" in text
+        assert "默认绝不点击" in text
+
+    assert "`allow_real_contact=true`" in s6b
+    assert "`allow_live_contact_test=true`" in s6b
+    assert "`live_contact_test_limit`" in s6b
+    assert "`human.confirm`" in s6b
+    assert "动作级确认" in s6b
+    assert "自动发送预设消息" in s6b
+    assert "`raw/communication-pages.jsonl`" in s6b
+    assert "`structured/contact-decisions.jsonl`" in s6b
+    assert "`structured/candidates.jsonl`" in s6b
+    assert "real_name_source=communication_page_after_live_contact_test" in s6b
+
+    assert "`raw/communication-pages.jsonl`" in s6c
+    assert "`structured/contact-decisions.jsonl`" in s6c
+    assert "`structured/candidates.jsonl`" in s6c
+    assert "real_name_source=manual_opened_communication_page" in s6c
+    assert "不发送新消息" in s6c
+
+    assert "`reports/interruption-<stage>-<reason>-<timestamp>.json`" in workflow
+    assert "`state/continuation-plan.json`" in workflow
+    assert "`state/events.jsonl`" in workflow

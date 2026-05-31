@@ -246,6 +246,42 @@ def test_plan_waves_cli_writes_plan_without_live_side_effects(tmp_path: Path, ca
     assert not (tmp_path / "state" / "events.jsonl").exists()
 
 
+def test_plan_waves_cli_can_read_run_policy_budget(tmp_path: Path, capsys):
+    units_path = tmp_path / "units.jsonl"
+    units_path.write_text(
+        "\n".join(json.dumps(_unit(index)) for index in range(1, 170)) + "\n",
+        encoding="utf-8",
+    )
+    policy_path = tmp_path / "run-policy.json"
+    policy_path.write_text(
+        json.dumps(
+            {
+                "daily_search_request_budget": 100000,
+                "search_wave_max_pages": 50,
+            }
+        ),
+        encoding="utf-8",
+    )
+    out_path = tmp_path / "wave-plan.json"
+
+    assert main([
+        "plan-waves",
+        "--campaign-root",
+        str(tmp_path),
+        "--units",
+        str(units_path),
+        "--policy",
+        str(policy_path),
+        "--out",
+        str(out_path),
+    ]) == 0
+
+    saved = load_json(out_path)
+    capsys.readouterr()
+    assert saved["daily_search_request_budget"] == 100000
+    assert saved["page_count"] == 169 * 3
+
+
 def test_plan_waves_to_standardize_preserves_wave_id_for_pipeline_filter(tmp_path: Path, capsys):
     campaign = ensure_campaign(tmp_path / "campaign")
     units_path = tmp_path / "units.jsonl"
