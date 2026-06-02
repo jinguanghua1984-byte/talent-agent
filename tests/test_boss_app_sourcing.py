@@ -1660,3 +1660,45 @@ def test_build_all_match_detail_decision_keeps_contact_and_records_risks() -> No
         "候选人个人描述限定 CTO 岗位，后续真实沟通前需复核岗位匹配",
         "候选人期望测试经理/测试总监，后续真实沟通前需复核岗位匹配",
     ]
+
+
+def test_boss_app_sourcing_cli_writes_intent_and_consumes_executor_result(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    assert boss_app_sourcing.main([
+        "approve-contact",
+        "--campaign-root",
+        str(root),
+        "--candidate-key",
+        candidate_key,
+    ]) == 0
+    queue_item = json.loads(capsys.readouterr().out)
+    assert queue_item["candidate_key"] == candidate_key
+
+    assert boss_app_sourcing.main([
+        "write-contact-intent",
+        "--campaign-root",
+        str(root),
+        "--candidate-key",
+        candidate_key,
+        "--now",
+        "2026-06-02T10:00:00+08:00",
+    ]) == 0
+    intent = json.loads(capsys.readouterr().out)
+
+    boss_app_sourcing.write_json(root / "state/executor-result.json", {
+        "schema": "boss_executor_result_v1",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "result": "sent",
+        "button_before_click": "立即沟通",
+        "message_template_id": "boss-current-preset",
+        "message_status": "送达",
+        "real_name": "陶壮",
+        "communication_page_text": "沟通页顶部：陶壮；状态：送达",
+        "next_action_for_codex": "record_contact_return_to_list_and_continue",
+        "stopped_reason": None,
+    })
+    assert boss_app_sourcing.main(["consume-executor-result", "--campaign-root", str(root)]) == 0
+    consumed = json.loads(capsys.readouterr().out)
+    assert consumed["result"] == "sent"

@@ -984,10 +984,11 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
     dangling_attempt_candidate_keys: list[str] = []
     for row in attempts:
         candidate_key = str(row.get("candidate_key") or "")
+        event_type = str(row.get("event_type") or "")
         if row.get("schema") != EXECUTOR_ATTEMPT_SCHEMA:
             invalid_attempt_rows.append(candidate_key or "<missing>")
             issues.append("executor_attempt.schema")
-        if row.get("result") not in SUPPORTED_EXECUTOR_RESULTS:
+        if event_type != "attempt_started" and row.get("result") not in SUPPORTED_EXECUTOR_RESULTS:
             invalid_attempt_rows.append(candidate_key or "<missing>")
             issues.append("executor_attempt.unsupported_result")
         if candidate_key and candidate_key not in candidates_by_key:
@@ -1047,16 +1048,17 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
             issues.append("executor_result.missing_attempt")
         if latest_result.get("result") == "sent":
             issues.extend(_sent_result_protocol_issues(latest_result, current_intent))
-            has_sent_decision = any(
-                row.get("campaign_id") == latest_result.get("campaign_id")
-                and row.get("candidate_key") == latest_result.get("candidate_key")
-                and row.get("mode") == "external_executor"
-                and row.get("executor_intent_id") == latest_result.get("intent_id")
-                and row.get("contacted") is True
-                for row in decisions
-            )
-            if not has_sent_decision:
-                issues.append("executor_result.sent_missing_external_executor_decision")
+            if not matching_attempt:
+                has_sent_decision = any(
+                    row.get("campaign_id") == latest_result.get("campaign_id")
+                    and row.get("candidate_key") == latest_result.get("candidate_key")
+                    and row.get("mode") == "external_executor"
+                    and row.get("executor_intent_id") == latest_result.get("intent_id")
+                    and row.get("contacted") is True
+                    for row in decisions
+                )
+                if not has_sent_decision:
+                    issues.append("executor_result.sent_missing_external_executor_decision")
 
     for row in decisions:
         if row.get("mode") != "external_executor":
@@ -1069,20 +1071,6 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
             or row.get("candidate_key") != current_intent.get("candidate_key")
         ):
             issues.append("contact_decision.intent_mismatch")
-
-    for row in attempts:
-        if row.get("result") != "sent":
-            continue
-        has_sent_decision = any(
-            decision.get("campaign_id") == row.get("campaign_id")
-            and decision.get("candidate_key") == row.get("candidate_key")
-            and decision.get("mode") == "external_executor"
-            and decision.get("executor_intent_id") == row.get("intent_id")
-            and decision.get("contacted") is True
-            for decision in decisions
-        )
-        if not has_sent_decision:
-            issues.append("executor_attempt.sent_missing_external_executor_decision")
 
     if executor_lock:
         if executor_lock.get("schema") != EXECUTOR_LOCK_SCHEMA:
@@ -1550,6 +1538,26 @@ def build_parser() -> argparse.ArgumentParser:
     parse_detail_parser.add_argument("--text", default="")
     parse_detail_parser.add_argument("--text-file")
 
+    approve_contact_parser = subparsers.add_parser("approve-contact")
+    approve_contact_parser.add_argument("--campaign-root", required=True)
+    approve_contact_parser.add_argument("--candidate-key", required=True)
+    approve_contact_parser.add_argument("--message-template-id", default="boss-current-preset")
+
+    write_intent_parser = subparsers.add_parser("write-contact-intent")
+    write_intent_parser.add_argument("--campaign-root", required=True)
+    write_intent_parser.add_argument("--candidate-key", required=True)
+    write_intent_parser.add_argument("--message-template-id", default="boss-current-preset")
+    write_intent_parser.add_argument("--now")
+
+    consume_executor_parser = subparsers.add_parser("consume-executor-result")
+    consume_executor_parser.add_argument("--campaign-root", required=True)
+
+    validate_executor_parser = subparsers.add_parser("validate-executor")
+    validate_executor_parser.add_argument("--campaign-root", required=True)
+
+    summarize_executor_parser = subparsers.add_parser("summarize-executor")
+    summarize_executor_parser.add_argument("--campaign-root", required=True)
+
     return parser
 
 
@@ -1633,6 +1641,35 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "parse-detail-state":
         detail = parse_detail_sections_from_accessibility_text(_load_text_arg(args.text, args.text_file))
         print(json.dumps(detail, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "approve-contact":
+        queue_item = record_approved_contact_queue_item(
+            args.campaign_root,
+            args.candidate_key,
+            message_template_id=args.message_template_id,
+        )
+        print(json.dumps(queue_item, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "write-contact-intent":
+        intent = write_current_contact_intent(
+            args.campaign_root,
+            args.candidate_key,
+            message_template_id=args.message_template_id,
+            now_text=args.now,
+        )
+        print(json.dumps(intent, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "consume-executor-result":
+        result = consume_executor_result(args.campaign_root)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get("result") in {"sent", "skipped_continue_chat"} else 1
+    if args.command == "validate-executor":
+        report = validate_executor_artifacts(args.campaign_root)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["status"] == "passed" else 1
+    if args.command == "summarize-executor":
+        summary = summarize_executor_results(args.campaign_root)
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
     raise ValueError(args.command)
 

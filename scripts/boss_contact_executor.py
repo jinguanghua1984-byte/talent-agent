@@ -699,3 +699,83 @@ def contact_current(
     finally:
         if locked:
             finish_lock(campaign_root, result)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="BOSS contact executor")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    contact_parser = subparsers.add_parser("contact-current")
+    contact_parser.add_argument("--campaign-root", required=True)
+    contact_parser.add_argument("--execute", action="store_true")
+    contact_parser.add_argument("--mock-ui-fixture")
+    contact_parser.add_argument("--now")
+
+    validate_parser = subparsers.add_parser("validate")
+    validate_parser.add_argument("--campaign-root", required=True)
+
+    summarize_parser = subparsers.add_parser("summarize")
+    summarize_parser.add_argument("--campaign-root", required=True)
+
+    return parser
+
+
+def _print_json(data: Any) -> None:
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def _contact_current_exit_code(result: dict[str, Any]) -> int:
+    result_value = result.get("result")
+    if result_value in {"dry_run_ready", "sent", "skipped_continue_chat"}:
+        return 0
+    if result_value in {"stopped", "sent_unverified"}:
+        stopped_reason = str(result.get("stopped_reason") or "")
+        if "stale_lock" in stopped_reason or "lock" in stopped_reason:
+            return 4
+        return 3
+    return 3
+
+
+def _exception_exit_code(exc: Exception) -> int:
+    text = str(exc)
+    if "stale_lock" in text or "lock" in text:
+        return 4
+    if isinstance(exc, ValueError):
+        return 2
+    return 3
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "contact-current":
+        ui = FixtureBossUI(args.mock_ui_fixture) if args.mock_ui_fixture else None
+        try:
+            result = contact_current(
+                args.campaign_root,
+                execute=bool(args.execute),
+                ui=ui,
+                now_text=args.now,
+            )
+        except Exception as exc:
+            result = boss_app_sourcing.load_json(
+                _campaign_path(args.campaign_root, "state/executor-result.json"),
+                default={},
+            ) or {"result": "stopped", "stopped_reason": str(exc)}
+            _print_json(result)
+            return _exception_exit_code(exc)
+        _print_json(result)
+        return _contact_current_exit_code(result)
+    if args.command == "validate":
+        report = boss_app_sourcing.validate_executor_artifacts(args.campaign_root)
+        _print_json(report)
+        return 0 if report["status"] == "passed" else 1
+    if args.command == "summarize":
+        summary = boss_app_sourcing.summarize_executor_results(args.campaign_root)
+        _print_json(summary)
+        return 0
+    raise ValueError(args.command)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

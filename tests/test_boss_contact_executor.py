@@ -520,3 +520,62 @@ def test_mac_accessibility_ui_raises_on_clicked_false(monkeypatch: pytest.Monkey
     ui = boss_contact_executor.MacAccessibilityBossUI()
     with pytest.raises(ValueError, match="ambiguous_button_count"):
         ui.click_contact(boss_contact_executor.ContactButtonState("立即沟通", 1))
+
+
+def test_contact_current_cli_with_fixture_returns_zero_and_prints_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    fixture = ready_fixture(tmp_path)
+    exit_code = boss_contact_executor.main([
+        "contact-current",
+        "--campaign-root",
+        str(root),
+        "--mock-ui-fixture",
+        str(fixture),
+        "--now",
+        "2026-06-02T10:05:00+08:00",
+    ])
+    assert exit_code == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["result"] == "dry_run_ready"
+
+
+def test_contact_current_cli_execute_with_fixture_sends(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    fixture = ready_fixture(tmp_path)
+    exit_code = boss_contact_executor.main([
+        "contact-current",
+        "--campaign-root",
+        str(root),
+        "--execute",
+        "--mock-ui-fixture",
+        str(fixture),
+        "--now",
+        "2026-06-02T10:05:00+08:00",
+    ])
+    assert exit_code == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["result"] == "sent"
+
+
+def test_validate_and_summarize_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    fixture = ready_fixture(tmp_path)
+    boss_contact_executor.main([
+        "contact-current",
+        "--campaign-root",
+        str(root),
+        "--execute",
+        "--mock-ui-fixture",
+        str(fixture),
+        "--now",
+        "2026-06-02T10:05:00+08:00",
+    ])
+    capsys.readouterr()
+
+    assert boss_contact_executor.main(["validate", "--campaign-root", str(root)]) == 0
+    validation = json.loads(capsys.readouterr().out)
+    assert validation["status"] == "passed"
+
+    assert boss_contact_executor.main(["summarize", "--campaign-root", str(root)]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["sent_count"] == 1
