@@ -345,3 +345,48 @@ def test_contact_current_sent_unverified_when_communication_result_missing(tmp_p
     )
     assert result["result"] == "sent_unverified"
     assert result["stopped_reason"] == "communication_result_unverified"
+
+
+def test_mac_accessibility_ui_reads_snapshot_from_osascript(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], capture_output: bool, text: bool, check: bool, timeout: int):
+        calls.append(cmd)
+
+        class Result:
+            stdout = json.dumps({
+                "front_app": "BOSS直聘",
+                "window_title": "陶先生",
+                "texts": ["陶先生", "上海华为技术有限公司", "博士后研究员-大模型方向"],
+                "buttons": ["立即沟通"],
+            }, ensure_ascii=False)
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(boss_contact_executor.subprocess, "run", fake_run)
+    ui = boss_contact_executor.MacAccessibilityBossUI()
+    snapshot = ui.read_current_page()
+    assert snapshot.front_app == "BOSS直聘"
+    assert "上海华为技术有限公司" in snapshot.page_text
+    assert snapshot.buttons == ["立即沟通"]
+    assert calls[0][0] == "osascript"
+
+
+def test_mac_accessibility_ui_clicks_exact_contact_button(monkeypatch: pytest.MonkeyPatch) -> None:
+    scripts: list[str] = []
+
+    def fake_run(cmd: list[str], capture_output: bool, text: bool, check: bool, timeout: int):
+        scripts.append(cmd[-1])
+
+        class Result:
+            stdout = '{"clicked": true}'
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(boss_contact_executor.subprocess, "run", fake_run)
+    ui = boss_contact_executor.MacAccessibilityBossUI()
+    result = ui.click_contact(boss_contact_executor.ContactButtonState("立即沟通", 1))
+    assert result == {"clicked": True}
+    assert "立即沟通" in scripts[0]

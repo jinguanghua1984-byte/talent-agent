@@ -43,6 +43,125 @@ MARKETING_MARKERS = {
     "查看更多牛人",
     "去看看",
 }
+CONTACT_BUTTON_LABELS = ["立即沟通", "继续沟通", "立即联系牛人"]
+COMMUNICATION_PAGE_MARKERS = ["沟通的职位", "求简历", "换电话"]
+JXA_READ_UI = r"""
+function run() {
+  const systemEvents = Application("System Events");
+  const frontProcesses = systemEvents.processes.whose({frontmost: true})();
+  if (frontProcesses.length === 0) {
+    return JSON.stringify({front_app: "", window_title: "", texts: [], buttons: []});
+  }
+
+  const process = frontProcesses[0];
+  const windows = process.windows();
+  const window = windows.length > 0 ? windows[0] : null;
+  const texts = [];
+  const buttons = [];
+
+  function valueOf(element) {
+    const candidates = ["value", "description", "title", "name"];
+    for (const key of candidates) {
+      try {
+        const value = element[key]();
+        if (value !== null && value !== undefined && String(value).trim() !== "") {
+          return String(value).trim();
+        }
+      } catch (error) {}
+    }
+    return "";
+  }
+
+  function collect(element) {
+    let role = "";
+    try {
+      role = String(element.role());
+    } catch (error) {}
+    const value = valueOf(element);
+    if (value) {
+      if (role === "AXButton") {
+        buttons.push(value);
+      } else {
+        texts.push(value);
+      }
+    }
+    try {
+      const children = element.entireContents();
+      for (const child of children) {
+        collect(child);
+      }
+    } catch (error) {}
+  }
+
+  if (window) {
+    collect(window);
+  }
+
+  let windowTitle = "";
+  try {
+    windowTitle = window ? String(window.name()) : "";
+  } catch (error) {}
+
+  return JSON.stringify({
+    front_app: String(process.name()),
+    window_title: windowTitle,
+    texts: texts,
+    buttons: buttons,
+  });
+}
+"""
+JXA_CLICK_EXACT_BUTTON = r"""
+function run() {
+  const targetLabel = __BUTTON_LABEL__;
+  const systemEvents = Application("System Events");
+  const frontProcesses = systemEvents.processes.whose({frontmost: true})();
+  if (frontProcesses.length === 0) {
+    return JSON.stringify({clicked: false, reason: "no_front_app"});
+  }
+
+  const process = frontProcesses[0];
+  const windows = process.windows();
+  if (windows.length === 0) {
+    return JSON.stringify({clicked: false, reason: "no_window"});
+  }
+
+  function labelOf(element) {
+    const candidates = ["title", "name", "description", "value"];
+    for (const key of candidates) {
+      try {
+        const value = element[key]();
+        if (value !== null && value !== undefined && String(value).trim() !== "") {
+          return String(value).trim();
+        }
+      } catch (error) {}
+    }
+    return "";
+  }
+
+  function clickExact(element) {
+    let role = "";
+    try {
+      role = String(element.role());
+    } catch (error) {}
+    if (role === "AXButton" && labelOf(element) === targetLabel) {
+      element.click();
+      return true;
+    }
+    try {
+      const children = element.entireContents();
+      for (const child of children) {
+        if (clickExact(child)) {
+          return true;
+        }
+      }
+    } catch (error) {}
+    return false;
+  }
+
+  const clicked = clickExact(windows[0]);
+  return JSON.stringify({clicked: clicked});
+}
+"""
 
 BOOLEAN_POLICY_FIELDS = [
     "allow_real_contact",
@@ -273,6 +392,87 @@ class FixtureBossUI:
         if status_match:
             message_status = status_match.group(1).strip()
         return CommunicationResult(real_name=real_name, message_status=message_status, page_text=page.page_text)
+
+
+class MacAccessibilityBossUI:
+    def __init__(self, timeout_seconds: int = 10, poll_seconds: float = 0.5, max_wait_seconds: int = 8):
+        self.timeout_seconds = timeout_seconds
+        self.poll_seconds = poll_seconds
+        self.max_wait_seconds = max_wait_seconds
+
+    def _run_jxa(self, script: str) -> dict[str, Any]:
+        result = subprocess.run(
+            ["osascript", "-l", "JavaScript", "-e", script],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=self.timeout_seconds,
+        )
+        payload = json.loads(result.stdout or "{}")
+        if not isinstance(payload, dict):
+            raise ValueError("JXA result must be a JSON object")
+        return payload
+
+    def read_current_page(self) -> BossPageSnapshot:
+        payload = self._run_jxa(JXA_READ_UI)
+        texts = self._clean_list(payload.get("texts"))
+        buttons = self._clean_list(payload.get("buttons"))
+        page_text = " ".join(dict.fromkeys([*texts, *buttons]))
+        return BossPageSnapshot(
+            front_app=_clean(payload.get("front_app")),
+            window_title=_clean(payload.get("window_title")),
+            page_text=page_text,
+            buttons=buttons,
+            screenshot_hash=boss_app_sourcing.screen_hash(page_text),
+        )
+
+    def find_contact_button(self, page: BossPageSnapshot) -> ContactButtonState:
+        matches = [button for button in page.buttons if button in CONTACT_BUTTON_LABELS]
+        if matches:
+            return ContactButtonState(label=matches[0], count=len(matches))
+        text_matches = [label for label in CONTACT_BUTTON_LABELS if label in page.page_text]
+        if text_matches:
+            return ContactButtonState(label=text_matches[0], count=len(text_matches))
+        return ContactButtonState(label="", count=0)
+
+    def click_contact(self, button: ContactButtonState) -> dict[str, Any]:
+        if button.label != "立即沟通":
+            raise ValueError("MacAccessibilityBossUI can only click 立即沟通")
+        script = JXA_CLICK_EXACT_BUTTON.replace("__BUTTON_LABEL__", json.dumps(button.label, ensure_ascii=False))
+        result = self._run_jxa(script)
+        if result.get("clicked") is not True:
+            raise ValueError("exact contact button was not clicked")
+        return result
+
+    def wait_for_communication_page(self) -> BossPageSnapshot:
+        deadline = time.monotonic() + self.max_wait_seconds
+        last_snapshot = self.read_current_page()
+        while True:
+            if _contains_any(last_snapshot.page_text, COMMUNICATION_PAGE_MARKERS):
+                return last_snapshot
+            if time.monotonic() >= deadline:
+                return last_snapshot
+            time.sleep(self.poll_seconds)
+            last_snapshot = self.read_current_page()
+
+    def extract_communication_result(self, page: BossPageSnapshot) -> CommunicationResult:
+        message_status = ""
+        for status in SUCCESS_MESSAGE_STATUSES:
+            if status in page.page_text:
+                message_status = status
+                break
+
+        real_name = page.window_title.strip()
+        if real_name in {"", "沟通页", "BOSS直聘"}:
+            tokens = [token for token in re.split(r"[\s；;，,：:]+", page.page_text) if token]
+            real_name = tokens[0] if tokens else ""
+        return CommunicationResult(real_name=real_name, message_status=message_status, page_text=page.page_text)
+
+    @staticmethod
+    def _clean_list(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [_clean(item) for item in value if _clean(item)]
 
 
 def validate_page_match(page: BossPageSnapshot, intent: dict[str, Any]) -> None:
