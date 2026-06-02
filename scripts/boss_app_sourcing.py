@@ -17,6 +17,7 @@ EXECUTOR_RESULT_SCHEMA = "boss_executor_result_v1"
 CURRENT_CONTACT_INTENT_SCHEMA = "boss_current_contact_intent_v1"
 APPROVED_CONTACT_QUEUE_SCHEMA = "boss_approved_contact_queue_v1"
 EXECUTOR_ATTEMPT_SCHEMA = "boss_contact_attempt_event_v1"
+EXECUTOR_LOCK_SCHEMA = "boss_executor_lock_v1"
 
 DEFAULT_RUN_POLICY: dict[str, Any] = {
     "execution_surface": "boss_app_computer_use",
@@ -566,31 +567,62 @@ def _approved_contact_queue_rows(campaign_root: str | Path) -> list[dict[str, An
     return load_jsonl(_campaign_path(campaign_root, "structured/approved-contact-queue.jsonl"))
 
 
+def _executor_candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+    screening = candidate.get("screening") or {}
+    return {
+        "candidate_key": candidate.get("candidate_key"),
+        "display_name": candidate.get("display_name"),
+        "current_company": candidate.get("current_company"),
+        "current_title": candidate.get("current_title"),
+        "score": screening.get("score"),
+        "reasons": list(screening.get("reasons") or []),
+        "risks": list(screening.get("risks") or []),
+    }
+
+
+def _has_dry_run_would_contact_decision(campaign_root: str | Path, candidate_key: str) -> bool:
+    return any(
+        row.get("candidate_key") == candidate_key
+        and row.get("mode") == "dry_run"
+        and row.get("would_contact") is True
+        for row in load_jsonl(_campaign_path(campaign_root, "structured/contact-decisions.jsonl"))
+    )
+
+
+def _require_executor_candidate(campaign_root: str | Path, candidate: dict[str, Any]) -> None:
+    candidate_key = str(candidate.get("candidate_key") or "")
+    screening = candidate.get("screening") or {}
+    if screening.get("detail_decision") != "contact":
+        raise ValueError("approved contact queue requires detail recommendation contact")
+    detail_button_text = _clean_text((candidate.get("detail_sections") or {}).get("contact_button_text"))
+    if detail_button_text != "立即沟通":
+        raise ValueError("approved contact queue requires 立即沟通 button")
+    contact_state = candidate.get("contact") or {}
+    if not contact_state.get("would_contact"):
+        raise ValueError("approved contact queue requires would_contact candidate")
+    if not _has_dry_run_would_contact_decision(campaign_root, candidate_key):
+        raise ValueError("approved contact queue requires dry-run would-contact decision")
+
+
 def record_approved_contact_queue_item(
     campaign_root: str | Path,
     candidate_key: str,
     message_template_id: str = "boss-current-preset",
 ) -> dict[str, Any]:
     candidate = latest_candidate(campaign_root, candidate_key)
-    screening = candidate.get("screening") or {}
-    if screening.get("detail_decision") != "contact":
-        raise ValueError("approved contact queue requires detail recommendation contact")
-    contact_state = candidate.get("contact") or {}
-    if not contact_state.get("would_contact"):
-        raise ValueError("approved contact queue requires would_contact candidate")
+    _require_executor_candidate(campaign_root, candidate)
+    payload = _executor_candidate_payload(candidate)
 
     item = {
         "schema": APPROVED_CONTACT_QUEUE_SCHEMA,
         "campaign_id": Path(campaign_root).name,
-        "candidate_key": candidate_key,
+        **payload,
+        "recommendation": "contact",
         "message_template_id": message_template_id,
         "approval_status": "approved_for_auto_contact",
-        "button_seen": _contact_button_text(candidate),
-        "display_name": candidate.get("display_name"),
-        "current_company": candidate.get("current_company"),
-        "current_title": candidate.get("current_title"),
-        "score": screening.get("score"),
-        "reasons": list(screening.get("reasons") or []),
+        "button_seen": "立即沟通",
+        "already_contacted": bool((candidate.get("contact") or {}).get("contacted")),
+        "created_at": _now(),
         "approved_at": _now(),
     }
     return append_jsonl(_campaign_path(campaign_root, "structured/approved-contact-queue.jsonl"), item)
@@ -603,23 +635,26 @@ def write_current_contact_intent(
     now_text: str | None = None,
     expires_minutes: int = 10,
 ) -> dict[str, Any]:
+    candidate = latest_candidate(campaign_root, candidate_key)
+    _require_executor_candidate(campaign_root, candidate)
     queue_rows = _approved_contact_queue_rows(campaign_root)
     queue_item = next((row for row in queue_rows if row.get("candidate_key") == candidate_key), None)
     if queue_item is None:
-        queue_item = record_approved_contact_queue_item(campaign_root, candidate_key, message_template_id)
+        record_approved_contact_queue_item(campaign_root, candidate_key, message_template_id)
 
     now = datetime.fromisoformat(now_text) if now_text else datetime.now().astimezone()
     expires_at = now + timedelta(minutes=expires_minutes)
-    candidate = latest_candidate(campaign_root, candidate_key)
     intent_id = f"{now.strftime('%Y%m%dT%H%M%S')}-{candidate_key.split(':')[-1][:12]}"
     intent = {
         "schema": CURRENT_CONTACT_INTENT_SCHEMA,
         "intent_id": intent_id,
         "campaign_id": Path(campaign_root).name,
-        "candidate_key": candidate_key,
+        **_executor_candidate_payload(candidate),
         "message_template_id": message_template_id,
-        "expected_button": _contact_button_text(candidate, str(queue_item.get("button_seen") or "")),
-        "approval_status": queue_item.get("approval_status"),
+        "expected_button": "立即沟通",
+        "current_page": "candidate_detail",
+        "approval_status": "approved_for_auto_contact",
+        "created_by": "codex_screening_loop",
         "created_at": now.isoformat(timespec="seconds"),
         "expires_at": expires_at.isoformat(timespec="seconds"),
     }
@@ -661,6 +696,7 @@ def _append_external_executor_decision(
     contacted: bool,
     preset_message_auto_sent: bool,
     skip_reason: str | None = None,
+    already_contacted: bool = False,
 ) -> dict[str, Any]:
     decision = {
         "candidate_key": candidate_key,
@@ -669,9 +705,11 @@ def _append_external_executor_decision(
         "button_seen": result.get("button_before_click"),
         "action_confirmed": True,
         "contacted": contacted,
+        "already_contacted": already_contacted,
         "preset_message_auto_sent": preset_message_auto_sent,
         "message_template_id": result.get("message_template_id", "boss-current-preset"),
         "message_status": result.get("message_status"),
+        "executor_intent_id": result.get("intent_id"),
         "executor_result": result.get("result"),
         "skip_reason": skip_reason,
         "decided_at": _now(),
@@ -686,6 +724,7 @@ def _append_external_executor_decision(
         "contacted": bool(candidate["contact"].get("contacted")) or contacted,
         "live_contact_test": bool(candidate["contact"].get("live_contact_test")),
         "contact_button_seen": True,
+        "already_contacted": bool(candidate["contact"].get("already_contacted")) or already_contacted,
         "preset_message_auto_sent": (
             bool(candidate["contact"].get("preset_message_auto_sent")) or preset_message_auto_sent
         ),
@@ -738,9 +777,10 @@ def consume_executor_result(campaign_root: str | Path, result_path: str | Path |
             contacted=False,
             preset_message_auto_sent=False,
             skip_reason="continue_chat",
+            already_contacted=True,
         )
-    elif result_value == "stopped":
-        stopped_reason = str(result.get("stopped_reason") or "unknown")
+    elif result_value in {"sent_unverified", "stopped"}:
+        stopped_reason = str(result.get("stopped_reason") or result_value)
         write_continuation_plan(
             campaign_root,
             stage="external_executor",
@@ -804,7 +844,11 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
     candidates_by_key = _latest_candidates_by_key(root)
     approved_queue = load_jsonl(root / "structured/approved-contact-queue.jsonl")
     attempts = load_jsonl(root / "raw/executor-contact-attempts.jsonl")
+    decisions = load_jsonl(root / "structured/contact-decisions.jsonl")
     current_intent = load_json(root / "state/current-contact-intent.json", default={}) or {}
+    latest_result = load_json(root / "state/executor-result.json", default={}) or {}
+    executor_lock = load_json(root / "state/executor.lock", default={}) or {}
+    issues: list[str] = []
 
     invalid_queue_rows: list[str] = []
     dangling_queue_candidate_keys: list[str] = []
@@ -812,14 +856,21 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
         candidate_key = str(row.get("candidate_key") or "")
         if row.get("schema") != APPROVED_CONTACT_QUEUE_SCHEMA:
             invalid_queue_rows.append(candidate_key or "<missing>")
+            issues.append("approved_queue.schema")
         candidate = candidates_by_key.get(candidate_key)
         if candidate is None:
             dangling_queue_candidate_keys.append(candidate_key or "<missing>")
+            issues.append("approved_queue.candidate_key")
             continue
         if (candidate.get("screening") or {}).get("detail_decision") != "contact":
             invalid_queue_rows.append(candidate_key)
+            issues.append("approved_queue.detail_decision")
         if not (candidate.get("contact") or {}).get("would_contact"):
             invalid_queue_rows.append(candidate_key)
+            issues.append("approved_queue.would_contact")
+        if row.get("button_seen") != "立即沟通":
+            invalid_queue_rows.append(candidate_key)
+            issues.append("approved_queue.button_seen")
 
     invalid_attempt_rows: list[str] = []
     dangling_attempt_candidate_keys: list[str] = []
@@ -827,25 +878,89 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
         candidate_key = str(row.get("candidate_key") or "")
         if row.get("schema") != EXECUTOR_ATTEMPT_SCHEMA:
             invalid_attempt_rows.append(candidate_key or "<missing>")
+            issues.append("executor_attempt.schema")
         if candidate_key and candidate_key not in candidates_by_key:
             dangling_attempt_candidate_keys.append(candidate_key)
+            issues.append("executor_attempt.candidate_key")
 
     invalid_current_intent = bool(current_intent) and (
         current_intent.get("schema") != CURRENT_CONTACT_INTENT_SCHEMA
         or current_intent.get("candidate_key") not in candidates_by_key
+        or current_intent.get("approval_status") != "approved_for_auto_contact"
+        or current_intent.get("expected_button") != "立即沟通"
+        or current_intent.get("current_page") != "candidate_detail"
     )
+    if current_intent:
+        if current_intent.get("schema") != CURRENT_CONTACT_INTENT_SCHEMA:
+            issues.append("current_intent.schema")
+        if current_intent.get("candidate_key") not in candidates_by_key:
+            issues.append("current_intent.candidate_key")
+        if current_intent.get("approval_status") != "approved_for_auto_contact":
+            issues.append("current_intent.approval_status")
+        if current_intent.get("expected_button") != "立即沟通":
+            issues.append("current_intent.expected_button")
+        if current_intent.get("current_page") != "candidate_detail":
+            issues.append("current_intent.current_page")
+
+    if latest_result:
+        if latest_result.get("schema") != EXECUTOR_RESULT_SCHEMA:
+            issues.append("executor_result.schema")
+        result_candidate_key = str(latest_result.get("candidate_key") or "")
+        if result_candidate_key and result_candidate_key not in candidates_by_key:
+            issues.append("executor_result.candidate_key")
+        matching_attempt = any(
+            row.get("intent_id") == latest_result.get("intent_id")
+            and row.get("candidate_key") == latest_result.get("candidate_key")
+            and row.get("result") == latest_result.get("result")
+            for row in attempts
+        )
+        if not matching_attempt:
+            issues.append("executor_result.missing_attempt")
+        if latest_result.get("result") == "sent":
+            has_sent_decision = any(
+                row.get("candidate_key") == latest_result.get("candidate_key")
+                and row.get("mode") == "external_executor"
+                and row.get("contacted") is True
+                for row in decisions
+            )
+            if not has_sent_decision:
+                issues.append("executor_result.sent_missing_external_executor_decision")
+
+    for row in attempts:
+        if row.get("result") != "sent":
+            continue
+        has_sent_decision = any(
+            decision.get("candidate_key") == row.get("candidate_key")
+            and decision.get("mode") == "external_executor"
+            and decision.get("contacted") is True
+            for decision in decisions
+        )
+        if not has_sent_decision:
+            issues.append("executor_attempt.sent_missing_external_executor_decision")
+
+    if executor_lock:
+        if executor_lock.get("schema") != EXECUTOR_LOCK_SCHEMA:
+            issues.append("executor_lock.schema")
+        if executor_lock.get("status") not in {"running", "finished", "stopped", "stale_lock_requires_review"}:
+            issues.append("executor_lock.status")
+        if executor_lock.get("candidate_key") and executor_lock.get("candidate_key") not in candidates_by_key:
+            issues.append("executor_lock.candidate_key")
+
     status = "failed" if (
         invalid_queue_rows
         or dangling_queue_candidate_keys
         or invalid_attempt_rows
         or dangling_attempt_candidate_keys
         or invalid_current_intent
+        or issues
     ) else "passed"
     report = {
         "campaign_root": str(root),
         "status": status,
         "approved_queue_count": len(approved_queue),
         "attempt_count": len(attempts),
+        "latest_result": latest_result.get("result"),
+        "issues": sorted(set(issues)),
         "invalid_queue_rows": sorted(set(invalid_queue_rows)),
         "dangling_queue_candidate_keys": sorted(set(dangling_queue_candidate_keys)),
         "invalid_attempt_rows": sorted(set(invalid_attempt_rows)),
@@ -867,8 +982,11 @@ def summarize_executor_results(campaign_root: str | Path) -> dict[str, Any]:
     result_distribution = Counter(str(row.get("result") or "unknown") for row in attempts)
     summary = {
         "campaign_root": str(root),
+        "approved_queue_count": len(load_jsonl(root / "structured/approved-contact-queue.jsonl")),
         "attempt_count": len(attempts),
         "sent_count": result_distribution.get("sent", 0),
+        "skipped_continue_chat_count": result_distribution.get("skipped_continue_chat", 0),
+        "stopped_count": result_distribution.get("stopped", 0) + result_distribution.get("sent_unverified", 0),
         "result_distribution": dict(sorted(result_distribution.items())),
         "message_status_distribution": dict(sorted(
             Counter(str(row.get("message_status") or "unknown") for row in attempts).items()
