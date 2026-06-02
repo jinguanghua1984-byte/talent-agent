@@ -19,6 +19,8 @@ APPROVED_CONTACT_QUEUE_SCHEMA = "boss_approved_contact_queue_v1"
 EXECUTOR_ATTEMPT_SCHEMA = "boss_contact_attempt_event_v1"
 EXECUTOR_LOCK_SCHEMA = "boss_executor_lock_v1"
 VALID_SENT_MESSAGE_STATUSES = {"送达", "已读", "已触达"}
+SUPPORTED_EXECUTOR_RESULTS = {"sent", "skipped_continue_chat", "sent_unverified", "stopped"}
+EXECUTOR_IDENTITY_FIELDS = ["intent_id", "campaign_id", "candidate_key"]
 
 DEFAULT_RUN_POLICY: dict[str, Any] = {
     "execution_surface": "boss_app_computer_use",
@@ -688,6 +690,7 @@ def _append_executor_attempt(campaign_root: str | Path, result: dict[str, Any]) 
         "schema": EXECUTOR_ATTEMPT_SCHEMA,
         "event_type": "attempt_finished",
         "intent_id": result.get("intent_id"),
+        "campaign_id": result.get("campaign_id"),
         "candidate_key": result.get("candidate_key"),
         "result": result.get("result"),
         "button_before_click": result.get("button_before_click"),
@@ -711,7 +714,9 @@ def _append_external_executor_decision(
     skip_reason: str | None = None,
     already_contacted: bool = False,
 ) -> dict[str, Any]:
+    candidate = dict(latest_candidate(campaign_root, candidate_key))
     decision = {
+        "campaign_id": result.get("campaign_id"),
         "candidate_key": candidate_key,
         "mode": "external_executor",
         "would_contact": True,
@@ -729,7 +734,6 @@ def _append_external_executor_decision(
     }
     append_jsonl(_campaign_path(campaign_root, "structured/contact-decisions.jsonl"), decision)
 
-    candidate = dict(latest_candidate(campaign_root, candidate_key))
     candidate["contact"] = dict(candidate.get("contact") or {})
     candidate["contact"].update({
         "would_contact": True,
@@ -752,6 +756,10 @@ def _current_contact_intent(campaign_root: str | Path) -> dict[str, Any]:
     return load_json(_campaign_path(campaign_root, "state/current-contact-intent.json"), default={}) or {}
 
 
+def _executor_identity_mismatch(artifact: dict[str, Any], current_intent: dict[str, Any]) -> bool:
+    return any(artifact.get(field) != current_intent.get(field) for field in EXECUTOR_IDENTITY_FIELDS)
+
+
 def _sent_result_protocol_issues(result: dict[str, Any], current_intent: dict[str, Any]) -> list[str]:
     issues: list[str] = []
     if not current_intent:
@@ -762,10 +770,7 @@ def _sent_result_protocol_issues(result: dict[str, Any], current_intent: dict[st
         issues.append("executor_result.sent_missing_real_name")
     if result.get("message_status") not in VALID_SENT_MESSAGE_STATUSES:
         issues.append("executor_result.sent_invalid_message_status")
-    if current_intent and any(
-        result.get(field) != current_intent.get(field)
-        for field in ["intent_id", "campaign_id", "candidate_key"]
-    ):
+    if current_intent and _executor_identity_mismatch(result, current_intent):
         issues.append("executor_result.intent_mismatch")
     return issues
 
@@ -784,21 +789,48 @@ def _raise_for_sent_result_protocol(result: dict[str, Any], current_intent: dict
     raise ValueError("; ".join(message_by_issue[issue] for issue in issues))
 
 
+def _require_external_executor_real_name_backfill(candidate: dict[str, Any], result: dict[str, Any]) -> None:
+    normalized_real_name = _clean_text(result.get("real_name"))
+    if not normalized_real_name:
+        raise ValueError("sent result real_name is required")
+    existing_real_name = candidate.get("real_name")
+    existing_source = candidate.get("real_name_source")
+    if existing_real_name and (
+        existing_real_name != normalized_real_name
+        or existing_source != EXTERNAL_EXECUTOR_REAL_NAME_SOURCE
+    ):
+        raise ValueError("real_name already captured")
+
+
+def _require_executor_result_preflight(campaign_root: str | Path, result: dict[str, Any]) -> dict[str, Any]:
+    result_value = result.get("result")
+    if result_value not in SUPPORTED_EXECUTOR_RESULTS:
+        raise ValueError("unsupported executor result")
+    current_intent = _current_contact_intent(campaign_root)
+    if not current_intent:
+        raise ValueError("executor result requires current contact intent")
+    if _executor_identity_mismatch(result, current_intent):
+        raise ValueError("executor result does not match current contact intent")
+
+    candidate_key = str(result.get("candidate_key") or "")
+    if not candidate_key:
+        raise ValueError("executor result candidate_key is required")
+    candidate = dict(latest_candidate(campaign_root, candidate_key))
+    if result_value == "sent":
+        _raise_for_sent_result_protocol(result, current_intent)
+        _require_external_executor_real_name_backfill(candidate, result)
+    return candidate
+
+
 def consume_executor_result(campaign_root: str | Path, result_path: str | Path | None = None) -> dict[str, Any]:
     path = Path(result_path) if result_path is not None else _campaign_path(campaign_root, "state/executor-result.json")
     result = _load_required_json_object(path)
     if result.get("schema") != EXECUTOR_RESULT_SCHEMA:
         raise ValueError("executor result schema must be boss_executor_result_v1")
-    candidate_key = str(result.get("candidate_key") or "")
-    if not candidate_key:
-        raise ValueError("executor result candidate_key is required")
-    current_intent = _current_contact_intent(campaign_root)
-    if current_intent and result.get("intent_id") != current_intent.get("intent_id"):
-        raise ValueError("executor result intent_id does not match current contact intent")
 
+    _require_executor_result_preflight(campaign_root, result)
+    candidate_key = str(result.get("candidate_key") or "")
     result_value = result.get("result")
-    if result_value == "sent":
-        _raise_for_sent_result_protocol(result, current_intent)
     _append_executor_attempt(campaign_root, result)
     if result_value == "sent":
         _append_external_executor_decision(
@@ -926,9 +958,16 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
         if row.get("schema") != EXECUTOR_ATTEMPT_SCHEMA:
             invalid_attempt_rows.append(candidate_key or "<missing>")
             issues.append("executor_attempt.schema")
+        if row.get("result") not in SUPPORTED_EXECUTOR_RESULTS:
+            invalid_attempt_rows.append(candidate_key or "<missing>")
+            issues.append("executor_attempt.unsupported_result")
         if candidate_key and candidate_key not in candidates_by_key:
             dangling_attempt_candidate_keys.append(candidate_key)
             issues.append("executor_attempt.candidate_key")
+        if not current_intent:
+            issues.append("current_intent.missing")
+        elif _executor_identity_mismatch(row, current_intent):
+            issues.append("executor_attempt.intent_mismatch")
 
     invalid_current_intent = bool(current_intent) and (
         current_intent.get("schema") != CURRENT_CONTACT_INTENT_SCHEMA
@@ -948,15 +987,29 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
             issues.append("current_intent.expected_button")
         if current_intent.get("current_page") != "candidate_detail":
             issues.append("current_intent.current_page")
+        has_matching_queue_item = any(
+            row.get("campaign_id") == current_intent.get("campaign_id")
+            and row.get("candidate_key") == current_intent.get("candidate_key")
+            for row in approved_queue
+        )
+        if not has_matching_queue_item:
+            issues.append("approved_queue.intent_mismatch")
 
     if latest_result:
         if latest_result.get("schema") != EXECUTOR_RESULT_SCHEMA:
             issues.append("executor_result.schema")
+        if latest_result.get("result") not in SUPPORTED_EXECUTOR_RESULTS:
+            issues.append("executor_result.unsupported_result")
+        if not current_intent:
+            issues.append("current_intent.missing")
+        elif _executor_identity_mismatch(latest_result, current_intent):
+            issues.append("executor_result.intent_mismatch")
         result_candidate_key = str(latest_result.get("candidate_key") or "")
         if result_candidate_key and result_candidate_key not in candidates_by_key:
             issues.append("executor_result.candidate_key")
         matching_attempt = any(
             row.get("intent_id") == latest_result.get("intent_id")
+            and row.get("campaign_id") == latest_result.get("campaign_id")
             and row.get("candidate_key") == latest_result.get("candidate_key")
             and row.get("result") == latest_result.get("result")
             for row in attempts
@@ -965,16 +1018,9 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
             issues.append("executor_result.missing_attempt")
         if latest_result.get("result") == "sent":
             issues.extend(_sent_result_protocol_issues(latest_result, current_intent))
-            if current_intent:
-                has_matching_queue_item = any(
-                    row.get("campaign_id") == current_intent.get("campaign_id")
-                    and row.get("candidate_key") == current_intent.get("candidate_key")
-                    for row in approved_queue
-                )
-                if not has_matching_queue_item:
-                    issues.append("approved_queue.intent_mismatch")
             has_sent_decision = any(
-                row.get("candidate_key") == latest_result.get("candidate_key")
+                row.get("campaign_id") == latest_result.get("campaign_id")
+                and row.get("candidate_key") == latest_result.get("candidate_key")
                 and row.get("mode") == "external_executor"
                 and row.get("executor_intent_id") == latest_result.get("intent_id")
                 and row.get("contacted") is True
@@ -983,15 +1029,24 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
             if not has_sent_decision:
                 issues.append("executor_result.sent_missing_external_executor_decision")
 
-    for row in attempts:
-        if row.get("result") != "sent":
+    for row in decisions:
+        if row.get("mode") != "external_executor":
             continue
         if not current_intent:
             issues.append("current_intent.missing")
-        elif row.get("intent_id") != current_intent.get("intent_id") or row.get("candidate_key") != current_intent.get("candidate_key"):
-            issues.append("executor_attempt.intent_mismatch")
+        elif (
+            row.get("executor_intent_id") != current_intent.get("intent_id")
+            or row.get("campaign_id") != current_intent.get("campaign_id")
+            or row.get("candidate_key") != current_intent.get("candidate_key")
+        ):
+            issues.append("contact_decision.intent_mismatch")
+
+    for row in attempts:
+        if row.get("result") != "sent":
+            continue
         has_sent_decision = any(
-            decision.get("candidate_key") == row.get("candidate_key")
+            decision.get("campaign_id") == row.get("campaign_id")
+            and decision.get("candidate_key") == row.get("candidate_key")
             and decision.get("mode") == "external_executor"
             and decision.get("executor_intent_id") == row.get("intent_id")
             and decision.get("contacted") is True

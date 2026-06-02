@@ -857,6 +857,116 @@ def test_consume_executor_rejects_invalid_sent_protocol_without_contacting(
     assert not boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl")
 
 
+def test_consume_executor_rejects_unsupported_result_without_writes(tmp_path: Path) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:00:00+08:00",
+    )
+    before_decisions = boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl")
+    before_attempts = boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl")
+    boss_app_sourcing.write_json(root / "state/executor-result.json", {
+        "schema": "boss_executor_result_v1",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "result": "unknown_result",
+        "button_before_click": "立即沟通",
+        "message_template_id": "boss-current-preset",
+    })
+
+    with pytest.raises(ValueError, match="unsupported executor result"):
+        boss_app_sourcing.consume_executor_result(root)
+
+    assert boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl") == before_decisions
+    assert boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl") == before_attempts
+    validation = boss_app_sourcing.validate_executor_artifacts(root)
+    assert validation["status"] == "failed"
+    assert "executor_result.unsupported_result" in validation["issues"]
+
+
+@pytest.mark.parametrize("result_value", ["skipped_continue_chat", "sent_unverified", "stopped"])
+@pytest.mark.parametrize("override", [{"campaign_id": "other-campaign"}, {"candidate_key": "boss-app:other"}])
+def test_consume_executor_rejects_non_sent_intent_mismatch_without_writes(
+    tmp_path: Path,
+    result_value: str,
+    override: dict,
+) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:00:00+08:00",
+    )
+    before_decisions = boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl")
+    before_attempts = boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl")
+    before_plan = read_json(root / "state/continuation-plan.json")
+    boss_app_sourcing.write_json(root / "state/executor-result.json", {
+        "schema": "boss_executor_result_v1",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "result": result_value,
+        "button_before_click": "继续沟通",
+        "next_action_for_codex": "write_interruption_and_stop",
+        "stopped_reason": "protocol_mismatch",
+        **override,
+    })
+
+    with pytest.raises(ValueError, match="current contact intent"):
+        boss_app_sourcing.consume_executor_result(root)
+
+    assert boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl") == before_decisions
+    assert boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl") == before_attempts
+    assert read_json(root / "state/continuation-plan.json") == before_plan
+    assert not list((root / "reports").glob("interruption-executor-protocol_mismatch-*.json"))
+    validation = boss_app_sourcing.validate_executor_artifacts(root)
+    assert validation["status"] == "failed"
+    assert "executor_result.intent_mismatch" in validation["issues"]
+
+
+def test_consume_sent_existing_real_name_failure_has_no_partial_writes(tmp_path: Path) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:00:00+08:00",
+    )
+    boss_app_sourcing.backfill_real_name(
+        root,
+        candidate_key,
+        "陶壮",
+        "manual_opened_communication_page",
+    )
+    before_candidate = boss_app_sourcing.latest_candidate(root, candidate_key)
+    before_decisions = boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl")
+    before_attempts = boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl")
+    before_communication_pages = boss_app_sourcing.load_jsonl(root / "raw/communication-pages.jsonl")
+    boss_app_sourcing.write_json(root / "state/executor-result.json", {
+        "schema": "boss_executor_result_v1",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "result": "sent",
+        "button_before_click": "立即沟通",
+        "message_template_id": "boss-current-preset",
+        "message_status": "送达",
+        "real_name": "陶壮",
+        "communication_page_text": "沟通页顶部：陶壮；状态：送达",
+        "next_action_for_codex": "record_contact_return_to_list_and_continue",
+    })
+
+    with pytest.raises(ValueError, match="real_name already captured"):
+        boss_app_sourcing.consume_executor_result(root)
+
+    latest = boss_app_sourcing.latest_candidate(root, candidate_key)
+    assert latest == before_candidate
+    assert boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl") == before_decisions
+    assert boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl") == before_attempts
+    assert boss_app_sourcing.load_jsonl(root / "raw/communication-pages.jsonl") == before_communication_pages
+
+
 def test_consume_executor_continue_chat_and_stopped_paths(tmp_path: Path) -> None:
     root, candidate_key = _contact_candidate_for_executor(tmp_path)
     intent = boss_app_sourcing.write_current_contact_intent(
@@ -868,6 +978,7 @@ def test_consume_executor_continue_chat_and_stopped_paths(tmp_path: Path) -> Non
     boss_app_sourcing.write_json(root / "state/executor-result.json", {
         "schema": "boss_executor_result_v1",
         "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
         "candidate_key": candidate_key,
         "result": "skipped_continue_chat",
         "button_before_click": "继续沟通",
@@ -886,6 +997,7 @@ def test_consume_executor_continue_chat_and_stopped_paths(tmp_path: Path) -> Non
     boss_app_sourcing.write_json(root / "state/executor-result.json", {
         "schema": "boss_executor_result_v1",
         "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
         "candidate_key": candidate_key,
         "result": "sent_unverified",
         "button_before_click": "立即沟通",
@@ -902,6 +1014,7 @@ def test_consume_executor_continue_chat_and_stopped_paths(tmp_path: Path) -> Non
     boss_app_sourcing.write_json(root / "state/executor-result.json", {
         "schema": "boss_executor_result_v1",
         "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
         "candidate_key": candidate_key,
         "result": "stopped",
         "button_before_click": "立即联系牛人",
