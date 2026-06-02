@@ -967,6 +967,81 @@ def test_consume_sent_existing_real_name_failure_has_no_partial_writes(tmp_path:
     assert boss_app_sourcing.load_jsonl(root / "raw/communication-pages.jsonl") == before_communication_pages
 
 
+def test_consume_sent_external_real_name_whitespace_conflict_has_no_partial_writes(tmp_path: Path) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:00:00+08:00",
+    )
+    boss_app_sourcing.backfill_real_name(
+        root,
+        candidate_key,
+        "陶 壮",
+        "communication_page_after_external_executor",
+        page_text="沟通页顶部：陶 壮；状态：送达",
+    )
+    before_candidate = boss_app_sourcing.latest_candidate(root, candidate_key)
+    before_decisions = boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl")
+    before_attempts = boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl")
+    before_communication_pages = boss_app_sourcing.load_jsonl(root / "raw/communication-pages.jsonl")
+    boss_app_sourcing.write_json(root / "state/executor-result.json", {
+        "schema": "boss_executor_result_v1",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "result": "sent",
+        "button_before_click": "立即沟通",
+        "message_template_id": "boss-current-preset",
+        "message_status": "送达",
+        "real_name": "陶\n壮",
+        "communication_page_text": "沟通页顶部：陶\n壮；状态：送达",
+        "next_action_for_codex": "record_contact_return_to_list_and_continue",
+    })
+
+    with pytest.raises(ValueError, match="real_name already captured"):
+        boss_app_sourcing.consume_executor_result(root)
+
+    assert boss_app_sourcing.latest_candidate(root, candidate_key) == before_candidate
+    assert boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl") == before_decisions
+    assert boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl") == before_attempts
+    assert boss_app_sourcing.load_jsonl(root / "raw/communication-pages.jsonl") == before_communication_pages
+
+
+def test_consume_sent_invalid_communication_page_text_has_no_partial_writes(tmp_path: Path) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:00:00+08:00",
+    )
+    before_candidate = boss_app_sourcing.latest_candidate(root, candidate_key)
+    before_decisions = boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl")
+    before_attempts = boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl")
+    before_communication_pages = boss_app_sourcing.load_jsonl(root / "raw/communication-pages.jsonl")
+    boss_app_sourcing.write_json(root / "state/executor-result.json", {
+        "schema": "boss_executor_result_v1",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "result": "sent",
+        "button_before_click": "立即沟通",
+        "message_template_id": "boss-current-preset",
+        "message_status": "送达",
+        "real_name": "陶壮",
+        "communication_page_text": {"text": "沟通页顶部：陶壮；状态：送达"},
+        "next_action_for_codex": "record_contact_return_to_list_and_continue",
+    })
+
+    with pytest.raises(ValueError, match="communication_page_text"):
+        boss_app_sourcing.consume_executor_result(root)
+
+    assert boss_app_sourcing.latest_candidate(root, candidate_key) == before_candidate
+    assert boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl") == before_decisions
+    assert boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl") == before_attempts
+    assert boss_app_sourcing.load_jsonl(root / "raw/communication-pages.jsonl") == before_communication_pages
+
+
 def test_consume_executor_continue_chat_and_stopped_paths(tmp_path: Path) -> None:
     root, candidate_key = _contact_candidate_for_executor(tmp_path)
     intent = boss_app_sourcing.write_current_contact_intent(

@@ -21,6 +21,11 @@ EXECUTOR_LOCK_SCHEMA = "boss_executor_lock_v1"
 VALID_SENT_MESSAGE_STATUSES = {"送达", "已读", "已触达"}
 SUPPORTED_EXECUTOR_RESULTS = {"sent", "skipped_continue_chat", "sent_unverified", "stopped"}
 EXECUTOR_IDENTITY_FIELDS = ["intent_id", "campaign_id", "candidate_key"]
+VALID_REAL_NAME_SOURCES = {
+    "communication_page_after_live_contact_test",
+    "manual_opened_communication_page",
+    EXTERNAL_EXECUTOR_REAL_NAME_SOURCE,
+}
 
 DEFAULT_RUN_POLICY: dict[str, Any] = {
     "execution_surface": "boss_app_computer_use",
@@ -513,6 +518,43 @@ def record_contact_decision(
     return decision
 
 
+def _normalize_real_name_for_backfill(real_name: Any) -> str:
+    if not isinstance(real_name, str):
+        raise ValueError("real_name must be a string")
+    normalized_real_name = real_name.strip()
+    if not normalized_real_name:
+        raise ValueError("real_name is required")
+    return normalized_real_name
+
+
+def _normalize_communication_page_text(page_text: Any) -> str | None:
+    if page_text is None:
+        return None
+    if not isinstance(page_text, str):
+        raise ValueError("communication_page_text must be a string")
+    return page_text
+
+
+def _prepare_real_name_backfill(
+    candidate: dict[str, Any],
+    real_name: Any,
+    source: str,
+    page_text: Any = None,
+) -> tuple[str, str | None]:
+    if source not in VALID_REAL_NAME_SOURCES:
+        raise ValueError("invalid real name source")
+    normalized_real_name = _normalize_real_name_for_backfill(real_name)
+    normalized_page_text = _normalize_communication_page_text(page_text)
+    contact_state = candidate.get("contact") or {}
+    if source == "communication_page_after_live_contact_test" and not contact_state.get("contacted"):
+        raise ValueError("communication page live source requires live contacted candidate")
+    existing_real_name = candidate.get("real_name")
+    existing_source = candidate.get("real_name_source")
+    if existing_real_name and (existing_real_name != normalized_real_name or existing_source != source):
+        raise ValueError("real_name already captured")
+    return normalized_real_name, normalized_page_text
+
+
 def backfill_real_name(
     campaign_root: str | Path,
     candidate_key: str,
@@ -521,25 +563,16 @@ def backfill_real_name(
     page_text: str | None = None,
     screenshot_hash: str | None = None,
 ) -> dict[str, Any]:
-    if source not in {
-        "communication_page_after_live_contact_test",
-        "manual_opened_communication_page",
-        EXTERNAL_EXECUTOR_REAL_NAME_SOURCE,
-    }:
-        raise ValueError("invalid real name source")
-    normalized_real_name = real_name.strip()
-    if not normalized_real_name:
-        raise ValueError("real_name is required")
     candidate = dict(latest_candidate(campaign_root, candidate_key))
+    normalized_real_name, normalized_page_text = _prepare_real_name_backfill(
+        candidate,
+        real_name,
+        source,
+        page_text,
+    )
     contact_state = candidate.get("contact") or {}
-    if source == "communication_page_after_live_contact_test" and not contact_state.get("contacted"):
-        raise ValueError("communication page live source requires live contacted candidate")
-    existing_real_name = candidate.get("real_name")
-    existing_source = candidate.get("real_name_source")
-    if existing_real_name and (existing_real_name != normalized_real_name or existing_source != source):
-        raise ValueError("real_name already captured")
-    if screenshot_hash is None and page_text:
-        screenshot_hash = screen_hash(page_text)
+    if screenshot_hash is None and normalized_page_text:
+        screenshot_hash = screen_hash(normalized_page_text)
     candidate["real_name"] = normalized_real_name
     candidate["real_name_status"] = "captured"
     candidate["real_name_source"] = source
@@ -549,7 +582,7 @@ def backfill_real_name(
         "candidate_key": candidate_key,
         "real_name": normalized_real_name,
         "real_name_source": source,
-        "page_text": page_text,
+        "page_text": normalized_page_text,
         "screenshot_hash": screenshot_hash,
         "captured_at": _now(),
     })
@@ -790,16 +823,12 @@ def _raise_for_sent_result_protocol(result: dict[str, Any], current_intent: dict
 
 
 def _require_external_executor_real_name_backfill(candidate: dict[str, Any], result: dict[str, Any]) -> None:
-    normalized_real_name = _clean_text(result.get("real_name"))
-    if not normalized_real_name:
-        raise ValueError("sent result real_name is required")
-    existing_real_name = candidate.get("real_name")
-    existing_source = candidate.get("real_name_source")
-    if existing_real_name and (
-        existing_real_name != normalized_real_name
-        or existing_source != EXTERNAL_EXECUTOR_REAL_NAME_SOURCE
-    ):
-        raise ValueError("real_name already captured")
+    _prepare_real_name_backfill(
+        candidate,
+        result.get("real_name"),
+        EXTERNAL_EXECUTOR_REAL_NAME_SOURCE,
+        result.get("communication_page_text"),
+    )
 
 
 def _require_executor_result_preflight(campaign_root: str | Path, result: dict[str, Any]) -> dict[str, Any]:
