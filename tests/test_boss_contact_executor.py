@@ -705,3 +705,39 @@ def test_contact_current_cli_preflight_error_does_not_print_stale_executor_resul
     assert output["error_class"] == "ValueError"
     assert "current_intent.schema" in output["stopped_reason"]
     assert output["next_action_for_codex"] == "write_interruption_and_stop"
+
+
+def test_contact_current_cli_sent_unverified_returns_recovery_exit_code(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    fixture = write_fixture(tmp_path / "sent-unverified.json", {
+        "detail": {
+            "front_app": "BOSS直聘",
+            "window_title": "陶先生",
+            "page_text": "陶先生 上海华为技术有限公司 博士后研究员-大模型方向 立即沟通",
+            "buttons": ["立即沟通"],
+        },
+        "communication": {
+            "front_app": "BOSS直聘",
+            "window_title": "沟通页",
+            "page_text": "沟通页顶部：未知；没有状态",
+            "buttons": [],
+        },
+    })
+
+    exit_code = boss_contact_executor.main([
+        "contact-current",
+        "--campaign-root",
+        str(root),
+        "--execute",
+        "--mock-ui-fixture",
+        str(fixture),
+        "--now",
+        "2026-06-02T10:05:00+08:00",
+    ])
+
+    assert exit_code == 4
+    output = json.loads(capsys.readouterr().out)
+    assert output["result"] == "sent_unverified"

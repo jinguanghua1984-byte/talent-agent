@@ -732,7 +732,9 @@ def _contact_current_exit_code(result: dict[str, Any]) -> int:
     result_value = result.get("result")
     if result_value in {"dry_run_ready", "sent", "skipped_continue_chat"}:
         return 0
-    if result_value in {"stopped", "sent_unverified"}:
+    if result_value == "sent_unverified":
+        return 4
+    if result_value == "stopped":
         stopped_reason = str(result.get("stopped_reason") or "")
         if "stale_lock" in stopped_reason or "lock" in stopped_reason:
             return 4
