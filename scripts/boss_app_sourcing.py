@@ -6,12 +6,17 @@ import json
 import re
 from copy import deepcopy
 from collections import Counter
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 
 MANIFEST_SCHEMA = "boss_app_recommendation_sourcing_manifest_v1"
+EXTERNAL_EXECUTOR_REAL_NAME_SOURCE = "communication_page_after_external_executor"
+EXECUTOR_RESULT_SCHEMA = "boss_executor_result_v1"
+CURRENT_CONTACT_INTENT_SCHEMA = "boss_current_contact_intent_v1"
+APPROVED_CONTACT_QUEUE_SCHEMA = "boss_approved_contact_queue_v1"
+EXECUTOR_ATTEMPT_SCHEMA = "boss_contact_attempt_event_v1"
 
 DEFAULT_RUN_POLICY: dict[str, Any] = {
     "execution_surface": "boss_app_computer_use",
@@ -512,7 +517,11 @@ def backfill_real_name(
     page_text: str | None = None,
     screenshot_hash: str | None = None,
 ) -> dict[str, Any]:
-    if source not in {"communication_page_after_live_contact_test", "manual_opened_communication_page"}:
+    if source not in {
+        "communication_page_after_live_contact_test",
+        "manual_opened_communication_page",
+        EXTERNAL_EXECUTOR_REAL_NAME_SOURCE,
+    }:
         raise ValueError("invalid real name source")
     normalized_real_name = real_name.strip()
     if not normalized_real_name:
@@ -541,6 +550,212 @@ def backfill_real_name(
         "captured_at": _now(),
     })
     return _append_candidate(campaign_root, candidate)
+
+
+def _contact_button_text(candidate: dict[str, Any], fallback: str = "") -> str:
+    detail_sections = candidate.get("detail_sections") or {}
+    button_text = _clean_text(detail_sections.get("contact_button_text"))
+    if button_text:
+        return button_text
+    if (candidate.get("contact") or {}).get("contact_button_seen"):
+        return "立即沟通"
+    return fallback
+
+
+def _approved_contact_queue_rows(campaign_root: str | Path) -> list[dict[str, Any]]:
+    return load_jsonl(_campaign_path(campaign_root, "structured/approved-contact-queue.jsonl"))
+
+
+def record_approved_contact_queue_item(
+    campaign_root: str | Path,
+    candidate_key: str,
+    message_template_id: str = "boss-current-preset",
+) -> dict[str, Any]:
+    candidate = latest_candidate(campaign_root, candidate_key)
+    screening = candidate.get("screening") or {}
+    if screening.get("detail_decision") != "contact":
+        raise ValueError("approved contact queue requires detail recommendation contact")
+    contact_state = candidate.get("contact") or {}
+    if not contact_state.get("would_contact"):
+        raise ValueError("approved contact queue requires would_contact candidate")
+
+    item = {
+        "schema": APPROVED_CONTACT_QUEUE_SCHEMA,
+        "campaign_id": Path(campaign_root).name,
+        "candidate_key": candidate_key,
+        "message_template_id": message_template_id,
+        "approval_status": "approved_for_auto_contact",
+        "button_seen": _contact_button_text(candidate),
+        "display_name": candidate.get("display_name"),
+        "current_company": candidate.get("current_company"),
+        "current_title": candidate.get("current_title"),
+        "score": screening.get("score"),
+        "reasons": list(screening.get("reasons") or []),
+        "approved_at": _now(),
+    }
+    return append_jsonl(_campaign_path(campaign_root, "structured/approved-contact-queue.jsonl"), item)
+
+
+def write_current_contact_intent(
+    campaign_root: str | Path,
+    candidate_key: str,
+    message_template_id: str = "boss-current-preset",
+    now_text: str | None = None,
+    expires_minutes: int = 10,
+) -> dict[str, Any]:
+    queue_rows = _approved_contact_queue_rows(campaign_root)
+    queue_item = next((row for row in queue_rows if row.get("candidate_key") == candidate_key), None)
+    if queue_item is None:
+        queue_item = record_approved_contact_queue_item(campaign_root, candidate_key, message_template_id)
+
+    now = datetime.fromisoformat(now_text) if now_text else datetime.now().astimezone()
+    expires_at = now + timedelta(minutes=expires_minutes)
+    candidate = latest_candidate(campaign_root, candidate_key)
+    intent_id = f"{now.strftime('%Y%m%dT%H%M%S')}-{candidate_key.split(':')[-1][:12]}"
+    intent = {
+        "schema": CURRENT_CONTACT_INTENT_SCHEMA,
+        "intent_id": intent_id,
+        "campaign_id": Path(campaign_root).name,
+        "candidate_key": candidate_key,
+        "message_template_id": message_template_id,
+        "expected_button": _contact_button_text(candidate, str(queue_item.get("button_seen") or "")),
+        "approval_status": queue_item.get("approval_status"),
+        "created_at": now.isoformat(timespec="seconds"),
+        "expires_at": expires_at.isoformat(timespec="seconds"),
+    }
+    write_json(_campaign_path(campaign_root, "state/current-contact-intent.json"), intent)
+    append_jsonl(_campaign_path(campaign_root, "state/events.jsonl"), {
+        "schema": CURRENT_CONTACT_INTENT_SCHEMA,
+        "stage": "external_executor",
+        "status": "intent_written",
+        "intent_id": intent_id,
+        "candidate_key": candidate_key,
+        "at": _now(),
+    })
+    return intent
+
+
+def _append_executor_attempt(campaign_root: str | Path, result: dict[str, Any]) -> dict[str, Any]:
+    attempt = {
+        "schema": EXECUTOR_ATTEMPT_SCHEMA,
+        "event_type": "attempt_finished",
+        "intent_id": result.get("intent_id"),
+        "candidate_key": result.get("candidate_key"),
+        "result": result.get("result"),
+        "button_before_click": result.get("button_before_click"),
+        "message_template_id": result.get("message_template_id"),
+        "message_status": result.get("message_status"),
+        "real_name": result.get("real_name"),
+        "stopped_reason": result.get("stopped_reason"),
+        "next_action_for_codex": result.get("next_action_for_codex"),
+        "started_at": result.get("started_at"),
+        "finished_at": result.get("finished_at") or _now(),
+    }
+    return append_jsonl(_campaign_path(campaign_root, "raw/executor-contact-attempts.jsonl"), attempt)
+
+
+def _append_external_executor_decision(
+    campaign_root: str | Path,
+    candidate_key: str,
+    result: dict[str, Any],
+    contacted: bool,
+    preset_message_auto_sent: bool,
+    skip_reason: str | None = None,
+) -> dict[str, Any]:
+    decision = {
+        "candidate_key": candidate_key,
+        "mode": "external_executor",
+        "would_contact": True,
+        "button_seen": result.get("button_before_click"),
+        "action_confirmed": True,
+        "contacted": contacted,
+        "preset_message_auto_sent": preset_message_auto_sent,
+        "message_template_id": result.get("message_template_id", "boss-current-preset"),
+        "message_status": result.get("message_status"),
+        "executor_result": result.get("result"),
+        "skip_reason": skip_reason,
+        "decided_at": _now(),
+    }
+    append_jsonl(_campaign_path(campaign_root, "structured/contact-decisions.jsonl"), decision)
+
+    candidate = dict(latest_candidate(campaign_root, candidate_key))
+    candidate["contact"] = dict(candidate.get("contact") or {})
+    candidate["contact"].update({
+        "would_contact": True,
+        "contact_mode": "external_executor" if contacted else candidate["contact"].get("contact_mode", "dry_run"),
+        "contacted": bool(candidate["contact"].get("contacted")) or contacted,
+        "live_contact_test": bool(candidate["contact"].get("live_contact_test")),
+        "contact_button_seen": True,
+        "preset_message_auto_sent": (
+            bool(candidate["contact"].get("preset_message_auto_sent")) or preset_message_auto_sent
+        ),
+        "executor_result": result.get("result"),
+        "message_status": result.get("message_status"),
+    })
+    _append_candidate(campaign_root, candidate)
+    return decision
+
+
+def _current_contact_intent(campaign_root: str | Path) -> dict[str, Any]:
+    return load_json(_campaign_path(campaign_root, "state/current-contact-intent.json"), default={}) or {}
+
+
+def consume_executor_result(campaign_root: str | Path, result_path: str | Path | None = None) -> dict[str, Any]:
+    path = Path(result_path) if result_path is not None else _campaign_path(campaign_root, "state/executor-result.json")
+    result = _load_required_json_object(path)
+    if result.get("schema") != EXECUTOR_RESULT_SCHEMA:
+        raise ValueError("executor result schema must be boss_executor_result_v1")
+    candidate_key = str(result.get("candidate_key") or "")
+    if not candidate_key:
+        raise ValueError("executor result candidate_key is required")
+    current_intent = _current_contact_intent(campaign_root)
+    if current_intent and result.get("intent_id") != current_intent.get("intent_id"):
+        raise ValueError("executor result intent_id does not match current contact intent")
+
+    _append_executor_attempt(campaign_root, result)
+    result_value = result.get("result")
+    if result_value == "sent":
+        _append_external_executor_decision(
+            campaign_root,
+            candidate_key,
+            result,
+            contacted=True,
+            preset_message_auto_sent=True,
+        )
+        if _clean_text(result.get("real_name")):
+            backfill_real_name(
+                campaign_root,
+                candidate_key,
+                str(result["real_name"]),
+                EXTERNAL_EXECUTOR_REAL_NAME_SOURCE,
+                page_text=result.get("communication_page_text"),
+            )
+    elif result_value == "skipped_continue_chat":
+        _append_external_executor_decision(
+            campaign_root,
+            candidate_key,
+            result,
+            contacted=False,
+            preset_message_auto_sent=False,
+            skip_reason="continue_chat",
+        )
+    elif result_value == "stopped":
+        stopped_reason = str(result.get("stopped_reason") or "unknown")
+        write_continuation_plan(
+            campaign_root,
+            stage="external_executor",
+            status="stopped",
+            reason=stopped_reason,
+            next_action="review_executor_result_before_resuming",
+        )
+        timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+        write_json(
+            _campaign_path(campaign_root, f"reports/interruption-executor-{slugify(stopped_reason)}-{timestamp}.json"),
+            result,
+        )
+    else:
+        raise ValueError("unsupported executor result")
+    return result
 
 
 def write_continuation_plan(
@@ -582,6 +797,87 @@ def _distribution(candidates: list[dict[str, Any]], field: str, limit: int | Non
     if limit is not None:
         ordered = ordered[:limit]
     return dict(ordered)
+
+
+def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
+    root = Path(campaign_root)
+    candidates_by_key = _latest_candidates_by_key(root)
+    approved_queue = load_jsonl(root / "structured/approved-contact-queue.jsonl")
+    attempts = load_jsonl(root / "raw/executor-contact-attempts.jsonl")
+    current_intent = load_json(root / "state/current-contact-intent.json", default={}) or {}
+
+    invalid_queue_rows: list[str] = []
+    dangling_queue_candidate_keys: list[str] = []
+    for row in approved_queue:
+        candidate_key = str(row.get("candidate_key") or "")
+        if row.get("schema") != APPROVED_CONTACT_QUEUE_SCHEMA:
+            invalid_queue_rows.append(candidate_key or "<missing>")
+        candidate = candidates_by_key.get(candidate_key)
+        if candidate is None:
+            dangling_queue_candidate_keys.append(candidate_key or "<missing>")
+            continue
+        if (candidate.get("screening") or {}).get("detail_decision") != "contact":
+            invalid_queue_rows.append(candidate_key)
+        if not (candidate.get("contact") or {}).get("would_contact"):
+            invalid_queue_rows.append(candidate_key)
+
+    invalid_attempt_rows: list[str] = []
+    dangling_attempt_candidate_keys: list[str] = []
+    for row in attempts:
+        candidate_key = str(row.get("candidate_key") or "")
+        if row.get("schema") != EXECUTOR_ATTEMPT_SCHEMA:
+            invalid_attempt_rows.append(candidate_key or "<missing>")
+        if candidate_key and candidate_key not in candidates_by_key:
+            dangling_attempt_candidate_keys.append(candidate_key)
+
+    invalid_current_intent = bool(current_intent) and (
+        current_intent.get("schema") != CURRENT_CONTACT_INTENT_SCHEMA
+        or current_intent.get("candidate_key") not in candidates_by_key
+    )
+    status = "failed" if (
+        invalid_queue_rows
+        or dangling_queue_candidate_keys
+        or invalid_attempt_rows
+        or dangling_attempt_candidate_keys
+        or invalid_current_intent
+    ) else "passed"
+    report = {
+        "campaign_root": str(root),
+        "status": status,
+        "approved_queue_count": len(approved_queue),
+        "attempt_count": len(attempts),
+        "invalid_queue_rows": sorted(set(invalid_queue_rows)),
+        "dangling_queue_candidate_keys": sorted(set(dangling_queue_candidate_keys)),
+        "invalid_attempt_rows": sorted(set(invalid_attempt_rows)),
+        "dangling_attempt_candidate_keys": sorted(set(dangling_attempt_candidate_keys)),
+        "invalid_current_intent": invalid_current_intent,
+        "updated_at": _now(),
+    }
+    write_json(root / "reports/executor-validation.json", report)
+    return report
+
+
+def summarize_executor_results(campaign_root: str | Path) -> dict[str, Any]:
+    root = Path(campaign_root)
+    attempts = [
+        row
+        for row in load_jsonl(root / "raw/executor-contact-attempts.jsonl")
+        if row.get("event_type") in {"attempt_finished", "attempt_dry_run"}
+    ]
+    result_distribution = Counter(str(row.get("result") or "unknown") for row in attempts)
+    summary = {
+        "campaign_root": str(root),
+        "attempt_count": len(attempts),
+        "sent_count": result_distribution.get("sent", 0),
+        "result_distribution": dict(sorted(result_distribution.items())),
+        "message_status_distribution": dict(sorted(
+            Counter(str(row.get("message_status") or "unknown") for row in attempts).items()
+        )),
+        "real_name_captured_count": sum(1 for row in attempts if _clean_text(row.get("real_name"))),
+        "updated_at": _now(),
+    }
+    write_json(root / "reports/executor-summary.json", summary)
+    return summary
 
 
 def campaign_stats(campaign_root: str | Path) -> dict[str, Any]:

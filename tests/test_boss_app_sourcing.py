@@ -562,6 +562,183 @@ def test_backfill_real_name_requires_valid_source_state_and_rejects_overwrite(tm
         boss_app_sourcing.backfill_real_name(root, candidate["candidate_key"], "李 XX", "manual_opened_communication_page")
 
 
+def _contact_candidate_for_executor(tmp_path: Path) -> tuple[Path, str]:
+    manifest = boss_app_sourcing.init_campaign(
+        campaign_id="boss-executor-artifacts",
+        filters_text="AI Infra",
+        out_base=tmp_path,
+    )
+    root = Path(manifest["campaign_root"])
+    candidate = boss_app_sourcing.record_list_card(root, {
+        "display_name": "陶先生",
+        "current_company": "上海华为技术有限公司",
+        "current_title": "博士后研究员-大模型方向",
+        "age": "34岁",
+        "work_years": "4年",
+        "education": "博士",
+        "expected_salary": "50-80K",
+        "screenshot_hash": "sha256:detail",
+    })
+    boss_app_sourcing.record_detail_update(
+        root,
+        candidate["candidate_key"],
+        {
+            "profile_header": "陶先生；华为 · 博士后研究员-大模型方向",
+            "contact_button_text": "立即沟通",
+        },
+        "contact",
+        90,
+        ["华为目标公司", "大模型推理框架方向匹配"],
+        ["在职-暂不考虑"],
+    )
+    boss_app_sourcing.record_contact_decision(root, candidate["candidate_key"], "dry_run", True, False)
+    return root, candidate["candidate_key"]
+
+
+def test_record_approved_contact_queue_item_and_current_intent(tmp_path: Path) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+
+    queue_item = boss_app_sourcing.record_approved_contact_queue_item(root, candidate_key)
+    assert queue_item["schema"] == "boss_approved_contact_queue_v1"
+    assert queue_item["candidate_key"] == candidate_key
+    assert queue_item["approval_status"] == "approved_for_auto_contact"
+    assert queue_item["button_seen"] == "立即沟通"
+
+    queue_rows = boss_app_sourcing.load_jsonl(root / "structured/approved-contact-queue.jsonl")
+    assert len(queue_rows) == 1
+    assert queue_rows[0]["candidate_key"] == candidate_key
+
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:00:00+08:00",
+    )
+    assert intent["schema"] == "boss_current_contact_intent_v1"
+    assert intent["intent_id"].startswith("20260602T100000-")
+    assert intent["expected_button"] == "立即沟通"
+    assert intent["expires_at"] == "2026-06-02T10:10:00+08:00"
+    assert read_json(root / "state/current-contact-intent.json")["candidate_key"] == candidate_key
+
+
+def test_approved_contact_queue_rejects_non_contact_candidate(tmp_path: Path) -> None:
+    manifest = boss_app_sourcing.init_campaign("boss-executor-reject", "AI Infra", out_base=tmp_path)
+    root = Path(manifest["campaign_root"])
+    candidate = boss_app_sourcing.record_list_card(root, {
+        "display_name": "张先生",
+        "current_company": "普通公司",
+        "current_title": "测试经理",
+    })
+    boss_app_sourcing.record_detail_update(root, candidate["candidate_key"], {}, "skip", 20, ["方向不匹配"])
+
+    with pytest.raises(ValueError, match="detail recommendation contact"):
+        boss_app_sourcing.record_approved_contact_queue_item(root, candidate["candidate_key"])
+
+
+def test_consume_executor_sent_result_updates_contact_and_real_name(tmp_path: Path) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:00:00+08:00",
+    )
+    boss_app_sourcing.write_json(root / "state/executor-result.json", {
+        "schema": "boss_executor_result_v1",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "result": "sent",
+        "button_before_click": "立即沟通",
+        "message_template_id": "boss-current-preset",
+        "message_status": "送达",
+        "real_name": "陶壮",
+        "communication_page_text": "沟通页顶部：陶壮；AI Infra训练与推理研发；状态：送达",
+        "next_action_for_codex": "record_contact_return_to_list_and_continue",
+        "stopped_reason": None,
+        "started_at": "2026-06-02T10:00:02+08:00",
+        "finished_at": "2026-06-02T10:00:08+08:00",
+    })
+
+    consumed = boss_app_sourcing.consume_executor_result(root)
+    assert consumed["result"] == "sent"
+
+    latest = boss_app_sourcing.latest_candidate(root, candidate_key)
+    assert latest["real_name"] == "陶壮"
+    assert latest["real_name_source"] == "communication_page_after_external_executor"
+    assert latest["contact"]["contacted"] is True
+    assert latest["contact"]["contact_mode"] == "external_executor"
+
+    decisions = boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl")
+    assert decisions[-1]["mode"] == "external_executor"
+    assert decisions[-1]["message_status"] == "送达"
+    assert decisions[-1]["preset_message_auto_sent"] is True
+
+
+def test_consume_executor_continue_chat_and_stopped_paths(tmp_path: Path) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:00:00+08:00",
+    )
+
+    boss_app_sourcing.write_json(root / "state/executor-result.json", {
+        "schema": "boss_executor_result_v1",
+        "intent_id": intent["intent_id"],
+        "candidate_key": candidate_key,
+        "result": "skipped_continue_chat",
+        "button_before_click": "继续沟通",
+        "next_action_for_codex": "record_skip_return_to_list_and_continue",
+        "stopped_reason": None,
+    })
+    skipped = boss_app_sourcing.consume_executor_result(root)
+    assert skipped["result"] == "skipped_continue_chat"
+    assert boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl")[-1]["skip_reason"] == "continue_chat"
+
+    boss_app_sourcing.write_json(root / "state/executor-result.json", {
+        "schema": "boss_executor_result_v1",
+        "intent_id": intent["intent_id"],
+        "candidate_key": candidate_key,
+        "result": "stopped",
+        "button_before_click": "立即联系牛人",
+        "next_action_for_codex": "write_interruption_and_stop",
+        "stopped_reason": "paid_search_chat_card",
+    })
+    stopped = boss_app_sourcing.consume_executor_result(root)
+    assert stopped["result"] == "stopped"
+    plan = read_json(root / "state/continuation-plan.json")
+    assert plan["stage"] == "external_executor"
+    assert plan["reason"] == "paid_search_chat_card"
+    assert list((root / "reports").glob("interruption-executor-paid_search_chat_card-*.json"))
+
+
+def test_validate_and_summarize_executor_artifacts(tmp_path: Path) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    boss_app_sourcing.record_approved_contact_queue_item(root, candidate_key)
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:00:00+08:00",
+    )
+    boss_app_sourcing.append_jsonl(root / "raw/executor-contact-attempts.jsonl", {
+        "schema": "boss_contact_attempt_event_v1",
+        "event_type": "attempt_finished",
+        "intent_id": intent["intent_id"],
+        "candidate_key": candidate_key,
+        "result": "sent",
+        "message_status": "送达",
+        "real_name": "陶壮",
+    })
+
+    validation = boss_app_sourcing.validate_executor_artifacts(root)
+    assert validation["status"] == "passed"
+    assert validation["approved_queue_count"] == 1
+    assert validation["attempt_count"] == 1
+
+    summary = boss_app_sourcing.summarize_executor_results(root)
+    assert summary["sent_count"] == 1
+    assert summary["result_distribution"] == {"sent": 1}
+
+
 def test_raw_detail_and_communication_records_include_recovery_fields(tmp_path: Path) -> None:
     manifest = boss_app_sourcing.init_campaign("boss-raw-recovery", "看 AI 产品", out_base=tmp_path)
     root = Path(manifest["campaign_root"])
