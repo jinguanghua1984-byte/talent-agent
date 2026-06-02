@@ -628,6 +628,49 @@ def test_record_approved_contact_queue_item_and_current_intent(tmp_path: Path) -
     assert read_json(root / "state/current-contact-intent.json")["candidate_key"] == candidate_key
 
 
+@pytest.mark.parametrize(
+    ("card", "missing_field"),
+    [
+        (
+            {
+                "display_name": "缺公司先生",
+                "current_title": "推理框架工程师",
+            },
+            "current_company",
+        ),
+        (
+            {
+                "display_name": "缺职位先生",
+                "current_company": "目标公司",
+            },
+            "current_title",
+        ),
+    ],
+)
+def test_write_current_contact_intent_requires_candidate_payload_fields(
+    tmp_path: Path,
+    card: dict,
+    missing_field: str,
+) -> None:
+    manifest = boss_app_sourcing.init_campaign("boss-executor-missing-payload", "AI Infra", out_base=tmp_path)
+    root = Path(manifest["campaign_root"])
+    candidate = boss_app_sourcing.record_list_card(root, card)
+    boss_app_sourcing.record_detail_update(
+        root,
+        candidate["candidate_key"],
+        {"contact_button_text": "立即沟通"},
+        "contact",
+        90,
+        ["方向匹配"],
+    )
+    boss_app_sourcing.record_contact_decision(root, candidate["candidate_key"], "dry_run", True, False)
+
+    with pytest.raises(ValueError, match=missing_field):
+        boss_app_sourcing.write_current_contact_intent(root, candidate["candidate_key"])
+
+    assert not (root / "state/current-contact-intent.json").exists()
+
+
 def test_approved_contact_queue_rejects_non_contact_candidate(tmp_path: Path) -> None:
     manifest = boss_app_sourcing.init_campaign("boss-executor-reject", "AI Infra", out_base=tmp_path)
     root = Path(manifest["campaign_root"])
@@ -726,6 +769,42 @@ def test_consume_executor_sent_result_updates_contact_and_real_name(tmp_path: Pa
     assert decisions[-1]["mode"] == "external_executor"
     assert decisions[-1]["message_status"] == "送达"
     assert decisions[-1]["preset_message_auto_sent"] is True
+
+
+def test_consume_and_validate_sent_result_require_current_intent(tmp_path: Path) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:00:00+08:00",
+    )
+    (root / "state/current-contact-intent.json").unlink()
+    boss_app_sourcing.write_json(root / "state/executor-result.json", {
+        "schema": "boss_executor_result_v1",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "result": "sent",
+        "button_before_click": "立即沟通",
+        "message_template_id": "boss-current-preset",
+        "message_status": "送达",
+        "real_name": "陶壮",
+        "communication_page_text": "沟通页顶部：陶壮；状态：送达",
+    })
+    before_decision_count = len(boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl"))
+
+    with pytest.raises(ValueError, match="current contact intent"):
+        boss_app_sourcing.consume_executor_result(root)
+
+    latest = boss_app_sourcing.latest_candidate(root, candidate_key)
+    assert latest["contact"]["contacted"] is False
+    assert latest["real_name"] is None
+    assert len(boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl")) == before_decision_count
+    assert not boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl")
+
+    validation = boss_app_sourcing.validate_executor_artifacts(root)
+    assert validation["status"] == "failed"
+    assert "current_intent.missing" in validation["issues"]
 
 
 @pytest.mark.parametrize(

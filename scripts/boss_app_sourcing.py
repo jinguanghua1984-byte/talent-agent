@@ -581,6 +581,16 @@ def _executor_candidate_payload(candidate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _require_current_intent_payload(payload: dict[str, Any]) -> None:
+    missing_fields = [
+        field
+        for field in ["candidate_key", "display_name", "current_company", "current_title"]
+        if not _clean_text(payload.get(field))
+    ]
+    if missing_fields:
+        raise ValueError(f"current contact intent requires {', '.join(missing_fields)}")
+
+
 def _has_dry_run_would_contact_decision(campaign_root: str | Path, candidate_key: str) -> bool:
     return any(
         row.get("candidate_key") == candidate_key
@@ -638,6 +648,8 @@ def write_current_contact_intent(
 ) -> dict[str, Any]:
     candidate = latest_candidate(campaign_root, candidate_key)
     _require_executor_candidate(campaign_root, candidate)
+    payload = _executor_candidate_payload(candidate)
+    _require_current_intent_payload(payload)
     queue_rows = _approved_contact_queue_rows(campaign_root)
     queue_item = next((row for row in queue_rows if row.get("candidate_key") == candidate_key), None)
     if queue_item is None:
@@ -650,7 +662,7 @@ def write_current_contact_intent(
         "schema": CURRENT_CONTACT_INTENT_SCHEMA,
         "intent_id": intent_id,
         "campaign_id": Path(campaign_root).name,
-        **_executor_candidate_payload(candidate),
+        **payload,
         "message_template_id": message_template_id,
         "expected_button": "立即沟通",
         "current_page": "candidate_detail",
@@ -742,6 +754,8 @@ def _current_contact_intent(campaign_root: str | Path) -> dict[str, Any]:
 
 def _sent_result_protocol_issues(result: dict[str, Any], current_intent: dict[str, Any]) -> list[str]:
     issues: list[str] = []
+    if not current_intent:
+        issues.append("current_intent.missing")
     if result.get("button_before_click") != "立即沟通":
         issues.append("executor_result.sent_invalid_button")
     if not _clean_text(result.get("real_name")):
@@ -765,6 +779,7 @@ def _raise_for_sent_result_protocol(result: dict[str, Any], current_intent: dict
         "executor_result.sent_missing_real_name": "sent result real_name is required",
         "executor_result.sent_invalid_message_status": "sent result message_status must be 送达, 已读, or 已触达",
         "executor_result.intent_mismatch": "sent result does not match current contact intent",
+        "current_intent.missing": "sent result requires current contact intent",
     }
     raise ValueError("; ".join(message_by_issue[issue] for issue in issues))
 
@@ -950,9 +965,18 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
             issues.append("executor_result.missing_attempt")
         if latest_result.get("result") == "sent":
             issues.extend(_sent_result_protocol_issues(latest_result, current_intent))
+            if current_intent:
+                has_matching_queue_item = any(
+                    row.get("campaign_id") == current_intent.get("campaign_id")
+                    and row.get("candidate_key") == current_intent.get("candidate_key")
+                    for row in approved_queue
+                )
+                if not has_matching_queue_item:
+                    issues.append("approved_queue.intent_mismatch")
             has_sent_decision = any(
                 row.get("candidate_key") == latest_result.get("candidate_key")
                 and row.get("mode") == "external_executor"
+                and row.get("executor_intent_id") == latest_result.get("intent_id")
                 and row.get("contacted") is True
                 for row in decisions
             )
@@ -962,9 +986,14 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
     for row in attempts:
         if row.get("result") != "sent":
             continue
+        if not current_intent:
+            issues.append("current_intent.missing")
+        elif row.get("intent_id") != current_intent.get("intent_id") or row.get("candidate_key") != current_intent.get("candidate_key"):
+            issues.append("executor_attempt.intent_mismatch")
         has_sent_decision = any(
             decision.get("candidate_key") == row.get("candidate_key")
             and decision.get("mode") == "external_executor"
+            and decision.get("executor_intent_id") == row.get("intent_id")
             and decision.get("contacted") is True
             for decision in decisions
         )
