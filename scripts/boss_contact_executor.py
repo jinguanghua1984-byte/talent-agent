@@ -120,10 +120,20 @@ function run() {
   }
 
   const process = frontProcesses[0];
+  if (String(process.name()) !== "BOSS直聘") {
+    return JSON.stringify({
+      clicked: false,
+      reason: "front_app_not_boss",
+      front_app: String(process.name()),
+      match_count: 0,
+    });
+  }
+
   const windows = process.windows();
   if (windows.length === 0) {
-    return JSON.stringify({clicked: false, reason: "no_window"});
+    return JSON.stringify({clicked: false, reason: "no_window", match_count: 0});
   }
+  const matches = [];
 
   function labelOf(element) {
     const candidates = ["title", "name", "description", "value"];
@@ -138,28 +148,32 @@ function run() {
     return "";
   }
 
-  function clickExact(element) {
+  function collectExact(element) {
     let role = "";
     try {
       role = String(element.role());
     } catch (error) {}
     if (role === "AXButton" && labelOf(element) === targetLabel) {
-      element.click();
-      return true;
+      matches.push(element);
     }
     try {
       const children = element.entireContents();
       for (const child of children) {
-        if (clickExact(child)) {
-          return true;
-        }
+        collectExact(child);
       }
     } catch (error) {}
-    return false;
   }
 
-  const clicked = clickExact(windows[0]);
-  return JSON.stringify({clicked: clicked});
+  collectExact(windows[0]);
+  if (matches.length !== 1) {
+    return JSON.stringify({
+      clicked: false,
+      reason: matches.length === 0 ? "button_not_found" : "ambiguous_button_count",
+      match_count: matches.length,
+    });
+  }
+  matches[0].click();
+  return JSON.stringify({clicked: true, match_count: 1});
 }
 """
 
@@ -430,9 +444,6 @@ class MacAccessibilityBossUI:
         matches = [button for button in page.buttons if button in CONTACT_BUTTON_LABELS]
         if matches:
             return ContactButtonState(label=matches[0], count=len(matches))
-        text_matches = [label for label in CONTACT_BUTTON_LABELS if label in page.page_text]
-        if text_matches:
-            return ContactButtonState(label=text_matches[0], count=len(text_matches))
         return ContactButtonState(label="", count=0)
 
     def click_contact(self, button: ContactButtonState) -> dict[str, Any]:
@@ -441,7 +452,8 @@ class MacAccessibilityBossUI:
         script = JXA_CLICK_EXACT_BUTTON.replace("__BUTTON_LABEL__", json.dumps(button.label, ensure_ascii=False))
         result = self._run_jxa(script)
         if result.get("clicked") is not True:
-            raise ValueError("exact contact button was not clicked")
+            reason = _clean(result.get("reason")) or "exact contact button was not clicked"
+            raise ValueError(reason)
         return result
 
     def wait_for_communication_page(self) -> BossPageSnapshot:
@@ -451,21 +463,29 @@ class MacAccessibilityBossUI:
             if _contains_any(last_snapshot.page_text, COMMUNICATION_PAGE_MARKERS):
                 return last_snapshot
             if time.monotonic() >= deadline:
-                return last_snapshot
+                raise ValueError("communication page not confirmed")
             time.sleep(self.poll_seconds)
             last_snapshot = self.read_current_page()
 
     def extract_communication_result(self, page: BossPageSnapshot) -> CommunicationResult:
+        if not _contains_any(page.page_text, COMMUNICATION_PAGE_MARKERS):
+            return CommunicationResult(real_name="", message_status="", page_text=page.page_text)
+
         message_status = ""
         for status in SUCCESS_MESSAGE_STATUSES:
             if status in page.page_text:
                 message_status = status
                 break
 
-        real_name = page.window_title.strip()
-        if real_name in {"", "沟通页", "BOSS直聘"}:
-            tokens = [token for token in re.split(r"[\s；;，,：:]+", page.page_text) if token]
-            real_name = tokens[0] if tokens else ""
+        real_name = ""
+        if page.window_title.strip() not in {"", "沟通页", "BOSS直聘"}:
+            real_name = page.window_title.strip()
+        if not real_name:
+            name_match = re.search(r"(?:沟通页顶部|候选人|姓名)[:：]\s*([^；;，,\s]+)", page.page_text)
+            if name_match:
+                parsed_name = name_match.group(1).strip()
+                if parsed_name not in {"未知", "沟通页", "BOSS直聘"}:
+                    real_name = parsed_name
         return CommunicationResult(real_name=real_name, message_status=message_status, page_text=page.page_text)
 
     @staticmethod
