@@ -216,6 +216,10 @@ class CommunicationResult:
     page_text: str
 
 
+class UIStopError(ValueError):
+    """Raised when the current BOSS UI cannot be safely acted on."""
+
+
 def _campaign_path(campaign_root: str | Path, relative: str) -> Path:
     return Path(campaign_root) / relative
 
@@ -382,7 +386,7 @@ class FixtureBossUI:
 
     def click_contact(self, button: ContactButtonState) -> None:
         if button.label != "立即沟通":
-            raise ValueError("fixture can only click 立即沟通")
+            raise UIStopError("fixture can only click 立即沟通")
         self.clicked = True
 
     def wait_for_communication_page(self) -> BossPageSnapshot:
@@ -453,7 +457,7 @@ class MacAccessibilityBossUI:
         result = self._run_jxa(script)
         if result.get("clicked") is not True:
             reason = _clean(result.get("reason")) or "exact contact button was not clicked"
-            raise ValueError(reason)
+            raise UIStopError(reason)
         return result
 
     def wait_for_communication_page(self) -> BossPageSnapshot:
@@ -497,12 +501,12 @@ class MacAccessibilityBossUI:
 
 def validate_page_match(page: BossPageSnapshot, intent: dict[str, Any]) -> None:
     if page.front_app != "BOSS直聘":
-        raise ValueError("front_app must be BOSS直聘")
+        raise UIStopError("front_app must be BOSS直聘")
     page_text = page.page_text
     for field in ["display_name", "current_company", "current_title"]:
         expected = _clean(intent.get(field))
         if expected and expected not in page_text and expected not in page.window_title:
-            raise ValueError(f"current page does not match intent {field}")
+            raise UIStopError(f"current page does not match intent {field}")
 
 
 def classify_button(page: BossPageSnapshot, button: ContactButtonState) -> dict[str, str]:
@@ -740,6 +744,8 @@ def _exception_exit_code(exc: Exception) -> int:
     text = str(exc)
     if "stale_lock" in text or "lock" in text:
         return 4
+    if isinstance(exc, UIStopError):
+        return 3
     if isinstance(exc, ValueError):
         return 2
     return 3

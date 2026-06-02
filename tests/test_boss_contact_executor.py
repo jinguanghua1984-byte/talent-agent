@@ -579,3 +579,88 @@ def test_validate_and_summarize_cli(tmp_path: Path, capsys: pytest.CaptureFixtur
     assert boss_contact_executor.main(["summarize", "--campaign-root", str(root)]) == 0
     summary = json.loads(capsys.readouterr().out)
     assert summary["sent_count"] == 1
+
+
+def test_contact_current_cli_front_app_mismatch_returns_ui_stop_exit_code(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    fixture = write_fixture(tmp_path / "wrong-front-app.json", {
+        "detail": {
+            "front_app": "Safari",
+            "window_title": "陶先生",
+            "page_text": "陶先生 上海华为技术有限公司 博士后研究员-大模型方向 立即沟通",
+            "buttons": ["立即沟通"],
+        },
+    })
+
+    exit_code = boss_contact_executor.main([
+        "contact-current",
+        "--campaign-root",
+        str(root),
+        "--mock-ui-fixture",
+        str(fixture),
+        "--now",
+        "2026-06-02T10:05:00+08:00",
+    ])
+
+    assert exit_code == 3
+    output = json.loads(capsys.readouterr().out)
+    assert output["result"] == "stopped"
+    assert output["stopped_reason"] == "front_app must be BOSS直聘"
+
+
+def test_contact_current_cli_page_mismatch_returns_ui_stop_exit_code(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    fixture = write_fixture(tmp_path / "page-mismatch.json", {
+        "detail": {
+            "front_app": "BOSS直聘",
+            "window_title": "陶先生",
+            "page_text": "陶先生 字节跳动 大模型算法 立即沟通",
+            "buttons": ["立即沟通"],
+        },
+    })
+
+    exit_code = boss_contact_executor.main([
+        "contact-current",
+        "--campaign-root",
+        str(root),
+        "--mock-ui-fixture",
+        str(fixture),
+        "--now",
+        "2026-06-02T10:05:00+08:00",
+    ])
+
+    assert exit_code == 3
+    output = json.loads(capsys.readouterr().out)
+    assert output["result"] == "stopped"
+    assert "current_company" in output["stopped_reason"]
+
+
+def test_contact_current_cli_intent_schema_error_returns_validation_exit_code(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    intent = boss_app_sourcing.load_json(root / "state/current-contact-intent.json")
+    intent["schema"] = "bad_schema"
+    boss_app_sourcing.write_json(root / "state/current-contact-intent.json", intent)
+
+    exit_code = boss_contact_executor.main([
+        "contact-current",
+        "--campaign-root",
+        str(root),
+        "--mock-ui-fixture",
+        str(ready_fixture(tmp_path)),
+        "--now",
+        "2026-06-02T10:05:00+08:00",
+    ])
+
+    assert exit_code == 2
+    output = json.loads(capsys.readouterr().out)
+    assert output["result"] == "stopped"
+    assert "current_intent.schema" in output["stopped_reason"]
