@@ -751,3 +751,245 @@ def test_non_ui_flow_can_initialize_record_and_summarize(tmp_path: Path) -> None
     assert summary["detail_count"] == 1
     assert summary["would_contact_count"] == 1
     assert summary["live_contact_count"] == 0
+
+
+def test_candidate_signature_ignores_screen_position_batch_and_hash() -> None:
+    card = {
+        "display_name": "王先生",
+        "current_company": "腾讯",
+        "current_title": "技术总监",
+        "age": "38岁",
+        "work_years": "10年以上",
+        "education": "本科",
+        "city": "上海",
+        "expected_salary": "90-110K",
+        "screenshot_hash": "sha256:a",
+        "list_scroll_batch": 1,
+        "card_position": 2,
+    }
+    moved_card = dict(card)
+    moved_card.update({
+        "screenshot_hash": "sha256:b",
+        "list_scroll_batch": 9,
+        "card_position": 4,
+    })
+
+    assert boss_app_sourcing.build_candidate_signature(card).startswith("boss-app-signature:")
+    assert boss_app_sourcing.build_candidate_signature(card) == boss_app_sourcing.build_candidate_signature(moved_card)
+    assert boss_app_sourcing.build_candidate_key(card) != boss_app_sourcing.build_candidate_key(moved_card)
+
+
+def test_record_list_card_stores_stable_signature(tmp_path: Path) -> None:
+    manifest = boss_app_sourcing.init_campaign("boss-signature", "全部进入详情", out_base=tmp_path)
+    root = Path(manifest["campaign_root"])
+
+    candidate = boss_app_sourcing.record_list_card(root, {
+        "display_name": "王先生",
+        "current_company": "腾讯",
+        "current_title": "技术总监",
+        "age": "38岁",
+        "work_years": "10年以上",
+        "education": "本科",
+        "expected_salary": "90-110K",
+        "screenshot_hash": boss_app_sourcing.screen_hash("signature-card"),
+    })
+
+    raw = boss_app_sourcing.load_jsonl(root / "raw/list-cards.jsonl")[-1]
+    assert candidate["candidate_signature"].startswith("boss-app-signature:")
+    assert raw["candidate_signature"] == candidate["candidate_signature"]
+
+
+def test_validate_campaign_flags_missing_detail_and_contact_then_passes(tmp_path: Path) -> None:
+    manifest = boss_app_sourcing.init_campaign("boss-validate", "全部进入详情", out_base=tmp_path)
+    root = Path(manifest["campaign_root"])
+    candidate = boss_app_sourcing.record_list_card(root, {
+        "display_name": "李先生",
+        "current_company": "腾讯",
+        "current_title": "测试开发",
+        "screenshot_hash": boss_app_sourcing.screen_hash("validate-card"),
+    })
+
+    first = boss_app_sourcing.validate_campaign(root)
+    assert first["status"] == "failed"
+    assert first["missing_detail_candidate_keys"] == [candidate["candidate_key"]]
+
+    boss_app_sourcing.record_detail_update(root, candidate["candidate_key"], {}, "contact", 100, ["全部匹配"])
+    second = boss_app_sourcing.validate_campaign(root)
+    assert second["status"] == "failed"
+    assert second["missing_contact_candidate_keys"] == [candidate["candidate_key"]]
+
+    boss_app_sourcing.record_contact_decision(root, candidate["candidate_key"], "dry_run", True, False)
+    final = boss_app_sourcing.validate_campaign(root)
+    assert final["status"] == "passed"
+    assert final["missing_detail_candidate_keys"] == []
+    assert final["missing_contact_candidate_keys"] == []
+
+
+def test_campaign_stats_reports_distributions(tmp_path: Path) -> None:
+    manifest = boss_app_sourcing.init_campaign("boss-stats", "全部进入详情", out_base=tmp_path)
+    root = Path(manifest["campaign_root"])
+    boss_app_sourcing.record_list_card(root, {
+        "display_name": "张先生",
+        "current_company": "阿里",
+        "current_title": "大模型算法",
+        "education": "硕士",
+        "work_years": "8年",
+        "expected_salary": "50-80K",
+    })
+    boss_app_sourcing.record_list_card(root, {
+        "display_name": "李女士",
+        "current_company": "腾讯",
+        "current_title": "技术总监",
+        "education": "本科",
+        "work_years": "10年以上",
+        "expected_salary": "90-110K",
+    })
+
+    stats = boss_app_sourcing.campaign_stats(root)
+
+    assert stats["candidate_count"] == 2
+    assert stats["education_distribution"] == {"本科": 1, "硕士": 1}
+    assert stats["current_title_distribution"] == {"大模型算法": 1, "技术总监": 1}
+    assert stats["expected_salary_distribution"] == {"50-80K": 1, "90-110K": 1}
+
+
+def test_record_cli_commands_accept_json_payloads_and_complete(tmp_path: Path, capsys) -> None:
+    manifest = boss_app_sourcing.init_campaign("boss-record-cli", "全部进入详情", out_base=tmp_path)
+    root = Path(manifest["campaign_root"])
+
+    assert boss_app_sourcing.main([
+        "record-list-card",
+        "--campaign-root",
+        str(root),
+        "--json",
+        json.dumps({"display_name": "王先生", "current_company": "腾讯", "current_title": "技术总监"}),
+    ]) == 0
+    candidate = json.loads(capsys.readouterr().out)
+
+    assert boss_app_sourcing.main([
+        "record-detail",
+        "--campaign-root",
+        str(root),
+        "--candidate-key",
+        candidate["candidate_key"],
+        "--json",
+        json.dumps({
+            "detail_sections": {"work_experience": "腾讯技术管理"},
+            "recommendation": "contact",
+            "score": 100,
+            "reasons": ["全部匹配"],
+        }, ensure_ascii=False),
+    ]) == 0
+    capsys.readouterr()
+
+    assert boss_app_sourcing.main([
+        "record-dry-run-contact",
+        "--campaign-root",
+        str(root),
+        "--candidate-key",
+        candidate["candidate_key"],
+        "--button-seen",
+    ]) == 0
+    capsys.readouterr()
+
+    assert boss_app_sourcing.main([
+        "complete",
+        "--campaign-root",
+        str(root),
+        "--reason",
+        "已完成 dry-run",
+        "--next-action",
+        "汇报 summary",
+    ]) == 0
+    plan = read_json(root / "state/continuation-plan.json")
+    assert plan["status"] == "completed_after_dry_run"
+
+
+def test_parse_list_cards_from_accessibility_text_extracts_visible_cards() -> None:
+    tree_text = """
+    21 文本 Description: 求职期望：测试经理, 西安交通大学·软件工程, QS前500院校, 腾讯12级，看一线二线大厂测试总监或实线TL岗位。, 李先生, 35岁  |  10年以上  |  本科  |  80-100K, 刚刚活跃, Ai评测, Java
+    23 文本 Description: 腾讯 · 测试开发, Secondary Actions: Cancel
+    27 文本 Description: 背景：百度/腾讯12级/字节3-2，前端/客户端出身。, 王先生, 38岁  |  10年以上  |  本科  |  90-110K, 刚刚活跃, 技术管理, React
+    29 文本 Description: 腾讯 · 技术总监, Secondary Actions: Cancel
+    """
+
+    cards = boss_app_sourcing.parse_list_cards_from_accessibility_text(tree_text, list_scroll_batch=7)
+
+    assert cards == [
+        {
+            "display_name": "李先生",
+            "age": "35岁",
+            "work_years": "10年以上",
+            "education": "本科",
+            "expected_salary": "80-100K",
+            "active_state": "刚刚活跃",
+            "current_company": "腾讯",
+            "current_title": "测试开发",
+            "list_scroll_batch": 7,
+            "card_position": 1,
+            "list_decision": "detail_for_all",
+            "raw_text": "求职期望：测试经理, 西安交通大学·软件工程, QS前500院校, 腾讯12级，看一线二线大厂测试总监或实线TL岗位。, 李先生, 35岁  |  10年以上  |  本科  |  80-100K, 刚刚活跃, Ai评测, Java",
+            "screen_region": "visible_card_1",
+        },
+        {
+            "display_name": "王先生",
+            "age": "38岁",
+            "work_years": "10年以上",
+            "education": "本科",
+            "expected_salary": "90-110K",
+            "active_state": "刚刚活跃",
+            "current_company": "腾讯",
+            "current_title": "技术总监",
+            "list_scroll_batch": 7,
+            "card_position": 2,
+            "list_decision": "detail_for_all",
+            "raw_text": "背景：百度/腾讯12级/字节3-2，前端/客户端出身。, 王先生, 38岁  |  10年以上  |  本科  |  90-110K, 刚刚活跃, 技术管理, React",
+            "screen_region": "visible_card_2",
+        },
+    ]
+
+
+def test_parse_detail_sections_from_accessibility_text_groups_sections_and_button() -> None:
+    tree_text = """
+    12 文本 Description: 王先生, Secondary Actions: Cancel
+    14 文本 Description: 在职-考虑机会, 10年以上, 本科, 刚刚活跃, Secondary Actions: Cancel
+    17 文本 Description: 求职期望, Secondary Actions: Cancel
+    19 文本 Description: 互联网 · 移动互联网 · 计算机软件, 90-110K, Secondary Actions: Cancel
+    20 文本 Description: 技术总监，上海, Secondary Actions: Cancel
+    21 文本 Description: 工作经历, Secondary Actions: Cancel
+    24 文本 Description: 腾讯视频客户端团队 技术管理工作
+    Ai coding，流程改造，研发效能devops
+    25 文本 Description: 腾讯科技（北京）有限公司, Secondary Actions: Cancel
+    30 文本 Description: 教育经历, Secondary Actions: Cancel
+    32 文本 Description: 本科 · 电子信息, Secondary Actions: Cancel
+    34 文本 Description: 河南大学, Secondary Actions: Cancel
+    45 按钮 Description: 立即沟通, Secondary Actions: Cancel
+    """
+
+    detail = boss_app_sourcing.parse_detail_sections_from_accessibility_text(tree_text)
+
+    assert detail["contact_button_text"] == "立即沟通"
+    assert detail["bottom_reached"] is True
+    assert "王先生" in detail["profile_header"]
+    assert "技术总监，上海" in detail["expectation"]
+    assert "腾讯视频客户端团队" in detail["work_experience"]
+    assert "河南大学" in detail["education"]
+
+
+def test_build_all_match_detail_decision_keeps_contact_and_records_risks() -> None:
+    detail = {
+        "profile_header": "在职-暂不考虑；只看 CTO 岗位",
+        "work_experience": "腾讯测试开发 TL，求测试总监岗位",
+        "contact_button_text": "立即沟通",
+    }
+
+    decision = boss_app_sourcing.build_all_match_detail_decision(detail)
+
+    assert decision["recommendation"] == "contact"
+    assert decision["score"] == 100
+    assert decision["reasons"] == ["无筛选条件，列表中全部人选视为匹配", "详情页已采集", "立即沟通按钮可见"]
+    assert decision["risks"] == [
+        "候选状态显示暂不考虑；本轮按用户要求仍只做 dry-run would-contact",
+        "候选人个人描述限定 CTO 岗位，后续真实沟通前需复核岗位匹配",
+        "候选人期望测试经理/测试总监，后续真实沟通前需复核岗位匹配",
+    ]

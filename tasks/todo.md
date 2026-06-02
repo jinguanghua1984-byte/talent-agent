@@ -4,19 +4,120 @@
 
 ## Active Task
 
-### BOSS App 推荐列表寻访试跑 50 人（2026-05-31）
+### AI 猎头公司杂志风网页 PPT（2026-06-02）
 
 计划：
-- [ ] 初始化独立 campaign 目录，策略为“列表中现有人选全部进入详情，无额外筛选要求”。
-- [ ] 用 Computer Use 预检当前 BOSS App 是否在推荐列表页。
-- [ ] 逐个处理前 50 人：采集列表卡片、进入详情、展开折叠内容、详情内滚动到底、保存结构化文本和截图哈希、返回列表。
-- [ ] 全程 dry-run，不点击 `立即沟通`、不发送消息、不写主人才库。
-- [ ] 生成本地 summary，并向用户汇报已处理人数、成功详情数、跳过/中断原因和恢复入口。
+- [x] 使用 `guizang-ppt-skill`，选择风格 A「电子杂志 × 电子墨水」。
+- [x] 复制 skill 模板到 `docs/design-discussions/`。
+- [x] 基于 Pitch Deck 大纲生成横向翻页 HTML PPT。
+- [x] 本地渲染抽查，修复明显溢出、遮挡和占位符。
+- [x] 交付 HTML 文件路径。
+- [x] 在 Part 2 和 Part 3 开始处整合整体蓝图素材。
+- [x] 重新渲染预览并校验页码、图片加载和关键内容。
 
 边界：
-- 不处理网页端/CDP/BOSS API。
-- 遇到登录失效、验证码、安全页、权限弹窗、UI 模板漂移、无法返回列表或疑似真实发送风险，立即停机并写 continuation plan。
-- 本轮目标先处理 `50` 人，完成后停止并汇报。
+- 本轮生成单文件 HTML 网页 PPT，不生成 PPTX。
+- 主题基调采用「靛蓝瓷」，贴合 AI / 技术 / 产品发布。
+- 内容以 `docs/design-discussions/2026-06-02-ai-headhunting-company-pitch-deck-outline.md` 为主。
+
+Review：
+- 已生成杂志风横向翻页网页 PPT：`docs/design-discussions/2026-06-02-ai-headhunting-company-pitch-deck-magazine.html`。
+- 共 24 页，覆盖业务重构、未来业务蓝图、OPC 猎头公司设想三部分，并在 Part 2 / Part 3 开始处增加整体蓝图页。
+- 已生成联系表预览：`artifacts/ai-headhunting-magazine-preview/contact-sheet.png`，并抽查高密度页面无明显遮挡。
+
+### AI 猎头公司 Pitch Deck 大纲整理（2026-06-02）
+
+计划：
+- [x] 解析 `/Users/eric/Documents/AI 猎头公司Pitch Deck.xmind` 的完整树结构。
+- [x] 锁定 Part 1 完全参考 XMind `业务要点讨论` 分支。
+- [x] 读取未来业务蓝图和业务理解文档，提炼 Part 2。
+- [x] 读取 OPC 信息图，提炼 Part 3。
+- [x] 生成 PPT 大纲 Markdown 到 `docs/design-discussions/`。
+- [x] 校验三部分来源覆盖与格式。
+
+边界：
+- 本轮只输出 PPT 大纲，不生成 PPTX。
+- Part 1 不重写原意，完全基于 XMind 的 `业务要点讨论`。
+- Part 2 以业务蓝图 HTML 为主干，必要细节参考业务理解文档。
+- Part 3 以 OPC 信息图为依据。
+
+Review：
+- 已生成 PPT 大纲：`docs/design-discussions/2026-06-02-ai-headhunting-company-pitch-deck-outline.md`。
+- 大纲共 31 页建议页，包含封面、目录、Part 1 业务要点讨论、Part 2 未来业务蓝图、Part 3 OPC 猎头公司设想。
+- 验证：关键来源词可检出；`git diff --check -- docs/design-discussions/2026-06-02-ai-headhunting-company-pitch-deck-outline.md tasks/todo.md` 通过。
+
+### AI 猎头公司 Agent 业务蓝图生成（2026-06-02）
+
+计划：
+- [x] 读取业务理解文档并确认蓝图信息清单。
+- [x] 生成业务蓝图 HTML 源稿和 PNG 成图。
+- [x] 检查蓝图覆盖公司 Agent、个人 Agent、核心场景、价值交换和治理规则。
+- [x] 交付图片与源稿路径。
+
+边界：
+- 基于 `docs/design-discussions/2026-06-02-ai-headhunting-agent-business-understanding.md` 生成业务蓝图。
+- 蓝图只体现业务价值和业务流，不展开技术实现细节。
+- 不修改业务代码、不运行平台流程、不写人才库。
+
+Review：
+- 已生成业务蓝图 PNG：`artifacts/ai-headhunting-agent-business-blueprint.png`。
+- 已保留可编辑 HTML 源稿：`artifacts/ai-headhunting-agent-business-blueprint.html`。
+- 蓝图覆盖公司 Agent、个人 Agent、六个核心业务场景、代币/贡献积分/积分转代币、数据隔离、先到先得和联系方式非排他交易规则。
+- 验证：PNG 尺寸 `1920x1300`；关键业务词在源稿中可检出；`git diff --check -- tasks/todo.md` 通过。
+
+### AI 猎头公司 Agent 业务理解文档（2026-06-02）
+
+计划：
+- [x] 识别图片和对话中的业务信息点。
+- [x] 确认代币、贡献积分、数据同步、归属与交易规则。
+- [x] 将纯业务理解整理到 `docs/design-discussions/`。
+- [x] 校验文档不包含绘图设计或技术实现细节。
+
+边界：
+- 本轮只保存业务理解文档，不绘制业务蓝图。
+- 不修改业务代码、不运行平台流程、不写人才库。
+
+Review：
+- 已新增纯业务理解文档：`docs/design-discussions/2026-06-02-ai-headhunting-agent-business-understanding.md`。
+- 文档覆盖公司 Agent、个人 Agent、核心业务场景、代币/贡献积分、积分转代币、数据同步隔离、联系方式交易和归属规则。
+- 验证：未检出绘图布局/视觉产物相关关键词；`git diff --check` 通过。
+
+### BOSS App 第二轮定向 live 寻访（2026-06-01）
+
+计划：
+- [x] 初始化独立 campaign：`data/campaigns/boss-app-targeted-live-20260601/`，不复用上一轮目录。
+- [x] 写入筛选策略：目标公司、年龄不超过 35、工作年限 3-10 年、算法/大模型方向排除和保留规则。
+- [x] 预检 BOSS App 当前是否在目标职位推荐列表。
+- [x] 逐个候选人处理：列表解析、详情采集、规则判定、跳过已沟通 `继续沟通` 人选。
+- [x] 对合适且按钮为 `立即沟通` 的候选人，在动作级确认后真实点击；达到本轮上限或平台阻断即停止。
+- [x] 汇总本轮扫描、详情、合适、已沟通跳过、真实沟通数、停止原因和恢复入口。
+- [x] 生成本轮执行摘要与全部已触达人选详细清单。
+- [x] 推送飞书文档并向默认协同群发送完成通知。
+
+边界：
+- 本轮不使用 BOSS 网页端/CDP/API，不写主人才库。
+- 点击 `立即沟通` 可能自动发送预设消息；每个候选人点击前都必须获得动作级确认。
+- 用户已确认王女士这一次触达；后续 BOSS UI 操作必须只用 Computer Use。若 Computer Use 超时，记录断点并等待人工干预后恢复。
+
+当前断点：
+- 2026-06-02 00:51：用户明确要求“这次任务就执行到这里”。本轮停止在推荐列表底部附近，Alice（某互联大厂 · ai推理框架研发工程师，31岁/7年/硕士）仅记录列表卡，未进入详情、未触达。当前统计：`candidate_count=263`、真实触达 `14` 人、沟通页实名回填 `14` 人；未命中 BOSS 日触达限额。
+- 2026-06-01 22:33：推荐列表进入重复/底部区域，当前滚动区域不再暴露继续向下的新卡片；本轮停止原因写入 `state/continuation-plan.json`：`stopped_list_repeated_or_end_reached`。当前统计：`candidate_count=169`、`detail_count=169`、`would_contact=10`、`live_contact=9`、`real_name_captured=9`、`skip_count=156`；日限额未在推荐流中命中，但伍**搜索详情触发了付费搜索畅聊卡阻断，未付款未触达。
+- 2026-06-01 22:10：代先生已真实触达，沟通页显示全名「代贵涛」，预设消息状态「送达」；已写入 live_test contact decision、`raw/communication-pages.jsonl` 并回填实名。恢复后先从沟通页返回列表，确认不二次触达后继续向下寻访。
+- 2026-06-01 22:07：进入代先生（华为云竖亥Lab·机器学习，25岁/4年/本科）详情；详情显示大模型训练/推理性能仿真、昇腾芯片选型、超节点仿真、XDS 推理平台 Prefill/Decode 算子流性能优化、低时延/超长序列/高吞吐等，已记录为 contact + dry-run would_contact，candidate_key=`boss-app:3767803facdcb60ed646eef1`。当前停在代先生详情页，按钮为「立即沟通」，等待动作级确认；确认后点击并从沟通页回采真实姓名/送达状态。
+- 2026-06-01 21:56：用户确认后点击伍**详情页「立即联系牛人」，未进入沟通页，而是弹出「搜索畅聊卡」购买面板，显示共40次/有效期30天、商品价格548直豆、优惠-60直豆、还需支付488直豆，主按钮为「立即开聊」。已记录阻断 `reports/interruption-S6b-paid-search-chat-card-wu-nvidia-20260601-2156.json`；未点击付费按钮，未发送沟通。下一步关闭面板，返回推荐列表继续寻访，避免再从热搜搜索结果触发付费联系。
+- 2026-06-01 21:54：从热搜推荐误入/展开到搜索结果页后，进入伍**（英伟达·算法工程师，34岁/10年/硕士）详情；详情显示 AI infra负责人、大模型训练/推理性能优化、PD分离框架、大模型推理框架，已记录为 contact + dry-run would_contact。当前停在伍**详情页，按钮为「立即联系牛人」，页面提示「剩余次数不足，您有免费的搜索畅聊卡待领取」；等待动作级确认是否在搜索详情页点击该按钮，或返回推荐列表继续。
+- 2026-06-01 21:28：李先生已真实触达，沟通页显示全名「李泽斌」，预设消息状态「送达」；已写入 live_test contact decision、`raw/communication-pages.jsonl` 并回填实名。恢复后先从沟通页返回列表，确认不二次触达后继续向下寻访。
+- 2026-06-01 21:14：相似推荐中进入李先生（MiniMax·ai推理框架研发工程师，28岁/4年/硕士），详情显示 KVCache 管理、感知调度、模拟器，以及火山引擎 DPU/C++ 底层背景；已记录 detail contact 与 dry-run would_contact，candidate_key=`boss-app:13396a54de05b1859076c791`。当前停在李先生详情页，等待动作级确认；确认后点击 `立即沟通`，进入沟通页回采真实姓名/发送状态并继续列表。
+- 2026-06-01 21:11：张先生已真实触达，沟通页显示全名「张旭」，预设消息状态「送达」；已写入 live_test contact decision、`raw/communication-pages.jsonl` 并回填实名。恢复后先从沟通页返回列表，确认不二次触达后继续向下寻访。
+- 2026-06-01 21:05：扫到张先生（华为·架构师，35岁/9年/博士），详情显示 `AI Infra Architect on AI and GPU Networking`，按钮为 `立即沟通`；已记录 detail contact 与 dry-run would_contact，candidate_key=`boss-app:8420955b5108b88f79b8b2e3`。当前停在张先生详情页，等待动作级确认；确认后点击 `立即沟通`，进入沟通页回采真实姓名/发送状态并继续列表。
+- 2026-06-01 18:21：Computer Use 在王女士 `立即沟通` 点击阶段 120s 超时，点击结果未验证；已写入 `data/campaigns/boss-app-targeted-live-20260601/reports/interruption-S6b-computer-use-timeout-wang-20260601-182152.json`。恢复后先读取 BOSS 当前页：若仍在详情页且按钮为 `立即沟通`，继续这一次已授权触达；若已进入沟通页或按钮变为 `继续沟通`，先回采真实姓名并避免重复点击。
+- 2026-06-01 19:09：已完成王女士、Sherlock 两次真实触达并从沟通页回填姓名；曹先生详情已判定跳过。Computer Use 返回按钮连续报 ScreenCaptureKit/元素失效/窗口定位错误，已写入 `data/campaigns/boss-app-targeted-live-20260601/reports/interruption-S7-computer-use-click-failure-cao-20260601-190947.json`。恢复后先从曹先生详情页返回列表，再处理 Maple（阿里巴巴集团，AI工具链/工程化/模型量化/深度学习框架）详情。
+
+Review：
+- 本轮按用户指令停止，不继续操作 BOSS App；停止点写入 `state/continuation-plan.json`。
+- 已生成执行摘要、CSV 清单和完整 JSON 明细；已触达 14 人，沟通页实名回填 14 人，未命中 BOSS 日触达限额。
+- 已推送飞书知识库 `JD需求交付`：执行摘要 `https://sq8org1v4k6.feishu.cn/wiki/FbzbwaPgmiBl1JkI2jXcNUk9nno`，触达人选表格 `https://sq8org1v4k6.feishu.cn/wiki/MV1HwyiiYi8q7Fk13RhchmfHnbd`。
+- 已通知 `JD需求协同`，message_id=`om_x100b6eef8ff538a0b3ba036cb33c7db`；发布回执见 `data/campaigns/boss-app-targeted-live-20260601/reports/feishu-publish-results.json`。
 
 ### 将训练/推理框架宽召回数据同步到正式库（2026-05-31）
 
@@ -106,6 +207,10 @@ Review：
 
 ## Recent Done
 
+- 2026-06-02：BOSS App 第二轮定向 live 寻访已按用户指令停止并完成飞书汇总：推荐列表记录 `263` 人，真实触达 `14` 人，沟通页实名回填 `14` 人，未命中日触达限额；飞书文档 `https://sq8org1v4k6.feishu.cn/wiki/FbzbwaPgmiBl1JkI2jXcNUk9nno`，触达人选表格 `https://sq8org1v4k6.feishu.cn/wiki/MV1HwyiiYi8q7Fk13RhchmfHnbd`，通知 message_id=`om_x100b6eef8ff538a0b3ba036cb33c7db`。完整记录见 `tasks/archive/2026-06.md`。
+- 2026-06-01：已导出人才库全量同步包 `data/output/talent-sync-full-20260601-203246.zip`，候选人 `56193`，文件大小 `194M`，`verify-bundle` 通过；完整记录见 `tasks/archive/2026-06.md`。
+- 2026-06-01：已完成 BOSS App 寻访 P0/P1 脚本化：新增稳定 `candidate_signature`、record/complete/validate/stats/parse CLI、列表/详情 accessibility 文本解析和 all-match 固定决策辅助；聚焦测试 `44 passed`，全量测试 `1003 passed, 1 warning`。完整记录见 `tasks/archive/2026-06.md`。
+- 2026-05-31：已完成 BOSS App 推荐列表 50 人无筛选寻访试跑：`candidate_count=50`、`detail_count=50`、`would_contact_count=50`、`live_contact_count=0`；campaign 位于 `data/campaigns/boss-app-all-match-50-20260531/`，未点击 `立即沟通`、未发送消息、未写主人才库。完整记录见 `tasks/archive/2026-05.md`。
 - 2026-05-31：已处理 `ai-infra-framework-broad-recall-2026-05-29` 主库同步冲突 `2957` 条；备份后事务写入并逐条做 local-value drift 校验，最终 `resolved_keep_local=2539`、`resolved_use_remote=381`、`resolved_standardized_remote=37`，本 bundle open conflicts 为 `0`。完整记录见 `tasks/archive/2026-05.md`。
 - 2026-05-31：已完成 BOSS App 推荐列表寻访 workflow 首版：新增 canonical skill/workflow、Computer Use 能力合同、`scripts/boss_app_sourcing.py` 合同/状态/候选人/联系安全/实名回填/报告 helper 和 36 个聚焦测试；全量验证 `.venv/bin/python -m pytest tests -q` -> `995 passed, 1 warning`，`git diff --check` 通过。完整记录见 `tasks/archive/2026-05.md`。
 - 2026-05-30：已按 UI 浏览 BOSS 当前列表中薪资上限超过 50K 的人选卡片，查看 7 个详情并返回列表；未主动请求接口、未发起沟通、未收藏、未写库。完整记录见 `tasks/archive/2026-05.md`。
@@ -115,3 +220,4 @@ Review：
 ## Archive Index
 
 - 2026-05：`tasks/archive/2026-05.md`
+- 2026-06：`tasks/archive/2026-06.md`

@@ -68,6 +68,7 @@ data/cache/
 *.pem
 
 # Runtime output
+artifacts/
 output/
 runtime/
 
