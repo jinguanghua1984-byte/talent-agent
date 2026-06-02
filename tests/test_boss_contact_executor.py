@@ -664,3 +664,44 @@ def test_contact_current_cli_intent_schema_error_returns_validation_exit_code(
     output = json.loads(capsys.readouterr().out)
     assert output["result"] == "stopped"
     assert "current_intent.schema" in output["stopped_reason"]
+
+
+def test_contact_current_cli_preflight_error_does_not_print_stale_executor_result(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    root, candidate_key = make_executor_campaign(tmp_path)
+    boss_app_sourcing.write_json(root / "state/executor-result.json", {
+        "schema": "boss_executor_result_v1",
+        "intent_id": "old-intent",
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "result": "sent",
+        "button_before_click": "立即沟通",
+        "message_template_id": "boss-current-preset",
+        "message_status": "送达",
+        "real_name": "旧结果",
+        "communication_page_text": "旧沟通页",
+    })
+    intent = boss_app_sourcing.load_json(root / "state/current-contact-intent.json")
+    intent["schema"] = "bad_schema"
+    intent["approval_status"] = "pending"
+    boss_app_sourcing.write_json(root / "state/current-contact-intent.json", intent)
+
+    exit_code = boss_contact_executor.main([
+        "contact-current",
+        "--campaign-root",
+        str(root),
+        "--mock-ui-fixture",
+        str(ready_fixture(tmp_path)),
+        "--now",
+        "2026-06-02T10:05:00+08:00",
+    ])
+
+    assert exit_code == 2
+    output = json.loads(capsys.readouterr().out)
+    assert output["schema"] == "boss_executor_result_v1"
+    assert output["result"] == "stopped"
+    assert output["error_class"] == "ValueError"
+    assert "current_intent.schema" in output["stopped_reason"]
+    assert output["next_action_for_codex"] == "write_interruption_and_stop"

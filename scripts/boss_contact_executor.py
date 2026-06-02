@@ -751,6 +751,16 @@ def _exception_exit_code(exc: Exception) -> int:
     return 3
 
 
+def _exception_result(exc: Exception) -> dict[str, Any]:
+    return {
+        "schema": RESULT_SCHEMA,
+        "result": "stopped",
+        "stopped_reason": str(exc),
+        "error_class": type(exc).__name__,
+        "next_action_for_codex": "write_interruption_and_stop",
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -764,11 +774,7 @@ def main(argv: list[str] | None = None) -> int:
                 now_text=args.now,
             )
         except Exception as exc:
-            result = boss_app_sourcing.load_json(
-                _campaign_path(args.campaign_root, "state/executor-result.json"),
-                default={},
-            ) or {"result": "stopped", "stopped_reason": str(exc)}
-            _print_json(result)
+            _print_json(_exception_result(exc))
             return _exception_exit_code(exc)
         _print_json(result)
         return _contact_current_exit_code(result)
