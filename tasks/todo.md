@@ -4,6 +4,25 @@
 
 ## Active Task
 
+### BOSS 当前详情页触达执行器 MVP 实施计划（2026-06-02）
+
+计划：
+- [x] 使用 `superpowers:writing-plans`。
+- [x] 读取已通过审核的 spec：`docs/superpowers/specs/2026-06-02-boss-contact-executor-mvp-design.md`。
+- [x] 复核现有 `scripts/boss_app_sourcing.py`、`tests/test_boss_app_sourcing.py` 和 BOSS canonical workflow。
+- [x] 写入实施计划到 `docs/superpowers/plans/`。
+- [x] 自检计划覆盖 spec、无占位符、类型和函数名一致。
+- [x] 给出执行方式选项。
+
+边界：
+- 本轮只写 implementation plan，不写实现代码。
+- 后续实现必须按计划使用 subagent-driven 或 executing-plans，不直接跳过计划。
+
+Review：
+- 已写入实施计划：`docs/superpowers/plans/2026-06-02-boss-contact-executor-mvp.md`。
+- 计划拆为 6 个任务：sourcing 文件协议、执行器 validation core、fixture state machine、macOS Accessibility adapter、CLI 集成、canonical workflow/docs 与全量验证。
+- 自检：无 `TBD/TODO/待补充` 等占位符；`git diff --check` 通过。
+
 ### BOSS 当前详情页触达执行器 MVP 设计（2026-06-02）
 
 计划：
