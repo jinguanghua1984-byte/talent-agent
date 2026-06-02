@@ -64,6 +64,8 @@ description: BOSS App 推荐列表寻访 canonical workflow，约束合同、本
 
 当候选人已判定为 `contact`，且 BOSS 当前详情页按钮为 `立即沟通` 时，可写入外部执行器 handoff 产物：`structured/approved-contact-queue.jsonl` 和 `state/current-contact-intent.json`。这些文件只表达已审核触达意图；Codex 仍不点击 `立即沟通`。
 
+Codex 只能写 queue/intent、展示下面的命令，并等待用户在独立终端执行；不得自行通过 shell、Computer Use 或任何运行时启动带 `--execute` 的外部执行器。
+
 用户可在独立终端显式启动外部执行器：
 
 ```bash
@@ -72,7 +74,7 @@ description: BOSS App 推荐列表寻访 canonical workflow，约束合同、本
   --execute
 ```
 
-其中 `--execute` 代表用户对这一次外部执行器真实触达的显式启动。执行器使用 macOS Accessibility / 本机 UI 自动化校验当前详情页、按钮状态和 intent。执行器运行期间可维护 `state/executor.lock`、`state/stop-executor.flag`、`raw/executor-contact-attempts.jsonl`、`reports/executor-summary.md` 和 `reports/executor-summary.json`。
+其中 `--execute` 代表用户对这一次外部执行器真实触达的显式启动；Codex 不得代替用户运行该命令。执行器使用 macOS Accessibility / 本机 UI 自动化校验当前详情页、按钮状态和 intent。执行器运行期间可维护 `state/executor.lock`、`state/stop-executor.flag`、`raw/executor-contact-attempts.jsonl`、`reports/executor-summary.md` 和 `reports/executor-summary.json`。
 
 执行器返回后，Codex 读取 `state/executor-result.json`，通过 sourcing helper 回写 `structured/contact-decisions.jsonl`、`raw/communication-pages.jsonl`、`structured/candidates.jsonl`。
 

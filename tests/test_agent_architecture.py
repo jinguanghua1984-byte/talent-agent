@@ -178,6 +178,13 @@ def test_boss_app_sourcing_contracts_define_external_executor_handoff():
         / "boss-app-recommendation-sourcing"
         / "AGENT.md"
     ).read_text(encoding="utf-8")
+    s6 = workflow.index("### S6 沟通 dry-run")
+    s6a = workflow.index("### S6a 外部执行器 handoff")
+    s6b = workflow.index("### S6b live-test 真实沟通")
+    s6a_text = markdown_section(workflow, "S6a 外部执行器 handoff")
+    s6b_text = markdown_section(workflow, "S6b live-test 真实沟通")
+
+    assert s6 < s6a < s6b
 
     for text in (skill, workflow):
         assert "`structured/approved-contact-queue.jsonl`" in text
@@ -187,6 +194,28 @@ def test_boss_app_sourcing_contracts_define_external_executor_handoff():
         assert "Codex" in text
         assert "不点击" in text
 
-    assert "contact-current" in workflow
-    assert "`--execute`" in workflow
-    assert "macOS Accessibility" in workflow
+    for artifact in [
+        "`structured/approved-contact-queue.jsonl`",
+        "`state/current-contact-intent.json`",
+        "`state/executor-result.json`",
+        "`raw/executor-contact-attempts.jsonl`",
+        "`reports/executor-summary.md`",
+        "`reports/executor-summary.json`",
+    ]:
+        assert artifact in s6a_text
+
+    assert "contact-current" in s6a_text
+    assert "独立终端" in s6a_text
+    assert "用户" in s6a_text
+    assert "`--execute`" in s6a_text
+    assert "macOS Accessibility" in s6a_text
+    assert "Codex 只能写" in s6a_text
+    assert "不得" in s6a_text
+    assert "shell" in s6a_text
+    assert "Computer Use" in s6a_text
+    assert "任何运行时" in s6a_text
+    assert "启动带 `--execute`" in s6a_text
+
+    assert "`allow_live_contact_test=true`" in s6b_text
+    assert "`human.confirm`" in s6b_text
+    assert "动作级确认" in s6b_text
