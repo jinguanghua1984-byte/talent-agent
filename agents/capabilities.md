@@ -19,3 +19,4 @@
 2. 运行时私有工具名称只能出现在 `agents/adapters/*` 或对应运行时目录中。
 3. 可执行 Python 代码必须放在项目根目录 `scripts/` 包内，不能放在运行时私有目录中。
 4. 涉及第三方沟通、发送消息、上传文件、修改账号状态或其他外部副作用时，`computer.operate` 必须先经过 `human.confirm` 动作级确认。
+5. 窄例外：如果 canonical workflow 明确采用外部执行器，并且用户已给出 campaign/job 级真实执行授权，`shell.run` 可调用受 policy、intent、lock、stop 条件约束的执行器；此时不需要对每个对象再次 `human.confirm`。执行器必须只执行 workflow 指定的原子动作，不能替代 `computer.operate` 做浏览、筛选或上下文判断。

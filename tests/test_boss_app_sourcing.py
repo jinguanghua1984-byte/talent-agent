@@ -595,6 +595,33 @@ def _contact_candidate_for_executor(tmp_path: Path) -> tuple[Path, str]:
     return root, candidate["candidate_key"]
 
 
+def _add_contact_candidate_for_executor(root: Path, display_name: str, company: str) -> str:
+    candidate = boss_app_sourcing.record_list_card(root, {
+        "display_name": display_name,
+        "current_company": company,
+        "current_title": "AI Infra 工程师",
+        "age": "34岁",
+        "work_years": "6年",
+        "education": "硕士",
+        "expected_salary": "50-80K",
+        "screenshot_hash": boss_app_sourcing.screen_hash(display_name + company),
+    })
+    boss_app_sourcing.record_detail_update(
+        root,
+        candidate["candidate_key"],
+        {
+            "profile_header": f"{display_name}；{company} · AI Infra 工程师",
+            "contact_button_text": "立即沟通",
+        },
+        "contact",
+        88,
+        ["一线互联网大厂履历", "AI Infra 训练推理方向匹配"],
+        [],
+    )
+    boss_app_sourcing.record_contact_decision(root, candidate["candidate_key"], "dry_run", True, False)
+    return str(candidate["candidate_key"])
+
+
 def test_record_approved_contact_queue_item_and_current_intent(tmp_path: Path) -> None:
     root, candidate_key = _contact_candidate_for_executor(tmp_path)
 
@@ -769,6 +796,84 @@ def test_consume_executor_sent_result_updates_contact_and_real_name(tmp_path: Pa
     assert decisions[-1]["mode"] == "external_executor"
     assert decisions[-1]["message_status"] == "送达"
     assert decisions[-1]["preset_message_auto_sent"] is True
+
+
+def test_validate_executor_artifacts_accepts_batched_history_with_multiple_intents(tmp_path: Path) -> None:
+    root, first_key = _contact_candidate_for_executor(tmp_path)
+    second_key = _add_contact_candidate_for_executor(root, "秦先生", "腾讯科技")
+
+    for candidate_key, real_name, now_text in [
+        (first_key, "陶壮", "2026-06-02T10:00:00+08:00"),
+        (second_key, "秦明", "2026-06-02T10:05:00+08:00"),
+    ]:
+        boss_app_sourcing.record_approved_contact_queue_item(root, candidate_key)
+        intent = boss_app_sourcing.write_current_contact_intent(root, candidate_key, now_text=now_text)
+        boss_app_sourcing.append_jsonl(root / "raw/executor-contact-attempts.jsonl", {
+            "schema": "boss_contact_attempt_event_v1",
+            "event_type": "attempt_finished",
+            "intent_id": intent["intent_id"],
+            "campaign_id": root.name,
+            "candidate_key": candidate_key,
+            "result": "sent_unverified",
+            "button_before_click": "立即沟通",
+        })
+        boss_app_sourcing.write_json(root / "state/executor-result.json", {
+            "schema": "boss_executor_result_v1",
+            "intent_id": intent["intent_id"],
+            "campaign_id": root.name,
+            "candidate_key": candidate_key,
+            "result": "sent",
+            "button_before_click": "立即沟通",
+            "message_template_id": "boss-current-preset",
+            "message_status": "送达",
+            "real_name": real_name,
+            "communication_page_text": f"沟通页顶部：{real_name}；状态：送达",
+            "next_action_for_codex": "record_contact_return_to_list_and_continue",
+            "stopped_reason": None,
+        })
+        boss_app_sourcing.consume_executor_result(root)
+
+    validation = boss_app_sourcing.validate_executor_artifacts(root)
+    assert validation["status"] == "passed"
+    assert validation["issues"] == []
+
+    summary = boss_app_sourcing.summarize_executor_results(root)
+    assert summary["attempt_count"] == 2
+    assert summary["sent_count"] == 2
+    assert summary["stopped_count"] == 0
+    assert summary["result_distribution"] == {"sent": 2}
+
+
+def test_validate_campaign_allows_external_executor_contacts_without_live_test_policy(tmp_path: Path) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    boss_app_sourcing.record_approved_contact_queue_item(root, candidate_key)
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:00:00+08:00",
+    )
+    boss_app_sourcing.write_json(root / "state/executor-result.json", {
+        "schema": "boss_executor_result_v1",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "result": "sent",
+        "button_before_click": "立即沟通",
+        "message_template_id": "boss-current-preset",
+        "message_status": "送达",
+        "real_name": "陶壮",
+        "communication_page_text": "沟通页顶部：陶壮；状态：送达",
+        "next_action_for_codex": "record_contact_return_to_list_and_continue",
+        "stopped_reason": None,
+    })
+    boss_app_sourcing.consume_executor_result(root)
+
+    validation = boss_app_sourcing.validate_campaign(root)
+    assert validation["status"] == "passed"
+    assert validation["real_contact_count"] == 1
+    assert validation["external_executor_contact_count"] == 1
+    assert validation["live_contact_count"] == 0
+    assert validation["live_contact_policy_violation"] is False
 
 
 def test_consume_and_validate_sent_result_require_current_intent(tmp_path: Path) -> None:
@@ -1069,6 +1174,11 @@ def test_consume_executor_continue_chat_and_stopped_paths(tmp_path: Path) -> Non
     assert skipped_candidate["contact"]["already_contacted"] is True
     assert skipped_candidate["contact"]["contacted"] is False
 
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:01:00+08:00",
+    )
     boss_app_sourcing.write_json(root / "state/executor-result.json", {
         "schema": "boss_executor_result_v1",
         "intent_id": intent["intent_id"],
@@ -1086,6 +1196,11 @@ def test_consume_executor_continue_chat_and_stopped_paths(tmp_path: Path) -> Non
     assert unverified_plan["reason"] == "communication_result_missing"
     assert list((root / "reports").glob("interruption-executor-communication_result_missing-*.json"))
 
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:02:00+08:00",
+    )
     boss_app_sourcing.write_json(root / "state/executor-result.json", {
         "schema": "boss_executor_result_v1",
         "intent_id": intent["intent_id"],

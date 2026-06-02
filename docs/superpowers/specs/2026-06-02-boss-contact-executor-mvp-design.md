@@ -1,21 +1,21 @@
 # BOSS 当前详情页触达执行器 MVP 设计
 
 > 日期：2026-06-02
-> 状态：已完成设计，待用户复核
+> 状态：已完成设计；2026-06-02 已按 campaign 级授权执行器路径修订
 > 基于：`docs/design-discussions/2026-06-02-boss-unattended-contact-executor-discussion.md`
 
 ## 1. 背景
 
-现有 BOSS App 推荐列表寻访 workflow 已经能用 Computer Use 完成列表浏览、详情采集、筛选判定、dry-run 触达记录和真实姓名回采。真实无人值守的关键风险在 `立即沟通`：点击该按钮会向第三方候选人发送 BOSS 当前预设消息，Codex 不能把任务开始时的预授权当作每次真实发送动作的替代确认。
+现有 BOSS App 推荐列表寻访 workflow 已经能用 Computer Use 完成列表浏览、详情采集、筛选判定、dry-run 触达记录和真实姓名回采。真实无人值守的关键风险在 `立即沟通`：点击该按钮会向第三方候选人发送 BOSS 当前预设消息。因此真实点击必须走受 policy、intent、lock 和停止条件约束的外部执行器，而不是由 Computer Use 直接点击。
 
-本设计将真实触达动作移出 Codex Computer Use。Codex 只负责筛选和写入待触达 intent；一个由用户显式启动的独立本地 CLI 负责当前详情页的真实点击、沟通页回采和审计日志。
+本设计将真实触达动作移出 Codex Computer Use。Codex 负责筛选、写入待触达 intent，并在用户给出 campaign 级真实触达授权后通过 `shell.run` 调用执行器；执行器负责当前详情页的真实点击、沟通页回采和审计日志。不具备 campaign 级授权时，只能展示命令等待用户手动执行。
 
 ## 2. 已确认决策
 
 - MVP 范围采用“当前详情页触达执行器 + 文件握手”，不做完整队列消费器。
 - 执行器纳入本仓库实现，遵守 `AGENTS.md`：业务脚本放在 `scripts/`，不放运行时目录。
 - GUI 操作底座优先采用 macOS Accessibility / 本机 UI 自动化。
-- 真实执行需要每次 run 显式授权：`executor-policy.json` 中允许真实触达，并且 CLI 必须传入 `--execute`。
+- 真实执行需要 campaign 级授权：用户明确说明“合适立即沟通、不用二次确认、联系 N 人后结束”等范围后，`executor-policy.json` 允许真实触达，并且 CLI 必须传入 `--execute`。
 - 第一版生产入口是 `contact-current` 原子命令：只处理当前已打开详情页，不自己遍历列表、不自己判断谁合适。
 - 第一版保留 dry-run / mock UI 测试能力，用于验证文件协议、状态机和审计日志。
 
@@ -30,8 +30,8 @@
 
 ## 4. 非目标
 
-1. 不让 Codex 无人值守点击 `立即沟通`。
-2. 不把执行器设计成 Codex 临时调用的代点击工具；真实 `--execute` 应由用户或独立于 Codex 的本地进程启动。
+1. 不让 Codex Computer Use 无人值守点击 `立即沟通`。
+2. 不把执行器设计成通用代点击工具；它只能在 campaign 级授权、当前详情页 intent 和 policy 均通过时处理当前候选人。
 3. 不消费完整 `approved-contact-queue.jsonl` 并自动定位候选人。
 4. 不实现常驻 `watch-intent` daemon；该能力留到验证当前页触达闭环后再设计。
 5. 不绕过 BOSS 验证码、安全验证、登录、付费弹窗、搜索畅聊卡或平台日限额。
@@ -61,7 +61,7 @@ Codex + boss-app-recommendation-sourcing workflow
 
 | 层 | 职责 | 明确不做 |
 | --- | --- | --- |
-| Codex 筛选层 | 浏览列表、采集详情、判定 `contact/hold/skip`、写 approved queue 和 current intent | 不点击真实触达按钮 |
+| Codex 筛选层 | 浏览列表、采集详情、判定 `contact/hold/skip`、写 approved queue 和 current intent；在 campaign 级授权后调用执行器 | 不用 Computer Use 点击真实触达按钮 |
 | 执行器层 | 校验当前详情页、点击 `立即沟通`、回采实名和消息状态、写审计日志 | 不遍历列表、不判断候选人是否合适 |
 | 回写层 | 将执行器结果转成现有 `contact-decisions`、`communication-pages` 和 candidates 快照 | 不写主库、不修正筛选理由 |
 

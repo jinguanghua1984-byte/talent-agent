@@ -793,6 +793,31 @@ def _executor_identity_mismatch(artifact: dict[str, Any], current_intent: dict[s
     return any(artifact.get(field) != current_intent.get(field) for field in EXECUTOR_IDENTITY_FIELDS)
 
 
+def _executor_identity_key(artifact: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(artifact.get("intent_id") or ""),
+        str(artifact.get("campaign_id") or ""),
+        str(artifact.get("candidate_key") or ""),
+    )
+
+
+def _final_executor_attempts(attempts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for row in attempts:
+        if row.get("event_type") not in {"attempt_finished", "attempt_dry_run"}:
+            continue
+        grouped.setdefault(_executor_identity_key(row), []).append(row)
+
+    final_rows: list[dict[str, Any]] = []
+    for rows in grouped.values():
+        sent_rows = [row for row in rows if row.get("result") == "sent"]
+        if sent_rows:
+            final_rows.append(sent_rows[-1])
+        else:
+            final_rows.append(rows[-1])
+    return final_rows
+
+
 def _sent_result_protocol_issues(result: dict[str, Any], current_intent: dict[str, Any]) -> list[str]:
     issues: list[str] = []
     if not current_intent:
@@ -994,11 +1019,6 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
         if candidate_key and candidate_key not in candidates_by_key:
             dangling_attempt_candidate_keys.append(candidate_key)
             issues.append("executor_attempt.candidate_key")
-        if not current_intent:
-            issues.append("current_intent.missing")
-        elif _executor_identity_mismatch(row, current_intent):
-            issues.append("executor_attempt.intent_mismatch")
-
     invalid_current_intent = bool(current_intent) and (
         current_intent.get("schema") != CURRENT_CONTACT_INTENT_SCHEMA
         or current_intent.get("candidate_key") not in candidates_by_key
@@ -1060,16 +1080,21 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
                 if not has_sent_decision:
                     issues.append("executor_result.sent_missing_external_executor_decision")
 
+    sent_attempt_keys = {
+        _executor_identity_key(row)
+        for row in attempts
+        if row.get("event_type") in {"attempt_finished", "attempt_dry_run"}
+        and row.get("result") == "sent"
+    }
     for row in decisions:
         if row.get("mode") != "external_executor":
             continue
-        if not current_intent:
-            issues.append("current_intent.missing")
-        elif (
-            row.get("executor_intent_id") != current_intent.get("intent_id")
-            or row.get("campaign_id") != current_intent.get("campaign_id")
-            or row.get("candidate_key") != current_intent.get("candidate_key")
-        ):
+        decision_identity = (
+            str(row.get("executor_intent_id") or ""),
+            str(row.get("campaign_id") or ""),
+            str(row.get("candidate_key") or ""),
+        )
+        if decision_identity not in sent_attempt_keys:
             issues.append("contact_decision.intent_mismatch")
 
     if executor_lock:
@@ -1108,11 +1133,7 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
 
 def summarize_executor_results(campaign_root: str | Path) -> dict[str, Any]:
     root = Path(campaign_root)
-    attempts = [
-        row
-        for row in load_jsonl(root / "raw/executor-contact-attempts.jsonl")
-        if row.get("event_type") in {"attempt_finished", "attempt_dry_run"}
-    ]
+    attempts = _final_executor_attempts(load_jsonl(root / "raw/executor-contact-attempts.jsonl"))
     result_distribution = Counter(str(row.get("result") or "unknown") for row in attempts)
     summary = {
         "campaign_root": str(root),
@@ -1191,7 +1212,19 @@ def validate_campaign(campaign_root: str | Path) -> dict[str, Any]:
         for signature, keys in sorted(signatures.items())
         if len(set(keys)) > 1
     }
-    live_contact_count = sum(1 for item in candidates if (item.get("contact") or {}).get("contacted"))
+    real_contact_count = sum(1 for item in candidates if (item.get("contact") or {}).get("contacted"))
+    live_contact_count = sum(
+        1
+        for item in candidates
+        if (item.get("contact") or {}).get("contacted")
+        and (item.get("contact") or {}).get("live_contact_test")
+    )
+    external_executor_contact_count = sum(
+        1
+        for item in candidates
+        if (item.get("contact") or {}).get("contacted")
+        and (item.get("contact") or {}).get("contact_mode") == "external_executor"
+    )
     live_contact_policy_violation = (
         live_contact_count > 0
         and (not run_policy["allow_live_contact_test"] or live_contact_count > run_policy["live_contact_test_limit"])
@@ -1214,7 +1247,9 @@ def validate_campaign(campaign_root: str | Path) -> dict[str, Any]:
         "detail_count": sum(1 for item in candidates if (item.get("screening") or {}).get("detail_decision")),
         "contact_decision_count": len(decisions),
         "would_contact_count": sum(1 for item in candidates if (item.get("contact") or {}).get("would_contact")),
+        "real_contact_count": real_contact_count,
         "live_contact_count": live_contact_count,
+        "external_executor_contact_count": external_executor_contact_count,
         "missing_detail_candidate_keys": missing_detail,
         "missing_contact_candidate_keys": missing_contact,
         "duplicate_signature_count": len(duplicate_signatures),
@@ -1266,7 +1301,19 @@ def summarize_campaign(campaign_root: str | Path) -> dict[str, Any]:
         if (item.get("screening") or {}).get("detail_decision") in {"hold", "skip"}
         or not (item.get("screening") or {}).get("detail_decision")
     ]
-    live_contact_count = sum(1 for item in candidates if (item.get("contact") or {}).get("contacted"))
+    real_contact_count = sum(1 for item in candidates if (item.get("contact") or {}).get("contacted"))
+    live_contact_count = sum(
+        1
+        for item in candidates
+        if (item.get("contact") or {}).get("contacted")
+        and (item.get("contact") or {}).get("live_contact_test")
+    )
+    external_executor_contact_count = sum(
+        1
+        for item in candidates
+        if (item.get("contact") or {}).get("contacted")
+        and (item.get("contact") or {}).get("contact_mode") == "external_executor"
+    )
     detail_count = sum(1 for item in candidates if (item.get("screening") or {}).get("detail_decision"))
     summary = {
         "campaign_root": str(root),
@@ -1274,7 +1321,9 @@ def summarize_campaign(campaign_root: str | Path) -> dict[str, Any]:
         "list_card_count": len(load_jsonl(root / "raw/list-cards.jsonl")),
         "detail_count": detail_count,
         "would_contact_count": sum(1 for item in candidates if (item.get("contact") or {}).get("would_contact")),
+        "real_contact_count": real_contact_count,
         "live_contact_count": live_contact_count,
+        "external_executor_contact_count": external_executor_contact_count,
         "live_contact_limit": run_policy["live_contact_test_limit"],
         "live_contact_remaining": max(0, run_policy["live_contact_test_limit"] - live_contact_count),
         "real_name_captured_count": sum(1 for item in candidates if item.get("real_name_status") == "captured"),
@@ -1304,6 +1353,8 @@ def summarize_campaign(campaign_root: str | Path) -> dict[str, Any]:
         f"- 列表卡片采集：{summary['list_card_count']}",
         f"- 详情采集：{summary['detail_count']}",
         f"- Would contact：{summary['would_contact_count']}",
+        f"- 真实沟通总数：{summary['real_contact_count']}",
+        f"- 外部执行器真实沟通：{summary['external_executor_contact_count']}",
         f"- Live-test 真实沟通：{summary['live_contact_count']}",
         f"- Live-test 剩余额度：{summary['live_contact_remaining']}",
         f"- 真实姓名补全：{summary['real_name_captured_count']}",

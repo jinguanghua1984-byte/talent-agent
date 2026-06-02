@@ -48,12 +48,12 @@ COMMUNICATION_PAGE_MARKERS = ["沟通的职位", "求简历", "换电话"]
 JXA_READ_UI = r"""
 function run() {
   const systemEvents = Application("System Events");
-  const frontProcesses = systemEvents.processes.whose({frontmost: true})();
-  if (frontProcesses.length === 0) {
+  const processes = systemEvents.processes.whose({name: "BossZP"})();
+  if (processes.length === 0) {
     return JSON.stringify({front_app: "", window_title: "", texts: [], buttons: []});
   }
 
-  const process = frontProcesses[0];
+  const process = processes[0];
   const windows = process.windows();
   const window = windows.length > 0 ? windows[0] : null;
   const texts = [];
@@ -72,7 +72,88 @@ function run() {
     return "";
   }
 
-  function collect(element) {
+  if (window) {
+    let contents = [];
+    try {
+      contents = window.entireContents();
+    } catch (error) {}
+    for (const element of contents) {
+      let role = "";
+      try {
+        role = String(element.role());
+      } catch (error) {}
+      const value = valueOf(element);
+      if (value) {
+        if (role === "AXButton") {
+          buttons.push(value);
+        } else {
+          texts.push(value);
+        }
+      }
+    }
+  }
+
+  let windowTitle = "";
+  try {
+    windowTitle = window ? String(window.name()) : "";
+  } catch (error) {}
+
+  return JSON.stringify({
+    front_app: "BOSS直聘",
+    process_name: String(process.name()),
+    window_title: windowTitle,
+    texts: texts,
+    buttons: buttons,
+  });
+}
+"""
+JXA_READ_UI_BOUNDED = r"""
+function run() {
+  const systemEvents = Application("System Events");
+  const processes = systemEvents.processes.whose({name: "BossZP"})();
+  if (processes.length === 0) {
+    return JSON.stringify({front_app: "", window_title: "", texts: [], buttons: []});
+  }
+
+  const process = processes[0];
+  const windows = process.windows();
+  const window = windows.length > 0 ? windows[0] : null;
+  const texts = [];
+  const buttons = [];
+  const seen = new Set();
+  const startedAt = Date.now();
+  const maxMillis = 2500;
+  const maxItems = 220;
+  const maxDepth = 7;
+
+  function valueOf(element) {
+    const candidates = ["value", "description", "title", "name"];
+    for (const key of candidates) {
+      try {
+        const value = element[key]();
+        if (value !== null && value !== undefined && String(value).trim() !== "") {
+          return String(value).trim();
+        }
+      } catch (error) {}
+    }
+    return "";
+  }
+
+  function walk(element, depth) {
+    if (!element || depth > maxDepth || seen.size >= maxItems || Date.now() - startedAt > maxMillis) {
+      return;
+    }
+    let key = "";
+    try {
+      key = String(element.role()) + ":" + String(element.position());
+    } catch (error) {
+      key = String(seen.size);
+    }
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+
     let role = "";
     try {
       role = String(element.role());
@@ -85,16 +166,18 @@ function run() {
         texts.push(value);
       }
     }
+
+    let children = [];
     try {
-      const children = element.entireContents();
-      for (const child of children) {
-        collect(child);
-      }
+      children = element.uiElements();
     } catch (error) {}
+    for (const child of children) {
+      walk(child, depth + 1);
+    }
   }
 
   if (window) {
-    collect(window);
+    walk(window, 0);
   }
 
   let windowTitle = "";
@@ -103,7 +186,8 @@ function run() {
   } catch (error) {}
 
   return JSON.stringify({
-    front_app: String(process.name()),
+    front_app: "BOSS直聘",
+    process_name: String(process.name()),
     window_title: windowTitle,
     texts: texts,
     buttons: buttons,
@@ -114,20 +198,12 @@ JXA_CLICK_EXACT_BUTTON = r"""
 function run() {
   const targetLabel = __BUTTON_LABEL__;
   const systemEvents = Application("System Events");
-  const frontProcesses = systemEvents.processes.whose({frontmost: true})();
-  if (frontProcesses.length === 0) {
-    return JSON.stringify({clicked: false, reason: "no_front_app"});
+  const processes = systemEvents.processes.whose({name: "BossZP"})();
+  if (processes.length === 0) {
+    return JSON.stringify({clicked: false, reason: "boss_app_not_found"});
   }
 
-  const process = frontProcesses[0];
-  if (String(process.name()) !== "BOSS直聘") {
-    return JSON.stringify({
-      clicked: false,
-      reason: "front_app_not_boss",
-      front_app: String(process.name()),
-      match_count: 0,
-    });
-  }
+  const process = processes[0];
 
   const windows = process.windows();
   if (windows.length === 0) {
@@ -148,7 +224,11 @@ function run() {
     return "";
   }
 
-  function collectExact(element) {
+  let contents = [];
+  try {
+    contents = windows[0].entireContents();
+  } catch (error) {}
+  for (const element of contents) {
     let role = "";
     try {
       role = String(element.role());
@@ -156,15 +236,8 @@ function run() {
     if (role === "AXButton" && labelOf(element) === targetLabel) {
       matches.push(element);
     }
-    try {
-      const children = element.entireContents();
-      for (const child of children) {
-        collectExact(child);
-      }
-    } catch (error) {}
   }
 
-  collectExact(windows[0]);
   if (matches.length !== 1) {
     return JSON.stringify({
       clicked: false,
@@ -413,26 +486,25 @@ class FixtureBossUI:
 
 
 class MacAccessibilityBossUI:
-    def __init__(self, timeout_seconds: int = 10, poll_seconds: float = 0.5, max_wait_seconds: int = 8):
+    def __init__(self, timeout_seconds: int = 15, poll_seconds: float = 0.5, max_wait_seconds: int = 15):
         self.timeout_seconds = timeout_seconds
         self.poll_seconds = poll_seconds
         self.max_wait_seconds = max_wait_seconds
 
-    def _run_jxa(self, script: str) -> dict[str, Any]:
+    def _run_jxa(self, script: str, timeout_seconds: int | None = None) -> dict[str, Any]:
         result = subprocess.run(
             ["osascript", "-l", "JavaScript", "-e", script],
             capture_output=True,
             text=True,
             check=True,
-            timeout=self.timeout_seconds,
+            timeout=timeout_seconds or self.timeout_seconds,
         )
         payload = json.loads(result.stdout or "{}")
         if not isinstance(payload, dict):
             raise ValueError("JXA result must be a JSON object")
         return payload
 
-    def read_current_page(self) -> BossPageSnapshot:
-        payload = self._run_jxa(JXA_READ_UI)
+    def _snapshot_from_jxa_payload(self, payload: dict[str, Any]) -> BossPageSnapshot:
         texts = self._clean_list(payload.get("texts"))
         buttons = self._clean_list(payload.get("buttons"))
         page_text = " ".join(dict.fromkeys([*texts, *buttons]))
@@ -443,6 +515,29 @@ class MacAccessibilityBossUI:
             buttons=buttons,
             screenshot_hash=boss_app_sourcing.screen_hash(page_text),
         )
+
+    def read_current_page(self) -> BossPageSnapshot:
+        try:
+            payload = self._run_jxa(JXA_READ_UI)
+        except subprocess.TimeoutExpired:
+            payload = self._run_jxa(
+                JXA_READ_UI_BOUNDED,
+                timeout_seconds=min(self.timeout_seconds, 5),
+            )
+        return self._snapshot_from_jxa_payload(payload)
+
+    def read_communication_page_probe(self) -> BossPageSnapshot:
+        try:
+            payload = self._run_jxa(
+                JXA_READ_UI,
+                timeout_seconds=min(self.timeout_seconds, 10),
+            )
+        except subprocess.TimeoutExpired:
+            payload = self._run_jxa(
+                JXA_READ_UI_BOUNDED,
+                timeout_seconds=min(self.timeout_seconds, 5),
+            )
+        return self._snapshot_from_jxa_payload(payload)
 
     def find_contact_button(self, page: BossPageSnapshot) -> ContactButtonState:
         matches = [button for button in page.buttons if button in CONTACT_BUTTON_LABELS]
@@ -462,14 +557,20 @@ class MacAccessibilityBossUI:
 
     def wait_for_communication_page(self) -> BossPageSnapshot:
         deadline = time.monotonic() + self.max_wait_seconds
-        last_snapshot = self.read_current_page()
+        last_error: Exception | None = None
         while True:
-            if _contains_any(last_snapshot.page_text, COMMUNICATION_PAGE_MARKERS):
-                return last_snapshot
+            try:
+                last_snapshot = self.read_communication_page_probe()
+            except Exception as exc:
+                last_error = exc
+            else:
+                if _contains_any(last_snapshot.page_text, COMMUNICATION_PAGE_MARKERS):
+                    return last_snapshot
             if time.monotonic() >= deadline:
+                if last_error is not None:
+                    raise ValueError(f"communication page not confirmed: {last_error}") from last_error
                 raise ValueError("communication page not confirmed")
             time.sleep(self.poll_seconds)
-            last_snapshot = self.read_current_page()
 
     def extract_communication_result(self, page: BossPageSnapshot) -> CommunicationResult:
         if not _contains_any(page.page_text, COMMUNICATION_PAGE_MARKERS):

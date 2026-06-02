@@ -139,7 +139,8 @@ def test_boss_app_sourcing_contracts_define_contact_audit_gates():
     for text in (skill, workflow):
         assert "`allow_real_contact=true`" in text
         assert "`allow_live_contact_test=true`" in text
-        assert "默认绝不点击" in text
+        assert "默认" in text
+        assert "不点击" in text
 
     assert "`allow_real_contact=true`" in s6b
     assert "`allow_live_contact_test=true`" in s6b
@@ -190,9 +191,11 @@ def test_boss_app_sourcing_contracts_define_external_executor_handoff():
         assert "`structured/approved-contact-queue.jsonl`" in text
         assert "`state/current-contact-intent.json`" in text
         assert "`state/executor-result.json`" in text
+        assert "`executor-policy.json`" in text
         assert "外部执行器" in text
         assert "Codex" in text
-        assert "不点击" in text
+        assert "campaign 级" in text
+        assert "不再逐人" in text
 
     for artifact in [
         "`structured/approved-contact-queue.jsonl`",
@@ -205,17 +208,34 @@ def test_boss_app_sourcing_contracts_define_external_executor_handoff():
         assert artifact in s6a_text
 
     assert "contact-current" in s6a_text
-    assert "独立终端" in s6a_text
     assert "用户" in s6a_text
     assert "`--execute`" in s6a_text
     assert "macOS Accessibility" in s6a_text
-    assert "Codex 只能写" in s6a_text
-    assert "不得" in s6a_text
-    assert "shell" in s6a_text
-    assert "Computer Use" in s6a_text
-    assert "任何运行时" in s6a_text
-    assert "启动带 `--execute`" in s6a_text
+    assert "`shell.run`" in s6a_text
+    assert "不再逐人二次确认" in s6a_text
+    assert "`executor-policy.json`" in s6a_text
+    assert "`max_contacts_per_run=1`" in s6a_text
+    assert "Computer Use 定位" in s6a_text
+    assert "不交给执行器翻列表或找人" in s6a_text
+    assert "不能由 `computer.operate` 直接点击" in s6a_text
+    assert "列表遍历、详情采集、候选筛选或翻页" in workflow
 
     assert "`allow_live_contact_test=true`" in s6b_text
     assert "`human.confirm`" in s6b_text
     assert "动作级确认" in s6b_text
+
+
+def test_boss_app_sourcing_capability_exception_keeps_executor_narrow():
+    capabilities = (ROOT / "agents" / "capabilities.md").read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-app-recommendation-sourcing"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    assert "窄例外" in capabilities
+    assert "`shell.run` 可调用受 policy、intent、lock、stop 条件约束的执行器" in capabilities
+    assert "不能替代 `computer.operate` 做浏览、筛选或上下文判断" in capabilities
+    assert "执行器只处理当前详情页的一次 `立即沟通` 点击" in workflow

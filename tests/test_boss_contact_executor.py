@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -378,9 +379,11 @@ def test_contact_current_sent_unverified_when_communication_result_missing(tmp_p
 
 def test_mac_accessibility_ui_reads_snapshot_from_osascript(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
+    timeouts: list[int] = []
 
     def fake_run(cmd: list[str], capture_output: bool, text: bool, check: bool, timeout: int):
         calls.append(cmd)
+        timeouts.append(timeout)
 
         class Result:
             stdout = json.dumps({
@@ -400,6 +403,77 @@ def test_mac_accessibility_ui_reads_snapshot_from_osascript(monkeypatch: pytest.
     assert "上海华为技术有限公司" in snapshot.page_text
     assert snapshot.buttons == ["立即沟通"]
     assert calls[0][0] == "osascript"
+    assert timeouts == [15]
+
+
+def test_mac_accessibility_ui_targets_bossz_process_without_recursive_frontmost_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scripts: list[str] = []
+
+    def fake_run(cmd: list[str], capture_output: bool, text: bool, check: bool, timeout: int):
+        script = cmd[-1]
+        scripts.append(script)
+
+        class Result:
+            stdout = (
+                '{"clicked": true, "match_count": 1}'
+                if "clicked" in script
+                else json.dumps({
+                    "front_app": "BOSS直聘",
+                    "window_title": "陶先生",
+                    "texts": ["陶先生", "上海华为技术有限公司", "博士后研究员-大模型方向"],
+                    "buttons": ["立即沟通"],
+                }, ensure_ascii=False)
+            )
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(boss_contact_executor.subprocess, "run", fake_run)
+    boss_contact_executor.MacAccessibilityBossUI().read_current_page()
+    boss_contact_executor.MacAccessibilityBossUI().click_contact(
+        boss_contact_executor.ContactButtonState("立即沟通", 1),
+    )
+
+    assert all("BossZP" in script for script in scripts)
+    assert all("whose({frontmost" not in script for script in scripts)
+    assert "collect(child)" not in scripts[0]
+
+
+def test_mac_accessibility_ui_falls_back_to_bounded_read_on_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scripts: list[str] = []
+    timeouts: list[int] = []
+
+    def fake_run(cmd: list[str], capture_output: bool, text: bool, check: bool, timeout: int):
+        script = cmd[-1]
+        scripts.append(script)
+        timeouts.append(timeout)
+        if len(scripts) == 1:
+            raise subprocess.TimeoutExpired(cmd, timeout=timeout)
+
+        class Result:
+            stdout = json.dumps({
+                "front_app": "BOSS直聘",
+                "window_title": "陶先生",
+                "texts": ["陶先生", "上海华为技术有限公司", "博士后研究员-大模型方向"],
+                "buttons": ["立即沟通"],
+            }, ensure_ascii=False)
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(boss_contact_executor.subprocess, "run", fake_run)
+
+    snapshot = boss_contact_executor.MacAccessibilityBossUI().read_current_page()
+
+    assert snapshot.window_title == "陶先生"
+    assert timeouts == [15, 5]
+    assert "entireContents" in scripts[0]
+    assert "entireContents" not in scripts[1]
+    assert "uiElements()" in scripts[1]
 
 
 def test_mac_accessibility_ui_clicks_exact_contact_button(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -439,7 +513,7 @@ def test_mac_accessibility_ui_click_script_requires_boss_app_and_single_match(
     ui = boss_contact_executor.MacAccessibilityBossUI()
     ui.click_contact(boss_contact_executor.ContactButtonState("立即沟通", 1))
 
-    assert "BOSS直聘" in scripts[0]
+    assert "BossZP" in scripts[0]
     assert "match_count" in scripts[0]
     assert "ambiguous_button_count" in scripts[0]
 
@@ -467,10 +541,101 @@ def test_mac_accessibility_ui_wait_for_communication_page_raises_on_timeout(
             buttons=[],
         )
 
-    monkeypatch.setattr(boss_contact_executor.MacAccessibilityBossUI, "read_current_page", fake_read)
+    monkeypatch.setattr(boss_contact_executor.MacAccessibilityBossUI, "read_communication_page_probe", fake_read)
     ui = boss_contact_executor.MacAccessibilityBossUI(poll_seconds=0, max_wait_seconds=0)
     with pytest.raises(ValueError, match="communication page not confirmed"):
         ui.wait_for_communication_page()
+
+
+def test_mac_accessibility_ui_wait_for_communication_page_retries_transient_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fake_read(self: boss_contact_executor.MacAccessibilityBossUI) -> boss_contact_executor.BossPageSnapshot:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise subprocess.TimeoutExpired(["osascript"], timeout=15)
+        return boss_contact_executor.BossPageSnapshot(
+            front_app="BOSS直聘",
+            window_title="郭杰",
+            page_text="沟通的职位 AI Infra训练与推理研发 求简历 消息状态：送达",
+            buttons=["求简历", "换电话/微信"],
+        )
+
+    monkeypatch.setattr(boss_contact_executor.MacAccessibilityBossUI, "read_communication_page_probe", fake_read)
+    ui = boss_contact_executor.MacAccessibilityBossUI(poll_seconds=0, max_wait_seconds=1)
+
+    page = ui.wait_for_communication_page()
+
+    assert calls == 2
+    assert page.window_title == "郭杰"
+
+
+def test_mac_accessibility_ui_communication_probe_uses_full_read_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scripts: list[str] = []
+    timeouts: list[int] = []
+
+    def fake_run(cmd: list[str], capture_output: bool, text: bool, check: bool, timeout: int):
+        scripts.append(cmd[-1])
+        timeouts.append(timeout)
+
+        class Result:
+            stdout = json.dumps({
+                "front_app": "BOSS直聘",
+                "window_title": "张女士",
+                "texts": ["沟通的职位-AI Infra训练与推理研发", "送达"],
+                "buttons": ["求简历", "换电话/微信"],
+            }, ensure_ascii=False)
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(boss_contact_executor.subprocess, "run", fake_run)
+
+    page = boss_contact_executor.MacAccessibilityBossUI().read_communication_page_probe()
+
+    assert "沟通的职位" in page.page_text
+    assert timeouts == [10]
+    assert "entireContents" in scripts[0]
+
+
+def test_mac_accessibility_ui_communication_probe_falls_back_to_bounded_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scripts: list[str] = []
+    timeouts: list[int] = []
+
+    def fake_run(cmd: list[str], capture_output: bool, text: bool, check: bool, timeout: int):
+        script = cmd[-1]
+        scripts.append(script)
+        timeouts.append(timeout)
+        if len(scripts) == 1:
+            raise subprocess.TimeoutExpired(cmd, timeout=timeout)
+
+        class Result:
+            stdout = json.dumps({
+                "front_app": "BOSS直聘",
+                "window_title": "张女士",
+                "texts": ["沟通的职位-AI Infra训练与推理研发", "送达"],
+                "buttons": ["求简历", "换电话/微信"],
+            }, ensure_ascii=False)
+            stderr = ""
+
+        return Result()
+
+    monkeypatch.setattr(boss_contact_executor.subprocess, "run", fake_run)
+
+    page = boss_contact_executor.MacAccessibilityBossUI().read_communication_page_probe()
+
+    assert "沟通的职位" in page.page_text
+    assert timeouts == [10, 5]
+    assert "entireContents" in scripts[0]
+    assert "entireContents" not in scripts[1]
+    assert "uiElements()" in scripts[1]
 
 
 def test_mac_accessibility_ui_extract_requires_confirmed_communication_page() -> None:
