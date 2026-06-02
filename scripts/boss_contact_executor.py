@@ -654,6 +654,7 @@ def contact_current(
         elif not execute:
             result.update({"result": "dry_run_ready", "would_click": True})
         else:
+            _check_kill_switch(policy)
             ui.click_contact(button)
             clicked_contact = True
             result["action"] = "click_contact"

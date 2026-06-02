@@ -19,7 +19,7 @@ APPROVED_CONTACT_QUEUE_SCHEMA = "boss_approved_contact_queue_v1"
 EXECUTOR_ATTEMPT_SCHEMA = "boss_contact_attempt_event_v1"
 EXECUTOR_LOCK_SCHEMA = "boss_executor_lock_v1"
 VALID_SENT_MESSAGE_STATUSES = {"送达", "已读", "已触达"}
-SUPPORTED_EXECUTOR_RESULTS = {"sent", "skipped_continue_chat", "sent_unverified", "stopped"}
+SUPPORTED_EXECUTOR_RESULTS = {"dry_run_ready", "sent", "skipped_continue_chat", "sent_unverified", "stopped"}
 EXECUTOR_IDENTITY_FIELDS = ["intent_id", "campaign_id", "candidate_key"]
 VALID_REAL_NAME_SOURCES = {
     "communication_page_after_live_contact_test",

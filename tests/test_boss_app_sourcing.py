@@ -1159,6 +1159,50 @@ def test_validate_and_summarize_executor_artifacts(tmp_path: Path) -> None:
     assert "- sent: 1" in summary_text
 
 
+def test_validate_executor_artifacts_accepts_dry_run_ready_result(tmp_path: Path) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    boss_app_sourcing.record_approved_contact_queue_item(root, candidate_key)
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:00:00+08:00",
+    )
+    result = {
+        "schema": "boss_executor_result_v1",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "result": "dry_run_ready",
+        "button_before_click": "立即沟通",
+        "would_click": True,
+        "next_action_for_codex": "external_executor_execute_required",
+    }
+    boss_app_sourcing.write_json(root / "state/executor-result.json", result)
+    boss_app_sourcing.append_jsonl(root / "raw/executor-contact-attempts.jsonl", {
+        "schema": "boss_contact_attempt_event_v1",
+        "event_type": "attempt_started",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+    })
+    boss_app_sourcing.append_jsonl(root / "raw/executor-contact-attempts.jsonl", {
+        "schema": "boss_contact_attempt_event_v1",
+        "event_type": "attempt_finished",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "result": "dry_run_ready",
+    })
+
+    validation = boss_app_sourcing.validate_executor_artifacts(root)
+    assert validation["status"] == "passed"
+    assert validation["issues"] == []
+
+    summary = boss_app_sourcing.summarize_executor_results(root)
+    assert summary["sent_count"] == 0
+    assert summary["result_distribution"] == {"dry_run_ready": 1}
+
+
 def test_validate_executor_artifacts_reports_intent_result_and_lock_issues(tmp_path: Path) -> None:
     root, candidate_key = _contact_candidate_for_executor(tmp_path)
     boss_app_sourcing.record_approved_contact_queue_item(root, candidate_key)

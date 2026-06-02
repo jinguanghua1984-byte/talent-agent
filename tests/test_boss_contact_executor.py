@@ -181,6 +181,35 @@ def test_contact_current_fixture_execute_sends_and_writes_audit(tmp_path: Path) 
     assert [row["event_type"] for row in attempts] == ["attempt_started", "attempt_finished"]
 
 
+class KillSwitchBeforeClickBossUI(boss_contact_executor.FixtureBossUI):
+    def __init__(self, fixture_path: Path, kill_switch_path: Path):
+        super().__init__(fixture_path)
+        self.kill_switch_path = kill_switch_path
+
+    def find_contact_button(self, snapshot: boss_contact_executor.BossPageSnapshot) -> boss_contact_executor.ContactButtonState:
+        button = super().find_contact_button(snapshot)
+        self.kill_switch_path.write_text("stop\n", encoding="utf-8")
+        return button
+
+
+def test_contact_current_checks_kill_switch_immediately_before_click(tmp_path: Path) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    ui = KillSwitchBeforeClickBossUI(ready_fixture(tmp_path), root / "state/stop-executor.flag")
+
+    with pytest.raises(RuntimeError, match="executor_kill_switch_enabled"):
+        boss_contact_executor.contact_current(
+            root,
+            execute=True,
+            ui=ui,
+            now_text="2026-06-02T10:05:00+08:00",
+        )
+
+    assert ui.clicked is False
+    result = boss_app_sourcing.load_json(root / "state/executor-result.json")
+    assert result["result"] == "stopped"
+    assert result["stopped_reason"] == "executor_kill_switch_enabled"
+
+
 def test_contact_current_finishes_lock_with_result(tmp_path: Path) -> None:
     root, _ = make_executor_campaign(tmp_path)
     result = boss_contact_executor.contact_current(
