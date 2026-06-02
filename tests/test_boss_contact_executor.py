@@ -181,6 +181,45 @@ def test_contact_current_fixture_execute_sends_and_writes_audit(tmp_path: Path) 
     assert [row["event_type"] for row in attempts] == ["attempt_started", "attempt_finished"]
 
 
+def test_contact_current_finishes_lock_with_result(tmp_path: Path) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    result = boss_contact_executor.contact_current(
+        root,
+        execute=True,
+        ui=boss_contact_executor.FixtureBossUI(ready_fixture(tmp_path)),
+        now_text="2026-06-02T10:05:00+08:00",
+    )
+    executor_result = boss_app_sourcing.load_json(root / "state/executor-result.json")
+    lock = boss_app_sourcing.load_json(root / "state/executor.lock")
+
+    assert lock["status"] == "finished"
+    assert lock["finished_at"] == "2026-06-02T10:05:00+08:00"
+    assert lock["result"] == result["result"] == executor_result["result"]
+
+
+def test_contact_current_rejects_running_lock_without_click(tmp_path: Path) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    boss_app_sourcing.write_json(root / "state/executor.lock", {
+        "schema": "boss_executor_lock_v1",
+        "status": "running",
+        "created_at": "2026-06-02T10:04:00+08:00",
+    })
+    ui = boss_contact_executor.FixtureBossUI(ready_fixture(tmp_path))
+
+    with pytest.raises(RuntimeError, match="stale_lock_requires_review"):
+        boss_contact_executor.contact_current(
+            root,
+            execute=True,
+            ui=ui,
+            now_text="2026-06-02T10:05:00+08:00",
+        )
+
+    assert ui.clicked is False
+    result = boss_app_sourcing.load_json(root / "state/executor-result.json")
+    assert result["result"] == "stopped"
+    assert result["stopped_reason"] == "stale_lock_requires_review"
+
+
 def test_contact_current_skips_continue_chat_without_click(tmp_path: Path) -> None:
     root, _ = make_executor_campaign(tmp_path)
     fixture = write_fixture(tmp_path / "continue-chat.json", {

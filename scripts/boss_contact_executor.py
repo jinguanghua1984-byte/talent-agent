@@ -304,7 +304,9 @@ def classify_button(page: BossPageSnapshot, button: ContactButtonState) -> dict[
 def acquire_lock(campaign_root: str | Path, now_text: str | None = None) -> dict[str, Any]:
     lock_path = _campaign_path(campaign_root, "state/executor.lock")
     if lock_path.exists():
-        raise RuntimeError("stale_lock_requires_review")
+        existing = boss_app_sourcing.load_json(lock_path)
+        if isinstance(existing, dict) and existing.get("status") == "running":
+            raise RuntimeError("stale_lock_requires_review")
     payload = {
         "schema": LOCK_SCHEMA,
         "status": "running",
@@ -314,10 +316,20 @@ def acquire_lock(campaign_root: str | Path, now_text: str | None = None) -> dict
     return payload
 
 
-def finish_lock(campaign_root: str | Path) -> None:
+def finish_lock(campaign_root: str | Path, result: dict[str, Any]) -> dict[str, Any]:
     lock_path = _campaign_path(campaign_root, "state/executor.lock")
-    if lock_path.exists():
-        lock_path.unlink()
+    lock = boss_app_sourcing.load_json(lock_path, default={}) or {}
+    if not isinstance(lock, dict):
+        lock = {}
+    payload = {
+        **lock,
+        "schema": LOCK_SCHEMA,
+        "status": "finished",
+        "finished_at": result.get("created_at") or datetime.now().astimezone().isoformat(timespec="seconds"),
+        "result": result.get("result"),
+    }
+    boss_app_sourcing.write_json(lock_path, payload)
+    return payload
 
 
 def _base_result(intent: dict[str, Any], now_text: str | None = None) -> dict[str, Any]:
@@ -427,4 +439,4 @@ def contact_current(
         raise
     finally:
         if locked:
-            finish_lock(campaign_root)
+            finish_lock(campaign_root, result)
