@@ -195,6 +195,10 @@ def test_contact_current_finishes_lock_with_result(tmp_path: Path) -> None:
     assert lock["status"] == "finished"
     assert lock["finished_at"] == "2026-06-02T10:05:00+08:00"
     assert lock["result"] == result["result"] == executor_result["result"]
+    assert lock["lock_id"]
+    assert lock["intent_id"] == result["intent_id"]
+    assert lock["candidate_key"] == result["candidate_key"]
+    assert isinstance(lock["pid"], int)
 
 
 def test_contact_current_rejects_running_lock_without_click(tmp_path: Path) -> None:
@@ -215,9 +219,64 @@ def test_contact_current_rejects_running_lock_without_click(tmp_path: Path) -> N
         )
 
     assert ui.clicked is False
+    attempts = boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl")
+    assert attempts == []
     result = boss_app_sourcing.load_json(root / "state/executor-result.json")
     assert result["result"] == "stopped"
     assert result["stopped_reason"] == "stale_lock_requires_review"
+
+
+class FailingAfterClickBossUI:
+    def __init__(self, fixture_path: Path):
+        self.delegate = boss_contact_executor.FixtureBossUI(fixture_path)
+        self.clicked = False
+
+    def read_current_page(self) -> boss_contact_executor.BossPageSnapshot:
+        return self.delegate.read_current_page()
+
+    def find_contact_button(
+        self,
+        page: boss_contact_executor.BossPageSnapshot,
+    ) -> boss_contact_executor.ContactButtonState:
+        return self.delegate.find_contact_button(page)
+
+    def click_contact(self, button: boss_contact_executor.ContactButtonState) -> None:
+        self.delegate.click_contact(button)
+        self.clicked = True
+
+    def wait_for_communication_page(self) -> boss_contact_executor.BossPageSnapshot:
+        raise RuntimeError("communication_page_timeout")
+
+    def extract_communication_result(
+        self,
+        page: boss_contact_executor.BossPageSnapshot,
+    ) -> boss_contact_executor.CommunicationResult:
+        raise AssertionError("extract should not be called")
+
+
+def test_contact_current_click_recovery_failure_is_sent_unverified(tmp_path: Path) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    ui = FailingAfterClickBossUI(ready_fixture(tmp_path))
+
+    result = boss_contact_executor.contact_current(
+        root,
+        execute=True,
+        ui=ui,
+        now_text="2026-06-02T10:05:00+08:00",
+    )
+
+    assert ui.clicked is True
+    assert result["result"] == "sent_unverified"
+    assert result["stopped_reason"] == "communication_page_timeout"
+    executor_result = boss_app_sourcing.load_json(root / "state/executor-result.json")
+    assert executor_result["result"] == "sent_unverified"
+    lock = boss_app_sourcing.load_json(root / "state/executor.lock")
+    assert lock["status"] == "finished"
+    assert lock["result"] == "sent_unverified"
+    attempts = boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl")
+    assert [row["event_type"] for row in attempts] == ["attempt_started", "attempt_finished"]
+    assert attempts[-1]["action"] == "click_contact"
+    assert attempts[-1]["result"] == "sent_unverified"
 
 
 def test_contact_current_skips_continue_chat_without_click(tmp_path: Path) -> None:

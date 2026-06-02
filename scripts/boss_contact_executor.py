@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -301,18 +302,35 @@ def classify_button(page: BossPageSnapshot, button: ContactButtonState) -> dict[
     return {"classification": "stopped", "stopped_reason": "unknown_contact_button"}
 
 
-def acquire_lock(campaign_root: str | Path, now_text: str | None = None) -> dict[str, Any]:
+def acquire_lock(
+    campaign_root: str | Path,
+    intent: dict[str, Any],
+    now_text: str | None = None,
+) -> dict[str, Any]:
     lock_path = _campaign_path(campaign_root, "state/executor.lock")
     if lock_path.exists():
         existing = boss_app_sourcing.load_json(lock_path)
         if isinstance(existing, dict) and existing.get("status") == "running":
             raise RuntimeError("stale_lock_requires_review")
+        try:
+            lock_path.replace(lock_path.with_name("executor.lock.previous"))
+        except FileNotFoundError:
+            pass
     payload = {
         "schema": LOCK_SCHEMA,
+        "lock_id": uuid.uuid4().hex,
+        "intent_id": intent.get("intent_id"),
+        "candidate_key": intent.get("candidate_key"),
+        "pid": os.getpid(),
         "status": "running",
         "created_at": now_text or datetime.now().astimezone().isoformat(timespec="seconds"),
     }
-    boss_app_sourcing.write_json(lock_path, payload)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with lock_path.open("x", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    except FileExistsError as exc:
+        raise RuntimeError("stale_lock_requires_review") from exc
     return payload
 
 
@@ -352,6 +370,7 @@ def _attempt_payload(event_type: str, result: dict[str, Any], now_text: str | No
         "campaign_id": result.get("campaign_id"),
         "candidate_key": result.get("candidate_key"),
         "result": result.get("result"),
+        "action": result.get("action"),
         "button_before_click": result.get("button_before_click"),
         "message_template_id": result.get("message_template_id"),
         "at": now_text or datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -385,11 +404,14 @@ def contact_current(
     ui = _require_ui(ui)
 
     locked = False
+    attempt_started = False
+    clicked_contact = False
     result = _base_result(intent, now_text=now_text)
     try:
-        acquire_lock(campaign_root, now_text=now_text)
+        acquire_lock(campaign_root, intent, now_text=now_text)
         locked = True
         append_attempt_event(campaign_root, _attempt_payload("attempt_started", result, now_text=now_text))
+        attempt_started = True
 
         page = ui.read_current_page()
         validate_page_match(page, intent)
@@ -409,33 +431,50 @@ def contact_current(
             result.update({"result": "dry_run_ready", "would_click": True})
         else:
             ui.click_contact(button)
-            communication_page = ui.wait_for_communication_page()
-            communication_result = ui.extract_communication_result(communication_page)
-            result.update({
-                "real_name": communication_result.real_name,
-                "message_status": communication_result.message_status,
-                "communication_page_text": communication_result.page_text,
-                "would_click": True,
-            })
-            if (
-                communication_result.real_name
-                and communication_result.message_status in SUCCESS_MESSAGE_STATUSES
-            ):
-                result["result"] = "sent"
+            clicked_contact = True
+            result["action"] = "click_contact"
+            try:
+                communication_page = ui.wait_for_communication_page()
+                communication_result = ui.extract_communication_result(communication_page)
+            except Exception as exc:
+                result.update({
+                    "result": "sent_unverified",
+                    "stopped_reason": str(exc),
+                    "would_click": True,
+                })
             else:
-                result["result"] = "sent_unverified"
-                result["stopped_reason"] = "communication_result_unverified"
+                result.update({
+                    "real_name": communication_result.real_name,
+                    "message_status": communication_result.message_status,
+                    "communication_page_text": communication_result.page_text,
+                    "would_click": True,
+                })
+                if (
+                    communication_result.real_name
+                    and communication_result.message_status in SUCCESS_MESSAGE_STATUSES
+                ):
+                    result["result"] = "sent"
+                else:
+                    result["result"] = "sent_unverified"
+                    result["stopped_reason"] = "communication_result_unverified"
 
         write_executor_result(campaign_root, result)
         append_attempt_event(campaign_root, _attempt_payload("attempt_finished", result, now_text=now_text))
         return result
     except Exception as exc:
-        result.update({
-            "result": "stopped",
-            "stopped_reason": str(exc),
-        })
+        if clicked_contact:
+            result.update({
+                "result": "sent_unverified",
+                "stopped_reason": str(exc),
+            })
+        else:
+            result.update({
+                "result": "stopped",
+                "stopped_reason": str(exc),
+            })
         write_executor_result(campaign_root, result)
-        append_attempt_event(campaign_root, _attempt_payload("attempt_finished", result, now_text=now_text))
+        if attempt_started:
+            append_attempt_event(campaign_root, _attempt_payload("attempt_finished", result, now_text=now_text))
         raise
     finally:
         if locked:
