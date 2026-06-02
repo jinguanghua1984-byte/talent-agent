@@ -1028,6 +1028,23 @@ def summarize_executor_results(campaign_root: str | Path) -> dict[str, Any]:
         "updated_at": _now(),
     }
     write_json(root / "reports/executor-summary.json", summary)
+    result_distribution_lines = [
+        f"- {result}: {count}" for result, count in summary["result_distribution"].items()
+    ] or ["- none: 0"]
+    markdown = "\n".join([
+        "# BOSS Executor Summary",
+        "",
+        f"approved_queue_count: {summary['approved_queue_count']}",
+        f"attempt_count: {summary['attempt_count']}",
+        f"sent_count: {summary['sent_count']}",
+        f"skipped_continue_chat_count: {summary['skipped_continue_chat_count']}",
+        f"stopped_count: {summary['stopped_count']}",
+        "",
+        "result_distribution:",
+        *result_distribution_lines,
+        "",
+    ])
+    (root / "reports/executor-summary.md").write_text(markdown, encoding="utf-8")
     return summary
 
 

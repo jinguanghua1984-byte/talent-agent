@@ -881,6 +881,15 @@ def test_validate_and_summarize_executor_artifacts(tmp_path: Path) -> None:
     assert summary["skipped_continue_chat_count"] == 0
     assert summary["stopped_count"] == 0
     assert summary["result_distribution"] == {"sent": 1}
+    summary_md = root / "reports/executor-summary.md"
+    assert summary_md.exists()
+    summary_text = summary_md.read_text(encoding="utf-8")
+    assert "approved_queue_count: 1" in summary_text
+    assert "attempt_count: 1" in summary_text
+    assert "sent_count: 1" in summary_text
+    assert "skipped_continue_chat_count: 0" in summary_text
+    assert "stopped_count: 0" in summary_text
+    assert "- sent: 1" in summary_text
 
 
 def test_validate_executor_artifacts_reports_intent_result_and_lock_issues(tmp_path: Path) -> None:
