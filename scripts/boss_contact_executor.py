@@ -148,6 +148,16 @@ def _require_non_empty_fields(data: dict[str, Any], fields: list[str], label: st
         raise ValueError(f"{label} requires non-empty {', '.join(missing)}")
 
 
+def _parse_aware_iso_datetime(value: str, field: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be an ISO datetime") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"{field} must include timezone info")
+    return parsed
+
+
 def validate_current_intent(intent: dict[str, Any], now_text: str | None = None) -> dict[str, Any]:
     if not isinstance(intent, dict):
         raise ValueError("current_intent must be a dict")
@@ -173,8 +183,11 @@ def validate_current_intent(intent: dict[str, Any], now_text: str | None = None)
         "current_intent",
     )
 
-    now = datetime.fromisoformat(now_text) if now_text else datetime.now().astimezone()
-    expires_at = datetime.fromisoformat(str(intent["expires_at"]))
+    if now_text:
+        now = _parse_aware_iso_datetime(now_text, "now_text")
+    else:
+        now = datetime.now().astimezone()
+    expires_at = _parse_aware_iso_datetime(str(intent["expires_at"]), "expires_at")
     if now > expires_at:
         raise ValueError("current contact intent expired")
     return intent

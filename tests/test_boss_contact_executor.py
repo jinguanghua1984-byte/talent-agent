@@ -109,3 +109,20 @@ def test_validate_current_intent_rejects_expired_intent(tmp_path: Path) -> None:
     intent = boss_contact_executor.load_current_intent(root)
     with pytest.raises(ValueError, match="expired"):
         boss_contact_executor.validate_current_intent(intent, now_text="2026-06-02T10:11:00+08:00")
+
+
+def test_validate_current_intent_rejects_naive_expires_at(tmp_path: Path) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    intent = boss_contact_executor.load_current_intent(root)
+    intent["expires_at"] = "2026-06-02T10:10:00"
+
+    with pytest.raises(ValueError, match="expires_at.*timezone"):
+        boss_contact_executor.validate_current_intent(intent, now_text="2026-06-02T10:05:00+08:00")
+
+
+def test_validate_current_intent_rejects_naive_now_text(tmp_path: Path) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    intent = boss_contact_executor.load_current_intent(root)
+
+    with pytest.raises(ValueError, match="now_text.*timezone"):
+        boss_contact_executor.validate_current_intent(intent, now_text="2026-06-02T10:05:00")
