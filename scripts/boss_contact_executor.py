@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass
@@ -206,3 +207,224 @@ def append_attempt_event(campaign_root: str | Path, event: dict[str, Any]) -> di
         raise ValueError("attempt event must be a dict")
     payload = {**event, "schema": ATTEMPT_SCHEMA}
     return boss_app_sourcing.append_jsonl(_campaign_path(campaign_root, "raw/executor-contact-attempts.jsonl"), payload)
+
+
+def _contains_any(text: str, markers: set[str] | list[str] | tuple[str, ...]) -> bool:
+    return any(marker in text for marker in markers)
+
+
+def _clean(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _snapshot_from_mapping(data: dict[str, Any]) -> BossPageSnapshot:
+    return BossPageSnapshot(
+        front_app=_clean(data.get("front_app")),
+        window_title=_clean(data.get("window_title")),
+        page_text=_clean(data.get("page_text")),
+        buttons=[_clean(button) for button in data.get("buttons") or [] if _clean(button)],
+        screenshot_hash=_clean(data.get("screenshot_hash")),
+    )
+
+
+class FixtureBossUI:
+    def __init__(self, fixture_path: str | Path):
+        self.fixture_path = Path(fixture_path)
+        self.fixture = _load_required_json_object(self.fixture_path)
+        self.clicked = False
+
+    def read_current_page(self) -> BossPageSnapshot:
+        detail = self.fixture.get("detail")
+        if not isinstance(detail, dict):
+            raise ValueError("fixture detail must be a JSON object")
+        return _snapshot_from_mapping(detail)
+
+    def find_contact_button(self, page: BossPageSnapshot) -> ContactButtonState:
+        contact_labels = ["立即沟通", "继续沟通", "立即联系牛人", "立即开聊"]
+        matches = [button for button in page.buttons if button in contact_labels]
+        if matches:
+            return ContactButtonState(label=matches[0], count=len(matches))
+        return ContactButtonState(label="", count=0)
+
+    def click_contact(self, button: ContactButtonState) -> None:
+        if button.label != "立即沟通":
+            raise ValueError("fixture can only click 立即沟通")
+        self.clicked = True
+
+    def wait_for_communication_page(self) -> BossPageSnapshot:
+        communication = self.fixture.get("communication")
+        if not isinstance(communication, dict):
+            raise ValueError("fixture communication must be a JSON object")
+        return _snapshot_from_mapping(communication)
+
+    def extract_communication_result(self, page: BossPageSnapshot) -> CommunicationResult:
+        real_name = ""
+        name_match = re.search(r"沟通页顶部[:：]\s*([^；;，,\s]+)", page.page_text)
+        if name_match:
+            real_name = name_match.group(1).strip()
+            if real_name == "未知":
+                real_name = ""
+        if not real_name and page.window_title not in {"沟通页", "未知"}:
+            real_name = page.window_title
+
+        message_status = ""
+        status_match = re.search(r"消息状态[:：]\s*([^；;，,\s]+)", page.page_text)
+        if status_match:
+            message_status = status_match.group(1).strip()
+        return CommunicationResult(real_name=real_name, message_status=message_status, page_text=page.page_text)
+
+
+def validate_page_match(page: BossPageSnapshot, intent: dict[str, Any]) -> None:
+    if page.front_app != "BOSS直聘":
+        raise ValueError("front_app must be BOSS直聘")
+    page_text = page.page_text
+    for field in ["display_name", "current_company", "current_title"]:
+        expected = _clean(intent.get(field))
+        if expected and expected not in page_text and expected not in page.window_title:
+            raise ValueError(f"current page does not match intent {field}")
+
+
+def classify_button(page: BossPageSnapshot, button: ContactButtonState) -> dict[str, str]:
+    combined_text = " ".join([page.page_text, *page.buttons])
+    if _contains_any(combined_text, SECURITY_MARKERS):
+        return {"classification": "stopped", "stopped_reason": "login_or_security_page"}
+    if _contains_any(combined_text, PAID_MARKERS):
+        return {"classification": "stopped", "stopped_reason": "paid_search_chat_card"}
+    if _contains_any(combined_text, MARKETING_MARKERS):
+        return {"classification": "stopped", "stopped_reason": "marketing_or_unknown_ui"}
+    if button.count != 1:
+        return {"classification": "stopped", "stopped_reason": "contact_button_count_anomaly"}
+    if button.label == "继续沟通":
+        return {"classification": "continue_chat", "stopped_reason": ""}
+    if button.label == "立即沟通":
+        return {"classification": "ready", "stopped_reason": ""}
+    return {"classification": "stopped", "stopped_reason": "unknown_contact_button"}
+
+
+def acquire_lock(campaign_root: str | Path, now_text: str | None = None) -> dict[str, Any]:
+    lock_path = _campaign_path(campaign_root, "state/executor.lock")
+    if lock_path.exists():
+        raise RuntimeError("stale_lock_requires_review")
+    payload = {
+        "schema": LOCK_SCHEMA,
+        "status": "running",
+        "created_at": now_text or datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+    boss_app_sourcing.write_json(lock_path, payload)
+    return payload
+
+
+def finish_lock(campaign_root: str | Path) -> None:
+    lock_path = _campaign_path(campaign_root, "state/executor.lock")
+    if lock_path.exists():
+        lock_path.unlink()
+
+
+def _base_result(intent: dict[str, Any], now_text: str | None = None) -> dict[str, Any]:
+    return {
+        "intent_id": intent.get("intent_id"),
+        "campaign_id": intent.get("campaign_id"),
+        "candidate_key": intent.get("candidate_key"),
+        "display_name": intent.get("display_name"),
+        "current_company": intent.get("current_company"),
+        "current_title": intent.get("current_title"),
+        "message_template_id": intent.get("message_template_id"),
+        "created_at": now_text or datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+
+
+def _attempt_payload(event_type: str, result: dict[str, Any], now_text: str | None = None) -> dict[str, Any]:
+    return {
+        "event_type": event_type,
+        "intent_id": result.get("intent_id"),
+        "campaign_id": result.get("campaign_id"),
+        "candidate_key": result.get("candidate_key"),
+        "result": result.get("result"),
+        "button_before_click": result.get("button_before_click"),
+        "message_template_id": result.get("message_template_id"),
+        "at": now_text or datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
+
+
+def _require_ui(ui: Any | None) -> Any:
+    if ui is not None:
+        return ui
+    adapter = globals().get("MacAccessibilityBossUI")
+    if adapter is not None:
+        return adapter()
+    raise ValueError("ui is required until MacAccessibilityBossUI is implemented")
+
+
+def _check_kill_switch(policy: dict[str, Any]) -> None:
+    kill_switch_path = _clean(policy.get("kill_switch_path"))
+    if kill_switch_path and Path(kill_switch_path).exists():
+        raise RuntimeError("executor_kill_switch_enabled")
+
+
+def contact_current(
+    campaign_root: str | Path,
+    execute: bool = False,
+    ui: Any | None = None,
+    now_text: str | None = None,
+) -> dict[str, Any]:
+    policy = validate_executor_policy(load_executor_policy(campaign_root), execute=execute)
+    intent = validate_current_intent(load_current_intent(campaign_root), now_text=now_text)
+    _check_kill_switch(policy)
+    ui = _require_ui(ui)
+
+    locked = False
+    result = _base_result(intent, now_text=now_text)
+    try:
+        acquire_lock(campaign_root, now_text=now_text)
+        locked = True
+        append_attempt_event(campaign_root, _attempt_payload("attempt_started", result, now_text=now_text))
+
+        page = ui.read_current_page()
+        validate_page_match(page, intent)
+        button = ui.find_contact_button(page)
+        classification = classify_button(page, button)
+        result["button_before_click"] = button.label
+
+        if classification["classification"] == "continue_chat":
+            result.update({"result": "skipped_continue_chat", "would_click": False})
+        elif classification["classification"] == "stopped":
+            result.update({
+                "result": "stopped",
+                "stopped_reason": classification["stopped_reason"],
+                "would_click": False,
+            })
+        elif not execute:
+            result.update({"result": "dry_run_ready", "would_click": True})
+        else:
+            ui.click_contact(button)
+            communication_page = ui.wait_for_communication_page()
+            communication_result = ui.extract_communication_result(communication_page)
+            result.update({
+                "real_name": communication_result.real_name,
+                "message_status": communication_result.message_status,
+                "communication_page_text": communication_result.page_text,
+                "would_click": True,
+            })
+            if (
+                communication_result.real_name
+                and communication_result.message_status in SUCCESS_MESSAGE_STATUSES
+            ):
+                result["result"] = "sent"
+            else:
+                result["result"] = "sent_unverified"
+                result["stopped_reason"] = "communication_result_unverified"
+
+        write_executor_result(campaign_root, result)
+        append_attempt_event(campaign_root, _attempt_payload("attempt_finished", result, now_text=now_text))
+        return result
+    except Exception as exc:
+        result.update({
+            "result": "stopped",
+            "stopped_reason": str(exc),
+        })
+        write_executor_result(campaign_root, result)
+        append_attempt_event(campaign_root, _attempt_payload("attempt_finished", result, now_text=now_text))
+        raise
+    finally:
+        if locked:
+            finish_lock(campaign_root)

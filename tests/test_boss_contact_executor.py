@@ -126,3 +126,124 @@ def test_validate_current_intent_rejects_naive_now_text(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="now_text.*timezone"):
         boss_contact_executor.validate_current_intent(intent, now_text="2026-06-02T10:05:00")
+
+
+def write_fixture(path: Path, data: dict) -> Path:
+    write_json(path, data)
+    return path
+
+
+def ready_fixture(tmp_path: Path) -> Path:
+    return write_fixture(tmp_path / "detail-ready.json", {
+        "detail": {
+            "front_app": "BOSS直聘",
+            "window_title": "陶先生",
+            "page_text": "陶先生 上海华为技术有限公司 博士后研究员-大模型方向 立即沟通",
+            "buttons": ["立即沟通"],
+        },
+        "communication": {
+            "front_app": "BOSS直聘",
+            "window_title": "陶壮",
+            "page_text": "沟通页顶部：陶壮；AI Infra训练与推理研发；消息状态：送达",
+            "buttons": ["求简历", "换电话/微信"],
+        },
+    })
+
+
+def test_contact_current_fixture_dry_run_does_not_click(tmp_path: Path) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    ui = boss_contact_executor.FixtureBossUI(ready_fixture(tmp_path))
+    result = boss_contact_executor.contact_current(
+        root,
+        execute=False,
+        ui=ui,
+        now_text="2026-06-02T10:05:00+08:00",
+    )
+    assert result["result"] == "dry_run_ready"
+    assert result["would_click"] is True
+    assert ui.clicked is False
+    assert boss_app_sourcing.load_json(root / "state/executor-result.json")["result"] == "dry_run_ready"
+
+
+def test_contact_current_fixture_execute_sends_and_writes_audit(tmp_path: Path) -> None:
+    root, candidate_key = make_executor_campaign(tmp_path)
+    result = boss_contact_executor.contact_current(
+        root,
+        execute=True,
+        ui=boss_contact_executor.FixtureBossUI(ready_fixture(tmp_path)),
+        now_text="2026-06-02T10:05:00+08:00",
+    )
+    assert result["result"] == "sent"
+    assert result["candidate_key"] == candidate_key
+    assert result["real_name"] == "陶壮"
+    assert result["message_status"] == "送达"
+    attempts = boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl")
+    assert [row["event_type"] for row in attempts] == ["attempt_started", "attempt_finished"]
+
+
+def test_contact_current_skips_continue_chat_without_click(tmp_path: Path) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    fixture = write_fixture(tmp_path / "continue-chat.json", {
+        "detail": {
+            "front_app": "BOSS直聘",
+            "window_title": "陶先生",
+            "page_text": "陶先生 上海华为技术有限公司 博士后研究员-大模型方向 继续沟通",
+            "buttons": ["继续沟通"],
+        }
+    })
+    ui = boss_contact_executor.FixtureBossUI(fixture)
+    result = boss_contact_executor.contact_current(
+        root,
+        execute=True,
+        ui=ui,
+        now_text="2026-06-02T10:05:00+08:00",
+    )
+    assert result["result"] == "skipped_continue_chat"
+    assert result["button_before_click"] == "继续沟通"
+    assert ui.clicked is False
+
+
+def test_contact_current_stops_on_paid_contact_button(tmp_path: Path) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    fixture = write_fixture(tmp_path / "paid.json", {
+        "detail": {
+            "front_app": "BOSS直聘",
+            "window_title": "陶先生",
+            "page_text": "陶先生 上海华为技术有限公司 博士后研究员-大模型方向 搜索畅聊卡 剩余次数不足 立即联系牛人",
+            "buttons": ["立即联系牛人"],
+        }
+    })
+    result = boss_contact_executor.contact_current(
+        root,
+        execute=True,
+        ui=boss_contact_executor.FixtureBossUI(fixture),
+        now_text="2026-06-02T10:05:00+08:00",
+    )
+    assert result["result"] == "stopped"
+    assert result["stopped_reason"] == "paid_search_chat_card"
+
+
+def test_contact_current_sent_unverified_when_communication_result_missing(tmp_path: Path) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    fixture = write_fixture(tmp_path / "unverified.json", {
+        "detail": {
+            "front_app": "BOSS直聘",
+            "window_title": "陶先生",
+            "page_text": "陶先生 上海华为技术有限公司 博士后研究员-大模型方向 立即沟通",
+            "buttons": ["立即沟通"],
+        },
+        "communication": {
+            "front_app": "BOSS直聘",
+            "window_title": "沟通页",
+            "page_text": "沟通页顶部：未知；没有状态",
+            "buttons": [],
+        },
+    })
+    result = boss_contact_executor.contact_current(
+        root,
+        execute=True,
+        ui=boss_contact_executor.FixtureBossUI(fixture),
+        now_text="2026-06-02T10:05:00+08:00",
+    )
+    assert result["result"] == "sent_unverified"
+    assert result["stopped_reason"] == "communication_result_unverified"
