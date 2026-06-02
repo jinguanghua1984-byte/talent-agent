@@ -4,6 +4,26 @@
 
 ## Active Task
 
+### BOSS 当前详情页触达执行器 MVP 设计（2026-06-02）
+
+计划：
+- [x] 读取 `docs/design-discussions/2026-06-02-boss-unattended-contact-executor-discussion.md`。
+- [x] 对齐现有 BOSS App canonical skill/workflow、脚本接口和测试边界。
+- [x] 确认 MVP 范围：`contact-current` 单次握手、本仓库实现、macOS Accessibility 优先、每次 run 一次性授权。
+- [x] 写入正式设计 spec 到 `docs/superpowers/specs/`。
+- [x] 自检 spec 占位符、矛盾、范围和歧义。
+- [x] 提交设计文档。
+
+边界：
+- 本轮只做设计，不写执行器实现代码。
+- 执行器不作为 Codex 代点工具；真实触达必须由用户显式启动的独立 CLI 执行。
+- 不绕过 BOSS 验证码、安全页、付费弹窗或平台限制。
+
+Review：
+- 已写入正式 spec：`docs/superpowers/specs/2026-06-02-boss-contact-executor-mvp-design.md`。
+- 设计范围收敛为 `contact-current` 当前详情页原子触达能力，保留 dry-run/mock UI 测试能力；常驻 `watch-intent` 和完整队列消费器列为后续 P2/P3。
+- 自检未发现 `TBD/TODO/待补充` 等占位符；`git diff --check` 通过。
+
 ### AI 猎头公司杂志风网页 PPT（2026-06-02）
 
 计划：
