@@ -161,3 +161,32 @@ def test_boss_app_sourcing_contracts_define_contact_audit_gates():
     assert "`reports/interruption-<stage>-<reason>-<timestamp>.json`" in workflow
     assert "`state/continuation-plan.json`" in workflow
     assert "`state/events.jsonl`" in workflow
+
+
+def test_boss_app_sourcing_contracts_define_external_executor_handoff():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-app-recommendation-sourcing"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-app-recommendation-sourcing"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (skill, workflow):
+        assert "`structured/approved-contact-queue.jsonl`" in text
+        assert "`state/current-contact-intent.json`" in text
+        assert "`state/executor-result.json`" in text
+        assert "外部执行器" in text
+        assert "Codex" in text
+        assert "不点击" in text
+
+    assert "contact-current" in workflow
+    assert "`--execute`" in workflow
+    assert "macOS Accessibility" in workflow

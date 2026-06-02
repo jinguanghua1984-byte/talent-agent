@@ -4,6 +4,26 @@
 
 ## Active Task
 
+### BOSS 当前详情页触达执行器 MVP Task 6（2026-06-02）
+
+计划：
+- [x] 追加 architecture test，先验证 canonical docs 缺外部执行器 handoff 边界会失败。
+- [x] 更新 BOSS canonical skill 的外部执行器产物和安全边界。
+- [x] 更新 BOSS canonical workflow 的 S6a handoff、执行器回写和中断规则。
+- [x] 运行 focused tests、`git diff --check` 和 full verification。
+- [x] 提交 `Document BOSS contact executor handoff`。
+
+边界：
+- 只修改 BOSS canonical skill/workflow、architecture test 和本任务台账。
+- 不修改业务脚本、executor 代码或其他 docs。
+- Codex/Computer Use 仍不点击真实触达按钮；真实点击只能由用户显式启动外部 CLI。
+
+Review：
+- 已实现 `scripts/boss_contact_executor.py contact-current` 的文档交接边界：canonical BOSS skill/workflow 明确 Codex 不点击真实触达按钮，真实点击由用户显式启动外部 CLI。
+- 已记录 approved queue/current intent/executor result/audit/summary/validation 产物：`structured/approved-contact-queue.jsonl`、`state/current-contact-intent.json`、`state/executor-result.json`、`raw/executor-contact-attempts.jsonl`、`reports/executor-summary.md`、`reports/executor-summary.json` 等。
+- 已接入 existing sourcing 回写 external executor 触达：执行器返回后由 Codex 读取 `state/executor-result.json`，通过 sourcing helper 回写 `structured/contact-decisions.jsonl`、`raw/communication-pages.jsonl`、`structured/candidates.jsonl`。
+- 验证：RED 单测按预期失败；focused tests `106 passed in 0.22s`；`git diff --check` 通过；`.venv/bin/python -m pytest tests -q` -> `1065 passed, 1 warning in 5.90s`。
+
 ### BOSS 当前详情页触达执行器 MVP 实施计划（2026-06-02）
 
 计划：
