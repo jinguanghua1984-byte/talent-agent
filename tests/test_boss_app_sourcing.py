@@ -728,6 +728,56 @@ def test_consume_executor_sent_result_updates_contact_and_real_name(tmp_path: Pa
     assert decisions[-1]["preset_message_auto_sent"] is True
 
 
+@pytest.mark.parametrize(
+    ("override", "error_match"),
+    [
+        ({"button_before_click": "继续沟通"}, "button_before_click"),
+        ({"real_name": ""}, "real_name"),
+        ({"message_status": "发送中"}, "message_status"),
+        ({"campaign_id": "other-campaign"}, "current contact intent"),
+        ({"candidate_key": "boss-app:other"}, "current contact intent"),
+    ],
+)
+def test_consume_executor_rejects_invalid_sent_protocol_without_contacting(
+    tmp_path: Path,
+    override: dict,
+    error_match: str,
+) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:00:00+08:00",
+    )
+    result = {
+        "schema": "boss_executor_result_v1",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "result": "sent",
+        "button_before_click": "立即沟通",
+        "message_template_id": "boss-current-preset",
+        "message_status": "送达",
+        "real_name": "陶壮",
+        "communication_page_text": "沟通页顶部：陶壮；状态：送达",
+        "next_action_for_codex": "record_contact_return_to_list_and_continue",
+        "stopped_reason": None,
+    }
+    result.update(override)
+    boss_app_sourcing.write_json(root / "state/executor-result.json", result)
+    before_decision_count = len(boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl"))
+
+    with pytest.raises(ValueError, match=error_match):
+        boss_app_sourcing.consume_executor_result(root)
+
+    latest = boss_app_sourcing.latest_candidate(root, candidate_key)
+    assert latest["contact"]["contacted"] is False
+    assert latest["real_name"] is None
+    decisions = boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl")
+    assert len(decisions) == before_decision_count
+    assert not boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl")
+
+
 def test_consume_executor_continue_chat_and_stopped_paths(tmp_path: Path) -> None:
     root, candidate_key = _contact_candidate_for_executor(tmp_path)
     intent = boss_app_sourcing.write_current_contact_intent(
@@ -872,6 +922,35 @@ def test_validate_executor_artifacts_reports_intent_result_and_lock_issues(tmp_p
     assert "executor_result.missing_attempt" in validation["issues"]
     assert "executor_result.sent_missing_external_executor_decision" in validation["issues"]
     assert "executor_lock.status" in validation["issues"]
+
+
+def test_validate_executor_artifacts_reports_invalid_sent_protocol(tmp_path: Path) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    boss_app_sourcing.record_approved_contact_queue_item(root, candidate_key)
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:00:00+08:00",
+    )
+    boss_app_sourcing.write_json(root / "state/executor-result.json", {
+        "schema": "boss_executor_result_v1",
+        "intent_id": intent["intent_id"],
+        "campaign_id": "other-campaign",
+        "candidate_key": "boss-app:other",
+        "result": "sent",
+        "button_before_click": "继续沟通",
+        "message_template_id": "boss-current-preset",
+        "message_status": "发送中",
+        "real_name": "",
+    })
+
+    validation = boss_app_sourcing.validate_executor_artifacts(root)
+
+    assert validation["status"] == "failed"
+    assert "executor_result.sent_invalid_button" in validation["issues"]
+    assert "executor_result.sent_missing_real_name" in validation["issues"]
+    assert "executor_result.sent_invalid_message_status" in validation["issues"]
+    assert "executor_result.intent_mismatch" in validation["issues"]
 
 
 def test_raw_detail_and_communication_records_include_recovery_fields(tmp_path: Path) -> None:

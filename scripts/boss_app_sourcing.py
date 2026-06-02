@@ -18,6 +18,7 @@ CURRENT_CONTACT_INTENT_SCHEMA = "boss_current_contact_intent_v1"
 APPROVED_CONTACT_QUEUE_SCHEMA = "boss_approved_contact_queue_v1"
 EXECUTOR_ATTEMPT_SCHEMA = "boss_contact_attempt_event_v1"
 EXECUTOR_LOCK_SCHEMA = "boss_executor_lock_v1"
+VALID_SENT_MESSAGE_STATUSES = {"送达", "已读", "已触达"}
 
 DEFAULT_RUN_POLICY: dict[str, Any] = {
     "execution_surface": "boss_app_computer_use",
@@ -739,6 +740,35 @@ def _current_contact_intent(campaign_root: str | Path) -> dict[str, Any]:
     return load_json(_campaign_path(campaign_root, "state/current-contact-intent.json"), default={}) or {}
 
 
+def _sent_result_protocol_issues(result: dict[str, Any], current_intent: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    if result.get("button_before_click") != "立即沟通":
+        issues.append("executor_result.sent_invalid_button")
+    if not _clean_text(result.get("real_name")):
+        issues.append("executor_result.sent_missing_real_name")
+    if result.get("message_status") not in VALID_SENT_MESSAGE_STATUSES:
+        issues.append("executor_result.sent_invalid_message_status")
+    if current_intent and any(
+        result.get(field) != current_intent.get(field)
+        for field in ["intent_id", "campaign_id", "candidate_key"]
+    ):
+        issues.append("executor_result.intent_mismatch")
+    return issues
+
+
+def _raise_for_sent_result_protocol(result: dict[str, Any], current_intent: dict[str, Any]) -> None:
+    issues = _sent_result_protocol_issues(result, current_intent)
+    if not issues:
+        return
+    message_by_issue = {
+        "executor_result.sent_invalid_button": "sent result button_before_click must be 立即沟通",
+        "executor_result.sent_missing_real_name": "sent result real_name is required",
+        "executor_result.sent_invalid_message_status": "sent result message_status must be 送达, 已读, or 已触达",
+        "executor_result.intent_mismatch": "sent result does not match current contact intent",
+    }
+    raise ValueError("; ".join(message_by_issue[issue] for issue in issues))
+
+
 def consume_executor_result(campaign_root: str | Path, result_path: str | Path | None = None) -> dict[str, Any]:
     path = Path(result_path) if result_path is not None else _campaign_path(campaign_root, "state/executor-result.json")
     result = _load_required_json_object(path)
@@ -751,8 +781,10 @@ def consume_executor_result(campaign_root: str | Path, result_path: str | Path |
     if current_intent and result.get("intent_id") != current_intent.get("intent_id"):
         raise ValueError("executor result intent_id does not match current contact intent")
 
-    _append_executor_attempt(campaign_root, result)
     result_value = result.get("result")
+    if result_value == "sent":
+        _raise_for_sent_result_protocol(result, current_intent)
+    _append_executor_attempt(campaign_root, result)
     if result_value == "sent":
         _append_external_executor_decision(
             campaign_root,
@@ -917,6 +949,7 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
         if not matching_attempt:
             issues.append("executor_result.missing_attempt")
         if latest_result.get("result") == "sent":
+            issues.extend(_sent_result_protocol_issues(latest_result, current_intent))
             has_sent_decision = any(
                 row.get("candidate_key") == latest_result.get("candidate_key")
                 and row.get("mode") == "external_executor"
