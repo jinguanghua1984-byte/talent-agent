@@ -78,6 +78,32 @@ def test_standardize_campaign_writes_candidate_summaries(tmp_path: Path):
     }
 
 
+def test_standardize_campaign_uses_res_list_when_card_res_list_is_empty(tmp_path: Path):
+    payload = _liepin_search_payload()
+    payload["data"]["resList"] = payload["data"]["cardResList"]
+    payload["data"]["cardResList"] = []
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    mark_page_completed(
+        paths,
+        cur_page=1,
+        payload=payload,
+        request={"endpoint": "search-resumes"},
+        run_id="run-001",
+    )
+
+    summary = standardize_campaign(paths.root)
+
+    assert summary["status"] == "standardized"
+    assert summary["candidate_count"] == 1
+    rows = [
+        json.loads(line)
+        for line in paths.candidate_summaries.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert rows[0]["platform_id"] == "res-1"
+    assert rows[0]["raw_ref"]["search_page"] == "raw/search/page-001.json"
+
+
 def test_standardize_campaign_reports_template_drift_without_rows(tmp_path: Path):
     paths = ensure_campaign(tmp_path / "liepin-demo")
     mark_page_completed(

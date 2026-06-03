@@ -132,6 +132,8 @@ def _standardize_raw_page(
     if not isinstance(data, dict):
         return [], {"raw_path": raw_path.as_posix(), "reason": "missing_data"}
     cards = data.get("cardResList")
+    if isinstance(cards, list) and not cards and isinstance(data.get("resList"), list):
+        cards = data["resList"]
     if not isinstance(cards, list):
         return [], {
             "raw_path": raw_path.as_posix(),
