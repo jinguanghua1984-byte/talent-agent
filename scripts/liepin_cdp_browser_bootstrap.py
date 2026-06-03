@@ -32,7 +32,7 @@ class BrowserLaunchConfig:
 
 
 def _path_flag_value(path: Path) -> str:
-    return path.as_posix()
+    return path.expanduser().resolve().as_posix()
 
 
 def build_browser_args(config: BrowserLaunchConfig) -> list[str]:

@@ -27,7 +27,7 @@ def test_build_browser_args_uses_liepin_profile_port_and_url():
 
     assert args[0] == str(config.browser)
     assert "--remote-debugging-port=9898" in args
-    assert "--user-data-dir=data/session/liepin-cdp-profile" in args
+    assert f"--user-data-dir={Path('data/session/liepin-cdp-profile').resolve().as_posix()}" in args
     assert "--no-first-run" in args
     assert "--no-default-browser-check" in args
     assert args[-1] == "https://h.liepin.com/search/getConditionItem"
