@@ -18,12 +18,16 @@ def test_validate_detail_url_accepts_only_liepin_detail_pages():
     detail_url = "https://h.liepin.com/resume/showresumedetail/?res_id_encode=res-1"
 
     assert validate_detail_url(detail_url) == detail_url
+    assert validate_detail_url("https://h.liepin.com/resume/showresumedetail?res_id_encode=res-1")
 
     with pytest.raises(ValueError, match="not allowed"):
         validate_detail_url("https://example.com/resume/showresumedetail/?res_id_encode=res-1")
 
     with pytest.raises(ValueError, match="not allowed"):
         validate_detail_url("https://h.liepin.com/search/getConditionItem")
+
+    with pytest.raises(ValueError, match="not allowed"):
+        validate_detail_url("https://h.liepin.com/resume/showresumedetail-extra?res_id_encode=res-1")
 
 
 def test_build_detail_fetch_expression_uses_credentials_and_safe_headers():
@@ -64,6 +68,7 @@ def test_classify_detail_result_detects_blocks_partial_and_success():
     assert classify_detail_result({"httpStatus": 200, "data": {"flag": 0, "msg": "无权限"}}) == "business_block"
     assert classify_detail_result({"httpStatus": 200, "data": {"code": 403, "msg": "受限"}}) == "business_block"
     assert classify_detail_result({"httpStatus": 200, "data": {"flag": 1, "data": {"name": "张三"}}}) is None
+    assert classify_detail_result({"httpStatus": 200, "data": {"flag": "1", "data": {"name": "张三", "workExperience": []}}}) is None
     assert classify_detail_result({"httpStatus": 200, "data": {"flag": 1, "data": {}}}) == "partial_detail"
 
 

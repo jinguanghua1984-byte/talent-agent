@@ -60,7 +60,7 @@ def validate_detail_url(url: str) -> str:
     if (
         parsed.scheme == "https"
         and parsed.netloc == "h.liepin.com"
-        and parsed.path.startswith("/resume/showresumedetail")
+        and parsed.path in {"/resume/showresumedetail", "/resume/showresumedetail/"}
         and not parsed.fragment
     ):
         return str(url)
@@ -133,7 +133,7 @@ def classify_detail_result(response: Mapping[str, Any]) -> str | None:
         if code in DETAIL_BLOCK_STATUSES or str(code) in {str(status) for status in DETAIL_BLOCK_STATUSES}:
             return "business_block"
         flag = data.get("flag")
-        if flag is not None and flag != 1:
+        if flag is not None and flag not in {1, "1", True}:
             return "business_block"
         if _looks_like_detail_payload(data):
             return None
