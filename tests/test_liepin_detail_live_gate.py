@@ -177,6 +177,10 @@ def _contact(platform_id: str, index: int) -> dict:
 
 
 def _write_target_pack(root: Path, contacts: list[dict]) -> Path:
+    return _write_target_pack_with_pack_id(root, contacts, "liepin-detail-p0-smoke-001")
+
+
+def _write_target_pack_with_pack_id(root: Path, contacts: list[dict], pack_id: str) -> Path:
     pack_path = root / "raw" / "detail-targets" / "liepin-detail-p0-smoke-001.json"
     pack_path.parent.mkdir(parents=True, exist_ok=True)
     pack_path.write_text(
@@ -185,7 +189,7 @@ def _write_target_pack(root: Path, contacts: list[dict]) -> Path:
                 "schema": "liepin_detail_smoke_targets_v1",
                 "metadata": {
                     "campaign_id": root.name,
-                    "pack_id": "liepin-detail-p0-smoke-001",
+                    "pack_id": pack_id,
                     "limit": 10,
                     "no_database_write": True,
                 },
@@ -274,6 +278,58 @@ def test_run_live_detail_smoke_writes_jobs_ledger_and_sanitized_summary(tmp_path
     summary_md = (paths.reports_dir / "detail-smoke-summary.md").read_text(encoding="utf-8")
     assert summary_json["completed"] == 2
     assert "showresumedetail" not in summary_md
+
+
+def test_run_live_detail_smoke_accepts_safe_pack_id(tmp_path: Path, monkeypatch):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    pack_path = _write_target_pack_with_pack_id(paths.root, [_contact("res-1", 0)], "liepin-detail-p0-smoke-001")
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            self.calls = 0
+
+        def evaluate(self, expression, timeout=30):
+            self.calls += 1
+            if self.calls == 1:
+                return {"hasLiepinSearch": True, "hasLoginPrompt": False, "hasCaptcha": False}
+            return _success_detail("res-1")
+
+        def close(self):
+            pass
+
+    _patch_liepin_target(monkeypatch, FakeSession)
+
+    result = run_live_detail_smoke(
+        campaign_root=paths.root,
+        target_pack=pack_path,
+        cdp_url="http://127.0.0.1:9898",
+        delay_seconds=0,
+        timeout_seconds=1,
+        run_id="run-safe-pack",
+    )
+
+    assert result["status"] == "completed"
+    assert (paths.root / "raw" / "detail-live" / "liepin-detail-p0-smoke-001" / "job-000.json").exists()
+
+
+def test_run_live_detail_smoke_rejects_unsafe_pack_id_before_cdp(tmp_path: Path, monkeypatch):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    _write_target_pack_with_pack_id(paths.root, [_contact("res-1", 0)], "../../outside")
+    monkeypatch.setattr(detail_gate, "list_targets", lambda cdp_url: (_ for _ in ()).throw(AssertionError("opened CDP")))
+    monkeypatch.setattr(detail_gate, "CdpSession", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("opened session")))
+
+    with pytest.raises(ValueError, match="pack_id"):
+        run_live_detail_smoke(
+            campaign_root=paths.root,
+            target_pack="raw/detail-targets/liepin-detail-p0-smoke-001.json",
+            cdp_url="http://127.0.0.1:9898",
+            delay_seconds=0,
+            timeout_seconds=1,
+            run_id="run-unsafe-pack",
+        )
+
+    assert not (paths.root / "raw" / "detail-live").exists()
+    assert not (paths.state_dir / "detail-request-ledger.jsonl").exists()
 
 
 def test_run_live_detail_smoke_blocks_without_writing_failed_job(tmp_path: Path, monkeypatch):

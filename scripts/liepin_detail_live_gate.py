@@ -57,6 +57,7 @@ BUSINESS_BLOCK_MARKERS = (
     "受限",
 )
 DETAIL_JOB_NAME_RE = re.compile(r"^job-(\d{3})\.json$")
+PACK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 REPORT_SENSITIVE_STRING_MARKERS = (
     "showresumedetail",
     "ckid",
@@ -103,10 +104,19 @@ def _target_pack_path(campaign_root: str | Path, target_pack: str | Path) -> Pat
 def _pack_id(plan: Mapping[str, Any], plan_path: Path) -> str:
     metadata = plan.get("metadata")
     if isinstance(metadata, Mapping) and metadata.get("pack_id"):
-        return str(metadata["pack_id"])
+        return _validate_pack_id(metadata["pack_id"])
     if plan.get("pack_id"):
-        return str(plan["pack_id"])
-    return plan_path.stem
+        return _validate_pack_id(plan["pack_id"])
+    return _validate_pack_id(plan_path.stem)
+
+
+def _validate_pack_id(value: Any) -> str:
+    if not isinstance(value, str):
+        raise ValueError("pack_id must be a string")
+    pack_id = value.strip()
+    if not pack_id or pack_id != value or not PACK_ID_RE.fullmatch(pack_id):
+        raise ValueError("pack_id contains unsafe characters")
+    return pack_id
 
 
 def _detail_ledger_path(paths: Any) -> Path:
