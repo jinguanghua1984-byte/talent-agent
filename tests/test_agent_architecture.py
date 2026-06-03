@@ -12,12 +12,14 @@ WORKFLOWS = [
     "jd-talent-delivery",
     "maimai-unattended-campaign",
     "boss-app-recommendation-sourcing",
+    "liepin-unattended-campaign",
 ]
 
 CANONICAL_SKILL_WORKFLOWS = {
     "jd-talent-delivery": "jd-talent-delivery",
     "maimai-talent-search-campaign": "maimai-unattended-campaign",
     "boss-app-recommendation-sourcing": "boss-app-recommendation-sourcing",
+    "liepin-talent-search-campaign": "liepin-unattended-campaign",
 }
 
 CLAUDE_ADAPTER_WORKFLOWS = {
@@ -30,6 +32,7 @@ CLAUDE_ADAPTER_WORKFLOWS = {
     "jd-talent-delivery": "jd-talent-delivery",
     "maimai-talent-search-campaign": "maimai-unattended-campaign",
     "boss-app-recommendation-sourcing": "boss-app-recommendation-sourcing",
+    "liepin-talent-search-campaign": "liepin-unattended-campaign",
 }
 
 
