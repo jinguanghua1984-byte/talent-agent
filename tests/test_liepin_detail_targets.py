@@ -11,6 +11,8 @@ from scripts.liepin_detail_targets import plan_detail_smoke_targets
 
 SENSITIVE_REPORT_MARKERS = (
     "showresumedetail",
+    "liepin.com",
+    "/resume/showresumedetail",
     "secret-token",
     "ck-secret",
     '"ckId"',
@@ -167,6 +169,65 @@ def test_plan_detail_smoke_targets_dedupes_platform_id_and_keeps_strongest(tmp_p
     assert result["dedupe_key"] == "platform_id"
     assert result["skipped_count"] == 1
     assert result["skipped"][0]["reason"] == "duplicate_platform_id"
+
+
+def test_plan_detail_smoke_targets_trims_required_fields_before_dedupe_and_output(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    rows = [
+        _candidate(
+            " res-trim ",
+            user_id=" user-trim-low ",
+            profile_url=" https://example.com/low ",
+            active_name="30天内活跃",
+        ),
+        _candidate("res-trim", user_id=" user-trim-high ", education="博士", profile_url=" https://example.com/high "),
+    ]
+    _write_rows(paths.candidate_summaries, rows)
+
+    result = plan_detail_smoke_targets(paths.root, limit=10)
+
+    pack = json.loads((paths.root / result["target_pack"]).read_text(encoding="utf-8-sig"))
+    assert len(pack["contacts"]) == 1
+    assert pack["contacts"][0]["platform_id"] == "res-trim"
+    assert pack["contacts"][0]["user_id_encode"] == "user-trim-high"
+    assert pack["contacts"][0]["profile_url"] == "https://example.com/high"
+    assert result["skipped_count"] == 1
+    assert result["skipped"][0]["platform_id"] == "res-trim"
+
+
+@pytest.mark.parametrize(
+    "search_page",
+    [
+        "h.liepin.com/resume/showresumedetail/?ck_id=x",
+        "resume/showresumedetail/?ck_id=x",
+        "raw/search/page-000.json?ckId=x",
+    ],
+)
+def test_plan_detail_smoke_reports_redact_suspicious_search_page_forms(
+    tmp_path: Path,
+    search_page: str,
+):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    _write_rows(paths.candidate_summaries, [_candidate("res-1", search_page=search_page)])
+
+    result = plan_detail_smoke_targets(paths.root)
+
+    assert result["samples"][0]["raw_ref"]["search_page"] == "redacted-search-page"
+    report_json = (paths.reports_dir / "detail-smoke-targets.json").read_text(encoding="utf-8-sig")
+    report_md = (paths.reports_dir / "detail-smoke-targets.md").read_text(encoding="utf-8")
+    for report_text in (report_json, report_md):
+        _assert_report_text_is_sanitized(report_text)
+
+
+def test_plan_detail_smoke_reports_keep_normal_search_page_visible(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    _write_rows(paths.candidate_summaries, [_candidate("res-1", search_page="raw/search/page-000.json")])
+
+    result = plan_detail_smoke_targets(paths.root)
+
+    assert result["samples"][0]["raw_ref"]["search_page"] == "raw/search/page-000.json"
+    report_json = (paths.reports_dir / "detail-smoke-targets.json").read_text(encoding="utf-8-sig")
+    assert "raw/search/page-000.json" in report_json
 
 
 def test_plan_detail_smoke_reports_sanitize_polluted_search_page(tmp_path: Path):

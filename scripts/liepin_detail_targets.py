@@ -27,6 +27,17 @@ DEFAULT_PRIORITY = "detail_p0"
 DEFAULT_LIMIT = 10
 MAX_LIMIT = 20
 DEDUPE_KEY = "platform_id"
+SENSITIVE_SEARCH_PAGE_MARKERS = (
+    "showresumedetail",
+    "liepin.com",
+    "/resume/showresumedetail",
+    "ckid",
+    "skid",
+    "fkid",
+    "ck_id",
+    "sk_id",
+    "fk_id",
+)
 
 
 def _now() -> str:
@@ -63,6 +74,9 @@ def _sanitize_search_page(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
+    text_lower = text.lower()
+    if any(marker in text_lower for marker in SENSITIVE_SEARCH_PAGE_MARKERS):
+        return "redacted-search-page"
     without_query = text.split("?", 1)[0].split("#", 1)[0]
     parsed = urlparse(without_query)
     if parsed.scheme or parsed.netloc:
@@ -74,10 +88,14 @@ def _sanitize_search_page(value: Any) -> str:
     return normalized
 
 
+def _required_field(row: dict[str, Any], field: str) -> str:
+    return str(row.get(field) or "").strip()
+
+
 def _missing_fields(row: dict[str, Any]) -> list[str]:
     missing: list[str] = []
     for field in ("platform_id", "user_id_encode", "profile_url"):
-        if not str(row.get(field) or "").strip():
+        if not _required_field(row, field):
             missing.append(field)
     return missing
 
@@ -93,9 +111,9 @@ def _contact_from_row(
     return {
         "index": index,
         "platform": "liepin",
-        "platform_id": str(row.get("platform_id") or ""),
-        "user_id_encode": str(row.get("user_id_encode") or ""),
-        "profile_url": str(row.get("profile_url") or ""),
+        "platform_id": _required_field(row, "platform_id"),
+        "user_id_encode": _required_field(row, "user_id_encode"),
+        "profile_url": _required_field(row, "profile_url"),
         "display_name": str(row.get("display_name") or ""),
         "current_company": str(row.get("current_company") or ""),
         "current_title": str(row.get("current_title") or ""),
@@ -167,7 +185,7 @@ def plan_detail_smoke_targets(
         scoring = _score_candidate(row)
         row_priority = str(scoring["priority"])
         missing = _missing_fields(row)
-        platform_id = str(row.get("platform_id") or "")
+        platform_id = _required_field(row, "platform_id")
         if row_priority != priority:
             skipped.append(
                 {
