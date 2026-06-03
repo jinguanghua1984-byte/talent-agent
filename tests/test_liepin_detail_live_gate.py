@@ -3,12 +3,15 @@ from pathlib import Path
 
 import pytest
 
+import scripts.liepin_detail_live_gate as detail_gate
+from scripts.liepin_campaign import ensure_campaign
 from scripts.liepin_detail_live_gate import (
     DETAIL_BLOCK_STATUSES,
     build_detail_fetch_expression,
     classify_detail_result,
     detail_job_path,
     load_completed_detail_jobs,
+    run_live_detail_smoke,
     sanitize_detail_result_for_report,
     validate_detail_url,
 )
@@ -105,6 +108,9 @@ def test_sanitize_detail_result_for_report_removes_sensitive_fields():
             "url": "https://h.liepin.com/resume/showresumedetail/?res_id_encode=res-1&ck_id=secret",
             "method": "GET",
         },
+        "health": {
+            "href": "https://h.liepin.com/resume/showresumedetail/?res_id_encode=res-1&ck_id=secret",
+        },
         "response": {
             "httpStatus": 403,
             "rawPreview": "https://h.liepin.com/resume/showresumedetail/?ck_id=secret",
@@ -117,8 +123,282 @@ def test_sanitize_detail_result_for_report_removes_sensitive_fields():
 
     assert "profile_url" not in sanitized
     assert "url" not in sanitized["request"]
+    assert "href" not in sanitized["health"]
     assert "rawPreview" not in sanitized["response"]
     assert "rawPreview" not in sanitized
     assert "showresumedetail" not in dumped
     assert "ck_id=secret" not in dumped
     assert sanitized["response"]["httpStatus"] == 403
+
+
+def _contact(platform_id: str, index: int) -> dict:
+    return {
+        "index": index,
+        "platform": "liepin",
+        "platform_id": platform_id,
+        "user_id_encode": f"user-{platform_id}",
+        "profile_url": (
+            "https://h.liepin.com/resume/showresumedetail/"
+            f"?res_id_encode={platform_id}&ck_id=secret-token"
+        ),
+        "display_name": "张**",
+        "current_company": "示例公司",
+        "current_title": "AI产品经理",
+        "priority": "detail_p0",
+        "score": 95,
+        "reasons": ["硕士及以上"],
+        "raw_ref": {"search_page": "raw/search/page-000.json", "card_index": index},
+    }
+
+
+def _write_target_pack(root: Path, contacts: list[dict]) -> Path:
+    pack_path = root / "raw" / "detail-targets" / "liepin-detail-p0-smoke-001.json"
+    pack_path.parent.mkdir(parents=True, exist_ok=True)
+    pack_path.write_text(
+        json.dumps(
+            {
+                "schema": "liepin_detail_smoke_targets_v1",
+                "metadata": {
+                    "campaign_id": root.name,
+                    "pack_id": "liepin-detail-p0-smoke-001",
+                    "limit": 10,
+                    "no_database_write": True,
+                },
+                "contacts": contacts,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return pack_path
+
+
+def _patch_liepin_target(monkeypatch, session_cls) -> None:
+    monkeypatch.setattr(
+        detail_gate,
+        "list_targets",
+        lambda cdp_url: [
+            {
+                "type": "page",
+                "title": "找简历",
+                "url": "https://h.liepin.com/search/getConditionItem",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/1",
+            }
+        ],
+    )
+    monkeypatch.setattr(detail_gate, "CdpSession", session_cls)
+
+
+def _success_detail(platform_id: str) -> dict:
+    return {
+        "status": "ok",
+        "httpStatus": 200,
+        "contentType": "application/json",
+        "rawLength": 120,
+        "parseError": None,
+        "rawPreview": '{"flag":1}',
+        "data": {"flag": 1, "data": {"name": "张三", "workExperience": []}},
+    }
+
+
+def test_run_live_detail_smoke_writes_jobs_ledger_and_sanitized_summary(tmp_path: Path, monkeypatch):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    pack_path = _write_target_pack(paths.root, [_contact("res-1", 0), _contact("res-2", 1)])
+    expressions: list[str] = []
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            pass
+
+        def evaluate(self, expression, timeout=30):
+            expressions.append(expression)
+            if len(expressions) == 1:
+                return {"hasLiepinSearch": True, "hasLoginPrompt": False, "hasCaptcha": False}
+            if "res_id_encode=res-1" in expression:
+                return _success_detail("res-1")
+            if "res_id_encode=res-2" in expression:
+                return _success_detail("res-2")
+            raise AssertionError(f"unexpected expression: {expression}")
+
+        def close(self):
+            pass
+
+    _patch_liepin_target(monkeypatch, FakeSession)
+
+    result = run_live_detail_smoke(
+        campaign_root=paths.root,
+        target_pack=pack_path,
+        cdp_url="http://127.0.0.1:9898",
+        delay_seconds=0,
+        timeout_seconds=1,
+        run_id="run-001",
+    )
+
+    assert result["status"] == "completed"
+    assert result["completed"] == 2
+    job_000 = paths.root / "raw" / "detail-live" / "liepin-detail-p0-smoke-001" / "job-000.json"
+    job_001 = paths.root / "raw" / "detail-live" / "liepin-detail-p0-smoke-001" / "job-001.json"
+    assert job_000.exists()
+    assert job_001.exists()
+    assert json.loads(job_000.read_text(encoding="utf-8-sig"))["platform_id"] == "res-1"
+    ledger = (paths.state_dir / "detail-request-ledger.jsonl").read_text(encoding="utf-8")
+    assert '"event": "detail_completed"' in ledger
+    summary_json = json.loads((paths.reports_dir / "detail-smoke-summary.json").read_text(encoding="utf-8-sig"))
+    summary_md = (paths.reports_dir / "detail-smoke-summary.md").read_text(encoding="utf-8")
+    assert summary_json["completed"] == 2
+    assert "showresumedetail" not in summary_md
+
+
+def test_run_live_detail_smoke_blocks_without_writing_failed_job(tmp_path: Path, monkeypatch):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    _write_target_pack(paths.root, [_contact("res-1", 0), _contact("res-2", 1)])
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            self.calls = 0
+
+        def evaluate(self, expression, timeout=30):
+            self.calls += 1
+            if self.calls == 1:
+                return {"hasLiepinSearch": True, "hasLoginPrompt": False, "hasCaptcha": False}
+            return {
+                "status": "ok",
+                "httpStatus": 429,
+                "contentType": "application/json",
+                "rawLength": 40,
+                "parseError": None,
+                "rawPreview": "showresumedetail secret",
+                "data": {"flag": 0, "msg": "too many requests"},
+            }
+
+        def close(self):
+            pass
+
+    _patch_liepin_target(monkeypatch, FakeSession)
+
+    result = run_live_detail_smoke(
+        campaign_root=paths.root,
+        target_pack="raw/detail-targets/liepin-detail-p0-smoke-001.json",
+        cdp_url="http://127.0.0.1:9898",
+        delay_seconds=0,
+        timeout_seconds=1,
+        run_id="run-002",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["stopReason"] == "http_429"
+    assert result["completed"] == 0
+    job_000 = paths.root / "raw" / "detail-live" / "liepin-detail-p0-smoke-001" / "job-000.json"
+    assert not job_000.exists()
+    continuation = json.loads(
+        (paths.state_dir / "detail-live-liepin-detail-p0-smoke-001-continuation-after-http_429.json").read_text(
+            encoding="utf-8-sig"
+        )
+    )
+    assert continuation["resume_from"]["platform_id"] == "res-1"
+    interruptions = sorted(paths.reports_dir.glob("interruption-detail-liepin-detail-p0-smoke-001-*.json"))
+    assert len(interruptions) == 1
+    interruption_dump = interruptions[0].read_text(encoding="utf-8-sig")
+    assert "showresumedetail" not in interruption_dump
+
+
+def test_run_live_detail_smoke_resume_skips_completed_jobs(tmp_path: Path, monkeypatch):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    _write_target_pack(paths.root, [_contact("res-1", 0), _contact("res-2", 1)])
+    job_dir = paths.root / "raw" / "detail-live" / "liepin-detail-p0-smoke-001"
+    job_dir.mkdir(parents=True)
+    detail_job_path(job_dir, 0).write_text(
+        json.dumps(
+            {
+                "schema": "liepin_detail_smoke_job_v1",
+                "status": "done",
+                "platform_id": "res-1",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    expressions: list[str] = []
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            pass
+
+        def evaluate(self, expression, timeout=30):
+            expressions.append(expression)
+            if len(expressions) == 1:
+                return {"hasLiepinSearch": True, "hasLoginPrompt": False, "hasCaptcha": False}
+            if "res_id_encode=res-2" in expression:
+                return _success_detail("res-2")
+            raise AssertionError(f"unexpected expression: {expression}")
+
+        def close(self):
+            pass
+
+    _patch_liepin_target(monkeypatch, FakeSession)
+
+    result = run_live_detail_smoke(
+        campaign_root=paths.root,
+        target_pack="raw/detail-targets/liepin-detail-p0-smoke-001.json",
+        cdp_url="http://127.0.0.1:9898",
+        delay_seconds=0,
+        timeout_seconds=1,
+        run_id="run-003",
+    )
+
+    assert result["status"] == "completed"
+    assert result["completed"] == 1
+    assert detail_job_path(job_dir, 1).exists()
+    assert all("res_id_encode=res-1" not in expression for expression in expressions)
+
+
+@pytest.mark.parametrize(
+    "health,reason",
+    [
+        ({"hasLiepinSearch": True, "hasLoginPrompt": True, "hasCaptcha": False}, "login"),
+        ({"hasLiepinSearch": True, "hasLoginPrompt": False, "hasCaptcha": True}, "captcha"),
+        ({"hasLiepinSearch": False, "hasLoginPrompt": False, "hasCaptcha": False}, "not_liepin_search"),
+    ],
+)
+def test_run_live_detail_smoke_health_block_writes_recovery_without_fetch(
+    tmp_path: Path,
+    monkeypatch,
+    health: dict,
+    reason: str,
+):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    _write_target_pack(paths.root, [_contact("res-1", 0)])
+    expressions: list[str] = []
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            pass
+
+        def evaluate(self, expression, timeout=30):
+            expressions.append(expression)
+            return health
+
+        def close(self):
+            pass
+
+    _patch_liepin_target(monkeypatch, FakeSession)
+
+    result = run_live_detail_smoke(
+        campaign_root=paths.root,
+        target_pack="raw/detail-targets/liepin-detail-p0-smoke-001.json",
+        cdp_url="http://127.0.0.1:9898",
+        delay_seconds=0,
+        timeout_seconds=1,
+        run_id="run-004",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["stopReason"] == reason
+    assert len(expressions) == 1
+    continuation = paths.state_dir / f"detail-live-liepin-detail-p0-smoke-001-continuation-after-{reason}.json"
+    assert continuation.exists()
+    interruptions = sorted(paths.reports_dir.glob("interruption-detail-liepin-detail-p0-smoke-001-*.json"))
+    assert len(interruptions) == 1
+    summary = json.loads((paths.reports_dir / "detail-smoke-summary.json").read_text(encoding="utf-8-sig"))
+    assert summary["status"] == "blocked"
+    assert summary["stopReason"] == reason
