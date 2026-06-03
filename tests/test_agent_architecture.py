@@ -242,3 +242,32 @@ def test_boss_app_sourcing_capability_exception_keeps_executor_narrow():
     assert "`shell.run` 可调用受 policy、intent、lock、stop 条件约束的执行器" in capabilities
     assert "不能替代 `computer.operate` 做浏览、筛选或上下文判断" in capabilities
     assert "执行器只处理当前详情页的一次 `立即沟通` 点击" in workflow
+
+
+def test_liepin_contracts_define_detail_smoke_boundary():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "liepin-talent-search-campaign"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "liepin-unattended-campaign"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (skill, workflow):
+        assert "详情 smoke" in text
+        assert "detail_p0" in text
+        assert "上限 20" in text
+        assert "不写 Campaign DB" in text
+        assert "不写主库" in text
+
+    assert "plan-detail-smoke" in workflow
+    assert "run-live-detail-smoke" in workflow
+    assert "raw/detail-live/<pack_id>/job-*.json" in workflow
+    assert "state/detail-request-ledger.jsonl" in workflow

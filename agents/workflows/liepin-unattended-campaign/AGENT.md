@@ -92,9 +92,33 @@ POST https://api-h.liepin.com/api/com.liepin.searchfront4r.h.search-resumes
 
 运行 `scripts.liepin_campaign_orchestrator diagnose-pool`，只读取 `structured/candidate-summaries.jsonl`，生成 `reports/candidate-pool-diagnostic.json` 和 `reports/candidate-pool-diagnostic.md`。该阶段只做分布统计和 `detail_p0/detail_p1/detail_p2/skip` 详情优先级预览，不触发新的猎聘请求，不抓详情，不写数据库，不生成最终推荐报告。
 
+### S7a P1 详情 smoke 目标包
+
+候选池诊断完成后，详情 smoke 必须单独确认；不得把候选池诊断自动升级为详情请求。默认只选择 `detail_p0` 前 10 人，单次上限 20。
+
+确认后先生成 target pack：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator plan-detail-smoke --campaign-root data/campaigns/<campaign_id> --priority detail_p0 --limit 10
+```
+
+该命令只读取 `structured/candidate-summaries.jsonl` 和候选池诊断优先级，写 `raw/detail-targets/liepin-detail-p0-smoke-001.json`、`reports/detail-smoke-targets.json` 和 `reports/detail-smoke-targets.md`。生成 target pack 不触发猎聘请求。
+
+### S7b P1 详情 smoke live gate
+
+再次确认 CDP 页面可用后，才允许执行详情 smoke：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator run-live-detail-smoke --campaign-root data/campaigns/<campaign_id> --target-pack raw/detail-targets/liepin-detail-p0-smoke-001.json --cdp-url http://127.0.0.1:9898 --limit 10 --delay-seconds 3 --timeout-seconds 30 --run-id detail-smoke-001
+```
+
+详情 smoke 逐人写 `raw/detail-live/<pack_id>/job-*.json`，并追加 `state/detail-request-ledger.jsonl`。遇到登录页、验证码、安全页、401、403、429、432、非 JSON、业务阻断或 partial capture 时立即停止，写 interruption 和 continuation。
+
+详情 smoke 只写 `reports/detail-smoke-summary.json` 和 `reports/detail-smoke-summary.md` 作为执行摘要，不生成推荐结论，不写 Campaign DB，不写主库，不写 outreach queue。
+
 ### S8 关闭
 
-P0 到搜索摘要和候选池诊断即止。后续详情抓取、Campaign DB 写入或主库同步必须另起设计和实施计划，并经过 dry-run、备份、apply 和完整性验证。
+P0 到搜索摘要和候选池诊断即止；P1 详情 smoke 只在单独确认后小批执行。后续 full detail、`detail_p1`、Campaign DB import、主库同步、推荐和交付必须另起设计和实施计划，并经过 dry-run、备份、apply 和完整性验证。
 
 ## 验收
 

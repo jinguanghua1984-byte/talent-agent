@@ -29,6 +29,8 @@ from scripts.liepin_cdp_browser_bootstrap import (  # noqa: E402
     write_manifest,
 )
 from scripts.liepin_candidate_pool_diagnostic import diagnose_candidate_pool  # noqa: E402
+from scripts.liepin_detail_live_gate import run_live_detail_smoke  # noqa: E402
+from scripts.liepin_detail_targets import plan_detail_smoke_targets  # noqa: E402
 from scripts.liepin_search_live_gate import run_live_search  # noqa: E402
 from scripts.liepin_search_standardize import standardize_campaign  # noqa: E402
 
@@ -229,6 +231,20 @@ def main(argv: list[str] | None = None) -> int:
     live.add_argument("--max-pages", type=int)
     live.add_argument("--run-id")
 
+    detail_plan = subparsers.add_parser("plan-detail-smoke")
+    detail_plan.add_argument("--campaign-root", required=True)
+    detail_plan.add_argument("--priority", default="detail_p0")
+    detail_plan.add_argument("--limit", type=int, default=10)
+
+    detail_live = subparsers.add_parser("run-live-detail-smoke")
+    detail_live.add_argument("--campaign-root", required=True)
+    detail_live.add_argument("--target-pack", required=True)
+    detail_live.add_argument("--cdp-url", default=f"http://127.0.0.1:{DEFAULT_PORT}")
+    detail_live.add_argument("--limit", type=int, default=10)
+    detail_live.add_argument("--delay-seconds", type=float, default=DEFAULT_RUN_POLICY["request_interval_seconds"])
+    detail_live.add_argument("--timeout-seconds", type=float, default=30)
+    detail_live.add_argument("--run-id")
+
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
@@ -260,6 +276,22 @@ def main(argv: list[str] | None = None) -> int:
                 delay_seconds=args.delay_seconds,
                 timeout_seconds=args.timeout_seconds,
                 max_pages=args.max_pages,
+                run_id=args.run_id,
+            )
+        elif args.command == "plan-detail-smoke":
+            result = plan_detail_smoke_targets(
+                campaign_root=args.campaign_root,
+                priority=args.priority,
+                limit=args.limit,
+            )
+        elif args.command == "run-live-detail-smoke":
+            result = run_live_detail_smoke(
+                campaign_root=args.campaign_root,
+                target_pack=args.target_pack,
+                cdp_url=args.cdp_url,
+                limit=args.limit,
+                delay_seconds=args.delay_seconds,
+                timeout_seconds=args.timeout_seconds,
                 run_id=args.run_id,
             )
         else:

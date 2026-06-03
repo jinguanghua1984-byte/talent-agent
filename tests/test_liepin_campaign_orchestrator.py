@@ -220,3 +220,87 @@ def test_run_live_search_command_delegates_to_live_gate(tmp_path: Path, monkeypa
         }
     ]
     assert json.loads(capsys.readouterr().out)["pagesCompleted"] == [0]
+
+
+def test_plan_detail_smoke_command_delegates_to_target_planner(tmp_path: Path, monkeypatch, capsys):
+    calls = []
+
+    def fake_plan_detail_smoke_targets(**kwargs):
+        calls.append(kwargs)
+        return {
+            "schema": "liepin_detail_smoke_targets_v1",
+            "selected_count": 10,
+            "target_pack": "raw/detail-targets/liepin-detail-p0-smoke-001.json",
+        }
+
+    monkeypatch.setattr(orchestrator, "plan_detail_smoke_targets", fake_plan_detail_smoke_targets)
+
+    result = orchestrator.main(
+        [
+            "plan-detail-smoke",
+            "--campaign-root",
+            str(tmp_path / "liepin-demo"),
+            "--priority",
+            "detail_p0",
+            "--limit",
+            "10",
+        ]
+    )
+
+    assert result == 0
+    assert calls == [
+        {
+            "campaign_root": str(tmp_path / "liepin-demo"),
+            "priority": "detail_p0",
+            "limit": 10,
+        }
+    ]
+    assert json.loads(capsys.readouterr().out)["selected_count"] == 10
+
+
+def test_run_live_detail_smoke_command_delegates_to_live_gate(tmp_path: Path, monkeypatch, capsys):
+    calls = []
+
+    def fake_run_live_detail_smoke(**kwargs):
+        calls.append(kwargs)
+        return {
+            "schema": "liepin_detail_smoke_summary_v1",
+            "status": "completed",
+            "completed_count": 2,
+        }
+
+    monkeypatch.setattr(orchestrator, "run_live_detail_smoke", fake_run_live_detail_smoke)
+
+    result = orchestrator.main(
+        [
+            "run-live-detail-smoke",
+            "--campaign-root",
+            str(tmp_path / "liepin-demo"),
+            "--target-pack",
+            "raw/detail-targets/liepin-detail-p0-smoke-001.json",
+            "--cdp-url",
+            "http://127.0.0.1:9898",
+            "--limit",
+            "10",
+            "--delay-seconds",
+            "0",
+            "--timeout-seconds",
+            "1",
+            "--run-id",
+            "detail-run-test",
+        ]
+    )
+
+    assert result == 0
+    assert calls == [
+        {
+            "campaign_root": str(tmp_path / "liepin-demo"),
+            "target_pack": "raw/detail-targets/liepin-detail-p0-smoke-001.json",
+            "cdp_url": "http://127.0.0.1:9898",
+            "limit": 10,
+            "delay_seconds": 0,
+            "timeout_seconds": 1,
+            "run_id": "detail-run-test",
+        }
+    ]
+    assert json.loads(capsys.readouterr().out)["completed_count"] == 2

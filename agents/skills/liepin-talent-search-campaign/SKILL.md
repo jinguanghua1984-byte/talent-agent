@@ -76,6 +76,15 @@ description: Use when the user wants to create or run a Liepin recruiting-side t
 - 停机不等于失败；只要 raw 和 continuation 完整，可以在用户处理平台状态后恢复。
 - P0 不抓简历详情，不还原脱敏姓名，不写主人才库。候选池诊断只基于列表摘要生成详情优先级预览，不等同于推荐报告。
 
+## 详情 smoke 边界
+
+- 详情 smoke 必须在候选池诊断完成后单独确认；不能由搜索、标准化或候选池诊断自动触发。
+- 默认只生成 `detail_p0` 前 10 人目标包，单次上限 20。
+- target pack 生成只读取本地 `structured/candidate-summaries.jsonl`，不触发猎聘请求。
+- live 详情 smoke 遇到登录、验证码、安全页、401、403、429、432、非 JSON、业务阻断或 partial capture 必须立即停止并写 interruption/continuation。
+- 详情 smoke 不写 Campaign DB，不写主库，不写 `data/talent.db`。
+- 详情 smoke 不生成推荐结论，不生成 outreach queue，不生成 Feishu package。
+
 ## 自动交接
 
 合同文件生成后，读取并执行 `agents/workflows/liepin-unattended-campaign/AGENT.md`。真实浏览器内请求必须由 workflow 按阶段和运行策略控制。
