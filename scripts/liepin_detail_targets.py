@@ -12,6 +12,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -25,6 +26,7 @@ PACK_ID = "liepin-detail-p0-smoke-001"
 DEFAULT_PRIORITY = "detail_p0"
 DEFAULT_LIMIT = 10
 MAX_LIMIT = 20
+DEDUPE_KEY = "platform_id"
 
 
 def _now() -> str:
@@ -52,9 +54,24 @@ def _raw_ref(row: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
     return {
-        "search_page": value.get("search_page"),
+        "search_page": _sanitize_search_page(value.get("search_page")),
         "card_index": value.get("card_index"),
     }
+
+
+def _sanitize_search_page(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    without_query = text.split("?", 1)[0].split("#", 1)[0]
+    parsed = urlparse(without_query)
+    if parsed.scheme or parsed.netloc:
+        return "redacted-search-page"
+    path = parsed.path if parsed.scheme or parsed.netloc else without_query
+    normalized = path.rstrip("/")
+    if not normalized:
+        return ""
+    return normalized
 
 
 def _missing_fields(row: dict[str, Any]) -> list[str]:
@@ -87,6 +104,14 @@ def _contact_from_row(
         "reasons": reasons,
         "raw_ref": _raw_ref(row),
     }
+
+
+def _selection_sort_key(item: dict[str, Any]) -> tuple[int, int, str]:
+    return (
+        -int(item["score"]),
+        int(item["group_index"]),
+        str(item["platform_id"]),
+    )
 
 
 def _public_sample(contact: dict[str, Any]) -> dict[str, Any]:
@@ -135,8 +160,8 @@ def plan_detail_smoke_targets(
 
     paths = ensure_campaign(campaign_root)
     rows = _load_jsonl(paths.candidate_summaries)
-    selected: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
+    best_by_platform_id: dict[str, dict[str, Any]] = {}
 
     for row_index, row in enumerate(rows):
         scoring = _score_candidate(row)
@@ -162,23 +187,53 @@ def plan_detail_smoke_targets(
                 }
             )
             continue
-        if len(selected) >= limit:
+
+        candidate = _contact_from_row(
+            row_index,
+            row,
+            priority=priority,
+            score=int(scoring["score"]),
+            reasons=[str(reason) for reason in scoring["reasons"]],
+        )
+        candidate["row_index"] = row_index
+        existing = best_by_platform_id.get(platform_id)
+        if existing is None:
+            candidate["group_index"] = row_index
+            best_by_platform_id[platform_id] = candidate
+            continue
+
+        candidate["group_index"] = existing["group_index"]
+        if int(candidate["score"]) > int(existing["score"]):
+            best_by_platform_id[platform_id] = candidate
+            skipped.append(
+                {
+                    "row_index": existing["row_index"],
+                    "platform_id": platform_id,
+                    "reason": "duplicate_platform_id",
+                    "kept_row_index": row_index,
+                }
+            )
+        else:
             skipped.append(
                 {
                     "row_index": row_index,
                     "platform_id": platform_id,
-                    "reason": "limit_exceeded",
+                    "reason": "duplicate_platform_id",
+                    "kept_row_index": existing["row_index"],
                 }
             )
-            continue
-        selected.append(
-            _contact_from_row(
-                len(selected),
-                row,
-                priority=priority,
-                score=int(scoring["score"]),
-                reasons=[str(reason) for reason in scoring["reasons"]],
-            )
+
+    ranked = sorted(best_by_platform_id.values(), key=_selection_sort_key)
+    selected = ranked[:limit]
+    for index, contact in enumerate(selected):
+        contact["index"] = index
+    for contact in ranked[limit:]:
+        skipped.append(
+            {
+                "row_index": contact["row_index"],
+                "platform_id": contact["platform_id"],
+                "reason": "limit_exceeded",
+            }
         )
 
     pack_path = paths.raw_dir / "detail-targets" / f"{PACK_ID}.json"
@@ -189,11 +244,16 @@ def plan_detail_smoke_targets(
             "campaign_id": paths.campaign_id,
             "pack_id": PACK_ID,
             "source_priority": priority,
+            "dedupe_key": DEDUPE_KEY,
+            "selection_order": "score_desc_group_index_asc_platform_id_asc",
             "limit": limit,
             "created_at": _now(),
             "no_database_write": True,
         },
-        "contacts": selected,
+        "contacts": [
+            {key: value for key, value in contact.items() if key not in {"row_index", "group_index"}}
+            for contact in selected
+        ],
     }
     atomic_write_json(pack_path, pack)
 
@@ -202,11 +262,13 @@ def plan_detail_smoke_targets(
         "campaign_id": paths.campaign_id,
         "pack_id": PACK_ID,
         "priority": priority,
+        "dedupe_key": DEDUPE_KEY,
+        "selection_order": "score_desc_group_index_asc_platform_id_asc",
         "limit": limit,
         "selected_count": len(selected),
         "skipped_count": len(skipped),
         "target_pack": pack_path.relative_to(paths.root).as_posix(),
-        "skipped": skipped[:50],
+        "skipped": skipped,
         "samples": [_public_sample(contact) for contact in selected[:10]],
         "generatedAt": _now(),
     }

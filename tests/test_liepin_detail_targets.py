@@ -9,6 +9,33 @@ from scripts.liepin_campaign import ensure_campaign
 from scripts.liepin_detail_targets import plan_detail_smoke_targets
 
 
+SENSITIVE_REPORT_MARKERS = (
+    "showresumedetail",
+    "secret-token",
+    "ck-secret",
+    '"ckId"',
+    '"skId"',
+    '"fkId"',
+    "ckId=",
+    "skId=",
+    "fkId=",
+    "?ck_id",
+    "&ck_id",
+    "ck_id=",
+    "?sk_id",
+    "&sk_id",
+    "sk_id=",
+    "?fk_id",
+    "&fk_id",
+    "fk_id=",
+)
+
+
+def _assert_report_text_is_sanitized(report_text: str) -> None:
+    for marker in SENSITIVE_REPORT_MARKERS:
+        assert marker not in report_text
+
+
 def _write_rows(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -28,6 +55,7 @@ def _candidate(
     work_years: int = 8,
     active_name: str = "今天活跃",
     card_index: int = 0,
+    search_page: str = "raw/search/page-000.json",
 ) -> dict:
     resolved_user_id = user_id if user_id is not None else f"user-{platform_id}"
     resolved_profile_url = (
@@ -49,7 +77,7 @@ def _candidate(
         "active_status": {"code": "1", "name": active_name},
         "profile_url": resolved_profile_url,
         "raw_ref": {
-            "search_page": "raw/search/page-000.json",
+            "search_page": search_page,
             "card_index": card_index,
             "ckId": "ck-secret",
             "skId": "sk-secret",
@@ -81,10 +109,10 @@ def test_plan_detail_smoke_targets_selects_detail_p0_and_masks_reports(tmp_path:
     assert pack["contacts"][0]["priority"] == "detail_p0"
     assert pack["metadata"]["limit"] == 10
     assert pack["metadata"]["no_database_write"] is True
+    report_json = (paths.reports_dir / "detail-smoke-targets.json").read_text(encoding="utf-8-sig")
     report_md = (paths.reports_dir / "detail-smoke-targets.md").read_text(encoding="utf-8")
-    assert "showresumedetail" not in report_md
-    assert "ck-secret" not in report_md
-    assert "ck_id=secret-token" not in report_md
+    for report_text in (report_json, report_md):
+        _assert_report_text_is_sanitized(report_text)
 
 
 def test_plan_detail_smoke_targets_enforces_limit_bounds(tmp_path: Path):
@@ -99,6 +127,70 @@ def test_plan_detail_smoke_targets_enforces_limit_bounds(tmp_path: Path):
 
     with pytest.raises(ValueError, match="limit must be between 1 and 20"):
         plan_detail_smoke_targets(paths.root, limit=21)
+
+
+def test_plan_detail_smoke_targets_prefers_high_scores_over_jsonl_order(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    rows = [
+        _candidate(f"res-low-{index}", education="本科", work_years=12, card_index=index)
+        for index in range(4)
+    ]
+    rows.append(_candidate("res-high", education="硕士", work_years=8, card_index=9))
+    _write_rows(paths.candidate_summaries, rows)
+
+    result = plan_detail_smoke_targets(paths.root, limit=2)
+
+    pack = json.loads((paths.root / result["target_pack"]).read_text(encoding="utf-8-sig"))
+    assert [item["platform_id"] for item in pack["contacts"]] == ["res-high", "res-low-0"]
+    assert pack["contacts"][0]["score"] > pack["contacts"][1]["score"]
+    assert result["skipped_count"] == 3
+    assert len(result["skipped"]) == 3
+
+
+def test_plan_detail_smoke_targets_dedupes_platform_id_and_keeps_strongest(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    rows = [
+        _candidate("res-dupe", education="本科", work_years=12, card_index=0),
+        _candidate("res-unique", education="硕士", work_years=8, card_index=1),
+        _candidate("res-dupe", education="硕士", work_years=8, user_id="other-user", card_index=2),
+    ]
+    _write_rows(paths.candidate_summaries, rows)
+
+    result = plan_detail_smoke_targets(paths.root, limit=10)
+
+    pack = json.loads((paths.root / result["target_pack"]).read_text(encoding="utf-8-sig"))
+    contacts_by_id = {item["platform_id"]: item for item in pack["contacts"]}
+    assert [item["platform_id"] for item in pack["contacts"]] == ["res-dupe", "res-unique"]
+    assert contacts_by_id["res-dupe"]["score"] == 95
+    assert contacts_by_id["res-dupe"]["user_id_encode"] == "other-user"
+    assert pack["metadata"]["dedupe_key"] == "platform_id"
+    assert result["dedupe_key"] == "platform_id"
+    assert result["skipped_count"] == 1
+    assert result["skipped"][0]["reason"] == "duplicate_platform_id"
+
+
+def test_plan_detail_smoke_reports_sanitize_polluted_search_page(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    _write_rows(
+        paths.candidate_summaries,
+        [
+            _candidate(
+                "res-1",
+                search_page=(
+                    "https://h.liepin.com/resume/showresumedetail/"
+                    "?ck_id=secret-token&sk_id=s&fk_id=f&ckId=raw&skId=raw&fkId=raw"
+                ),
+            )
+        ],
+    )
+
+    result = plan_detail_smoke_targets(paths.root)
+
+    assert result["samples"][0]["raw_ref"]["search_page"] == "redacted-search-page"
+    report_json = (paths.reports_dir / "detail-smoke-targets.json").read_text(encoding="utf-8-sig")
+    report_md = (paths.reports_dir / "detail-smoke-targets.md").read_text(encoding="utf-8")
+    for report_text in (report_json, report_md):
+        _assert_report_text_is_sanitized(report_text)
 
 
 def test_plan_detail_smoke_cli_prints_json(tmp_path: Path):
