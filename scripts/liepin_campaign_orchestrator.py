@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,9 +23,9 @@ from scripts.liepin_cdp_browser_bootstrap import (  # noqa: E402
     DEFAULT_PROFILE,
     DEFAULT_URL,
     BrowserLaunchConfig,
-    build_browser_args,
     build_session_manifest,
     find_browser,
+    launch_browser_process,
     write_manifest,
 )
 from scripts.liepin_search_live_gate import run_live_search  # noqa: E402
@@ -177,7 +176,7 @@ def launch_browser(
     write_manifest(Path(manifest_out), manifest)
     if not dry_run:
         config.profile.mkdir(parents=True, exist_ok=True)
-        subprocess.Popen(build_browser_args(config), close_fds=True)
+        launch_browser_process(config)
     return {
         "status": "dry_run" if dry_run else "launched",
         "cdp_url": manifest["cdp_url"],

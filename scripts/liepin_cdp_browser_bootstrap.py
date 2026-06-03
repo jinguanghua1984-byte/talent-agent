@@ -109,6 +109,17 @@ def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
     path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def launch_browser_process(config: BrowserLaunchConfig) -> subprocess.Popen[Any]:
+    return subprocess.Popen(
+        build_browser_args(config),
+        close_fds=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="启动猎聘专用 CDP Chrome profile。")
     parser.add_argument("--browser", type=Path, default=None)
@@ -145,7 +156,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         config.profile.mkdir(parents=True, exist_ok=True)
-        subprocess.Popen(build_browser_args(config), close_fds=True)
+        launch_browser_process(config)
         print(f"CDP browser launched: {manifest['cdp_url']}")
         print("Manual steps: login_liepin -> enter_resume_search -> confirm_page_ready")
         print("Automation boundary: launch_only")

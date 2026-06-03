@@ -99,6 +99,37 @@ def test_dry_run_writes_manifest_and_does_not_launch_browser(tmp_path: Path, mon
     assert json.loads(capsys.readouterr().out)["cdp_url"] == "http://127.0.0.1:9898"
 
 
+def test_launch_detaches_browser_from_parent_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys):
+    browser = tmp_path / "chrome"
+    browser.write_text("", encoding="utf-8")
+    calls = []
+
+    def fake_popen(args, **kwargs):
+        calls.append((args, kwargs))
+        return object()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    result = bootstrap.main(
+        [
+            "--browser",
+            str(browser),
+            "--profile",
+            str(tmp_path / "profile"),
+            "--manifest-out",
+            str(tmp_path / "session.json"),
+        ]
+    )
+
+    assert result == 0
+    assert calls
+    assert calls[0][1]["close_fds"] is True
+    assert calls[0][1]["start_new_session"] is True
+    assert calls[0][1]["stdout"] is subprocess.DEVNULL
+    assert calls[0][1]["stderr"] is subprocess.DEVNULL
+    assert "CDP browser launched" in capsys.readouterr().out
+
+
 def test_cli_reports_missing_browser_without_traceback_or_session_manifest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

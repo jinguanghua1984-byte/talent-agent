@@ -133,6 +133,29 @@ def test_launch_browser_command_dry_run_writes_manifest(tmp_path: Path):
     assert manifest["schema"] == "liepin_cdp_browser_session_v1"
 
 
+def test_launch_browser_uses_detached_bootstrap_launcher(tmp_path: Path, monkeypatch):
+    browser = tmp_path / "chrome"
+    browser.write_text("", encoding="utf-8")
+    calls = []
+
+    def fake_launch_browser_process(config):
+        calls.append(config)
+        return object()
+
+    monkeypatch.setattr(orchestrator, "launch_browser_process", fake_launch_browser_process)
+
+    result = orchestrator.launch_browser(
+        browser=browser,
+        profile=tmp_path / "profile",
+        manifest_out=tmp_path / "session.json",
+        dry_run=False,
+    )
+
+    assert result["status"] == "launched"
+    assert calls
+    assert calls[0].profile == tmp_path / "profile"
+
+
 def test_run_live_search_command_delegates_to_live_gate(tmp_path: Path, monkeypatch, capsys):
     calls = []
 
