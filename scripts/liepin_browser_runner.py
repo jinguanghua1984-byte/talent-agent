@@ -8,8 +8,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 if __package__ in {None, ""}:
@@ -36,6 +37,24 @@ FORBIDDEN_STORAGE_READS = [
     "local" + "Storage",
     "session" + "Storage",
 ]
+ALLOWED_REQUEST_HEADERS = {
+    "accept": "Accept",
+    "content-type": "Content-Type",
+    "referer": "Referer",
+    "x-client-type": "X-Client-Type",
+    "x-fscp-bi-stat": "X-Fscp-Bi-Stat",
+    "x-fscp-fe-version": "X-Fscp-Fe-Version",
+    "x-fscp-std-info": "X-Fscp-Std-Info",
+    "x-fscp-trace-id": "X-Fscp-Trace-Id",
+    "x-fscp-version": "X-Fscp-Version",
+    "x-requested-with": "X-Requested-With",
+    "x-xsrf-token": "X-XSRF-TOKEN",
+}
+FORBIDDEN_REQUEST_HEADERS = {
+    "authorization",
+    "cookie",
+    "proxy-authorization",
+}
 
 
 def validate_allowed_url(url: str) -> str:
@@ -51,17 +70,42 @@ def validate_allowed_url(url: str) -> str:
     raise ValueError(f"Liepin URL is not allowed: {url}")
 
 
-def build_in_page_fetch_expression(url: str, form_body: str) -> str:
+def sanitize_liepin_request_headers(
+    headers: Mapping[str, Any] | None = None,
+    *,
+    refresh_trace_id: bool = False,
+) -> dict[str, str]:
+    sanitized: dict[str, str] = {}
+    for raw_name, raw_value in (headers or {}).items():
+        normalized = str(raw_name).strip().lower()
+        if normalized in FORBIDDEN_REQUEST_HEADERS:
+            raise ValueError(f"forbidden Liepin request header: {raw_name}")
+        canonical = ALLOWED_REQUEST_HEADERS.get(normalized)
+        if canonical is None:
+            continue
+        sanitized[canonical] = str(raw_value)
+
+    sanitized["Content-Type"] = "application/x-www-form-urlencoded"
+    if refresh_trace_id and "X-Fscp-Trace-Id" in sanitized:
+        sanitized["X-Fscp-Trace-Id"] = str(uuid.uuid4())
+    return sanitized
+
+
+def build_in_page_fetch_expression(
+    url: str,
+    form_body: str,
+    headers: Mapping[str, Any] | None = None,
+) -> str:
     safe_url = validate_allowed_url(url)
+    safe_headers = sanitize_liepin_request_headers(headers)
     url_json = json.dumps(safe_url, ensure_ascii=False)
     body_json = json.dumps(str(form_body), ensure_ascii=False)
+    headers_json = json.dumps(safe_headers, ensure_ascii=False)
     return f"""
 (async () => {{
   const response = await fetch({url_json}, {{
     method: "POST",
-    headers: {{
-      "Content-Type": "application/x-www-form-urlencoded"
-    }},
+    headers: {headers_json},
     body: {body_json},
     credentials: "include"
   }});

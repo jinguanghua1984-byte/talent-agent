@@ -27,6 +27,7 @@ from scripts.liepin_api_contract import (  # noqa: E402
     merge_condition_data,
 )
 from scripts.liepin_browser_runner import build_in_page_fetch_expression  # noqa: E402
+from scripts.liepin_browser_runner import sanitize_liepin_request_headers  # noqa: E402
 from scripts.liepin_campaign import (  # noqa: E402
     append_request_ledger,
     atomic_write_json,
@@ -40,6 +41,7 @@ from scripts.liepin_campaign import (  # noqa: E402
 DEFAULT_CDP_URL = "http://127.0.0.1:9898"
 DEFAULT_DELAY_SECONDS = 3.0
 DEFAULT_TIMEOUT_SECONDS = 30.0
+REQUEST_TEMPLATE_SCHEMA = "liepin_request_template_v1"
 
 
 def _now() -> str:
@@ -165,6 +167,31 @@ def _condition_raw_path(campaign_root: Path, job_id: int | str) -> Path:
     return campaign_root / "raw" / "condition" / f"job-{job_id}.json"
 
 
+def _request_template_path(paths: Any) -> Path:
+    return paths.state_dir / "request-template.json"
+
+
+def _load_request_template(paths: Any) -> dict[str, Any]:
+    template = _load_json(_request_template_path(paths), {})
+    if template in (None, {}):
+        return {}
+    if not isinstance(template, dict):
+        raise ValueError("request-template.json must be an object")
+    if template.get("schema") not in (None, REQUEST_TEMPLATE_SCHEMA):
+        raise ValueError(f"request-template.json schema must be {REQUEST_TEMPLATE_SCHEMA}")
+    headers = template.get("headers")
+    if headers is not None and not isinstance(headers, dict):
+        raise ValueError("request-template.json headers must be an object")
+    return template
+
+
+def _template_headers_for_request(template: dict[str, Any]) -> dict[str, str]:
+    return sanitize_liepin_request_headers(
+        template.get("headers") if isinstance(template.get("headers"), dict) else {},
+        refresh_trace_id=True,
+    )
+
+
 def _write_condition_raw(path: Path, *, response: dict[str, Any], request: dict[str, Any], run_id: str) -> None:
     atomic_write_json(
         path,
@@ -251,6 +278,7 @@ def run_live_search(
     strategy = _load_json(paths.strategy, {})
     resolved_run_id = run_id or f"liepin-live-{datetime.now().date().isoformat()}"
     resolved_job_id = _job_id(requirements)
+    request_template = _load_request_template(paths)
 
     target = find_liepin_target(list_targets(cdp_url))
     session = CdpSession(str(target["webSocketDebuggerUrl"]), timeout=timeout_seconds)
@@ -289,7 +317,11 @@ def run_live_search(
 
         condition_body = build_condition_request_body(resolved_job_id)
         condition_response = session.evaluate(
-            build_in_page_fetch_expression(CONDITION_BY_JOB_URL, condition_body),
+            build_in_page_fetch_expression(
+                CONDITION_BY_JOB_URL,
+                condition_body,
+                headers=_template_headers_for_request(request_template),
+            ),
             timeout_seconds,
         )
         if not isinstance(condition_response, dict):
@@ -343,7 +375,11 @@ def run_live_search(
                 },
             )
             search_response = session.evaluate(
-                build_in_page_fetch_expression(SEARCH_RESUMES_URL, search_body),
+                build_in_page_fetch_expression(
+                    SEARCH_RESUMES_URL,
+                    search_body,
+                    headers=_template_headers_for_request(request_template),
+                ),
                 timeout_seconds,
             )
             if not isinstance(search_response, dict):

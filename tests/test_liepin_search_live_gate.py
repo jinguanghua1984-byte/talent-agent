@@ -239,3 +239,171 @@ def test_run_live_search_stops_on_api_block_and_writes_continuation(tmp_path: Pa
     assert continuation["reason"] == "http_429"
     interruptions = sorted((root / "reports").glob("interruption-http_429-*.json"))
     assert len(interruptions) == 1
+
+
+def test_run_live_search_uses_sanitized_request_template_headers(tmp_path: Path, monkeypatch):
+    root = tmp_path / "liepin-demo"
+    init_campaign(root, 75703601)
+    plan_pages(root)
+    (root / "state" / "request-template.json").write_text(
+        json.dumps(
+            {
+                "schema": "liepin_request_template_v1",
+                "source": "cdp_network_event",
+                "headers": {
+                    "Accept": "application/json, text/plain, */*",
+                    "Content-Type": "text/plain",
+                    "X-XSRF-TOKEN": "safe-xsrf-token",
+                    "X-Fscp-Trace-Id": "stale-trace-id",
+                    "User-Agent": "browser-managed",
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    captured_calls = []
+
+    def fake_expression(url, body, headers=None):
+        captured_calls.append({"url": url, "body": body, "headers": headers or {}})
+        return url
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            self.calls = 0
+
+        def evaluate(self, expression, timeout=30):
+            self.calls += 1
+            if self.calls == 1:
+                return {"hasLiepinSearch": True, "hasLoginPrompt": False, "hasCaptcha": False}
+            if "get-search-condition-by-job" in expression:
+                return {
+                    "status": "ok",
+                    "httpStatus": 200,
+                    "contentType": "application/json",
+                    "rawLength": 120,
+                    "rawPreview": '{"flag":1}',
+                    "parseError": None,
+                    "data": {
+                        "flag": 1,
+                        "data": {
+                            "searchType": "1",
+                            "sortType": "0",
+                            "wantDqsOut": [{"dqCode": "010"}],
+                        },
+                    },
+                }
+            if "search-resumes" in expression:
+                return {
+                    "status": "ok",
+                    "httpStatus": 200,
+                    "contentType": "application/json",
+                    "rawLength": 200,
+                    "rawPreview": '{"flag":1,"data":{"cardResList":[]}}',
+                    "parseError": None,
+                    "data": {
+                        "flag": 1,
+                        "data": {
+                            "ckId": "ck-1",
+                            "skId": "sk-1",
+                            "fkId": "fk-1",
+                            "cardResList": [],
+                        },
+                    },
+                }
+            raise AssertionError(f"unexpected expression: {expression}")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        live_gate,
+        "list_targets",
+        lambda cdp_url: [
+            {
+                "type": "page",
+                "title": "找简历",
+                "url": "https://h.liepin.com/search/getConditionItem",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/1",
+            }
+        ],
+    )
+    monkeypatch.setattr(live_gate, "CdpSession", FakeSession)
+    monkeypatch.setattr(live_gate, "build_in_page_fetch_expression", fake_expression)
+
+    result = run_live_search(
+        campaign_root=root,
+        cdp_url="http://127.0.0.1:9898",
+        delay_seconds=0,
+        timeout_seconds=1,
+        max_pages=1,
+        run_id="run-template",
+    )
+
+    assert result["status"] == "completed"
+    assert len(captured_calls) == 2
+    for call in captured_calls:
+        assert call["headers"]["Accept"] == "application/json, text/plain, */*"
+        assert call["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
+        assert call["headers"]["X-XSRF-TOKEN"] == "safe-xsrf-token"
+        assert call["headers"]["X-Fscp-Trace-Id"] != "stale-trace-id"
+        assert "User-Agent" not in call["headers"]
+        assert "Cookie" not in call["headers"]
+
+
+def test_run_live_search_rejects_request_template_auth_headers(tmp_path: Path, monkeypatch):
+    root = tmp_path / "liepin-demo"
+    init_campaign(root, 75703601)
+    plan_pages(root)
+    (root / "state" / "request-template.json").write_text(
+        json.dumps(
+            {
+                "schema": "liepin_request_template_v1",
+                "headers": {
+                    "Accept": "application/json, text/plain, */*",
+                    "Cookie": "sid=secret",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            pass
+
+        def evaluate(self, expression, timeout=30):
+            return {"hasLiepinSearch": True, "hasLoginPrompt": False, "hasCaptcha": False}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        live_gate,
+        "list_targets",
+        lambda cdp_url: [
+            {
+                "type": "page",
+                "title": "找简历",
+                "url": "https://h.liepin.com/search/getConditionItem",
+                "webSocketDebuggerUrl": "ws://127.0.0.1/devtools/page/1",
+            }
+        ],
+    )
+    monkeypatch.setattr(live_gate, "CdpSession", FakeSession)
+
+    try:
+        run_live_search(
+            campaign_root=root,
+            cdp_url="http://127.0.0.1:9898",
+            delay_seconds=0,
+            timeout_seconds=1,
+            max_pages=1,
+            run_id="run-bad-template",
+        )
+    except ValueError as exc:
+        assert "forbidden" in str(exc)
+    else:
+        raise AssertionError("request template with Cookie header should be rejected")
