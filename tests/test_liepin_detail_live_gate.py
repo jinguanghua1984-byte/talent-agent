@@ -205,6 +205,7 @@ def test_run_live_detail_smoke_writes_jobs_ledger_and_sanitized_summary(tmp_path
     paths = ensure_campaign(tmp_path / "liepin-demo")
     pack_path = _write_target_pack(paths.root, [_contact("res-1", 0), _contact("res-2", 1)])
     expressions: list[str] = []
+    closed: list[bool] = []
 
     class FakeSession:
         def __init__(self, websocket_url, timeout=30):
@@ -221,7 +222,7 @@ def test_run_live_detail_smoke_writes_jobs_ledger_and_sanitized_summary(tmp_path
             raise AssertionError(f"unexpected expression: {expression}")
 
         def close(self):
-            pass
+            closed.append(True)
 
     _patch_liepin_target(monkeypatch, FakeSession)
 
@@ -236,6 +237,7 @@ def test_run_live_detail_smoke_writes_jobs_ledger_and_sanitized_summary(tmp_path
 
     assert result["status"] == "completed"
     assert result["completed"] == 2
+    assert closed == [True]
     job_000 = paths.root / "raw" / "detail-live" / "liepin-detail-p0-smoke-001" / "job-000.json"
     job_001 = paths.root / "raw" / "detail-live" / "liepin-detail-p0-smoke-001" / "job-001.json"
     assert job_000.exists()
@@ -252,6 +254,7 @@ def test_run_live_detail_smoke_writes_jobs_ledger_and_sanitized_summary(tmp_path
 def test_run_live_detail_smoke_blocks_without_writing_failed_job(tmp_path: Path, monkeypatch):
     paths = ensure_campaign(tmp_path / "liepin-demo")
     _write_target_pack(paths.root, [_contact("res-1", 0), _contact("res-2", 1)])
+    closed: list[bool] = []
 
     class FakeSession:
         def __init__(self, websocket_url, timeout=30):
@@ -272,7 +275,7 @@ def test_run_live_detail_smoke_blocks_without_writing_failed_job(tmp_path: Path,
             }
 
         def close(self):
-            pass
+            closed.append(True)
 
     _patch_liepin_target(monkeypatch, FakeSession)
 
@@ -288,6 +291,7 @@ def test_run_live_detail_smoke_blocks_without_writing_failed_job(tmp_path: Path,
     assert result["status"] == "blocked"
     assert result["stopReason"] == "http_429"
     assert result["completed"] == 0
+    assert closed == [True]
     job_000 = paths.root / "raw" / "detail-live" / "liepin-detail-p0-smoke-001" / "job-000.json"
     assert not job_000.exists()
     continuation = json.loads(
@@ -298,8 +302,89 @@ def test_run_live_detail_smoke_blocks_without_writing_failed_job(tmp_path: Path,
     assert continuation["resume_from"]["platform_id"] == "res-1"
     interruptions = sorted(paths.reports_dir.glob("interruption-detail-liepin-detail-p0-smoke-001-*.json"))
     assert len(interruptions) == 1
+    assert "run-002" in interruptions[0].name or "job-000" in interruptions[0].name
     interruption_dump = interruptions[0].read_text(encoding="utf-8-sig")
     assert "showresumedetail" not in interruption_dump
+
+
+@pytest.mark.parametrize(
+    "bad_contact,match",
+    [
+        ({**_contact("res-1", 0), "profile_url": ""}, "profile_url"),
+        ({**_contact("res-1", 0), "profile_url": "https://example.com/resume/showresumedetail"}, "not allowed"),
+        ({**_contact("res-1", 0), "platform_id": " "}, "platform_id"),
+        ({**_contact("res-1", 0), "user_id_encode": ""}, "user_id_encode"),
+        ({**_contact("res-1", 0), "index": -1}, "index"),
+    ],
+)
+def test_run_live_detail_smoke_rejects_malformed_contacts_before_cdp(
+    tmp_path: Path,
+    monkeypatch,
+    bad_contact: dict,
+    match: str,
+):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    _write_target_pack(paths.root, [bad_contact])
+    monkeypatch.setattr(detail_gate, "list_targets", lambda cdp_url: (_ for _ in ()).throw(AssertionError("opened CDP")))
+    monkeypatch.setattr(detail_gate, "CdpSession", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("opened session")))
+
+    with pytest.raises(ValueError, match=match):
+        run_live_detail_smoke(
+            campaign_root=paths.root,
+            target_pack="raw/detail-targets/liepin-detail-p0-smoke-001.json",
+            cdp_url="http://127.0.0.1:9898",
+            delay_seconds=0,
+            timeout_seconds=1,
+            run_id="run-bad",
+        )
+
+    assert not (paths.state_dir / "detail-request-ledger.jsonl").exists()
+    assert not (paths.reports_dir / "detail-smoke-summary.json").exists()
+
+
+def test_run_live_detail_smoke_blocks_partial_detail_and_marks_template_drift(tmp_path: Path, monkeypatch):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    _write_target_pack(paths.root, [_contact("res-1", 0)])
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            self.calls = 0
+
+        def evaluate(self, expression, timeout=30):
+            self.calls += 1
+            if self.calls == 1:
+                return {"hasLiepinSearch": True, "hasLoginPrompt": False, "hasCaptcha": False}
+            return {
+                "status": "ok",
+                "httpStatus": 200,
+                "contentType": "application/json",
+                "rawLength": 20,
+                "parseError": None,
+                "rawPreview": '{"flag":1,"data":{}}',
+                "data": {"flag": 1, "data": {}},
+            }
+
+        def close(self):
+            pass
+
+    _patch_liepin_target(monkeypatch, FakeSession)
+
+    result = run_live_detail_smoke(
+        campaign_root=paths.root,
+        target_pack="raw/detail-targets/liepin-detail-p0-smoke-001.json",
+        cdp_url="http://127.0.0.1:9898",
+        delay_seconds=0,
+        timeout_seconds=1,
+        run_id="run-partial",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["stopReason"] == "partial_detail"
+    summary = json.loads((paths.reports_dir / "detail-smoke-summary.json").read_text(encoding="utf-8-sig"))
+    assert summary["template_drift"] == 1
+    interruptions = sorted(paths.reports_dir.glob("interruption-detail-liepin-detail-p0-smoke-001-*.json"))
+    assert len(interruptions) == 1
+    assert "run-partial" in interruptions[0].name or "job-000" in interruptions[0].name
 
 
 def test_run_live_detail_smoke_resume_skips_completed_jobs(tmp_path: Path, monkeypatch):

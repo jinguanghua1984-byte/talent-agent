@@ -64,7 +64,12 @@ def _now() -> str:
 
 
 def _timestamp() -> str:
-    return datetime.now().strftime("%Y%m%d%H%M%S")
+    return datetime.now().strftime("%Y%m%d%H%M%S%f")
+
+
+def _safe_filename_part(value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value)).strip("-")
+    return safe or "run"
 
 
 def _load_json(path: Path) -> Any:
@@ -317,7 +322,8 @@ def _write_interruption(
     response: Mapping[str, Any] | None = None,
     health: Mapping[str, Any] | None = None,
 ) -> Path:
-    report_path = paths.reports_dir / f"interruption-detail-{pack_id}-{_timestamp()}.json"
+    safe_run_id = _safe_filename_part(run_id)
+    report_path = paths.reports_dir / f"interruption-detail-{pack_id}-{safe_run_id}-job-{job_index:03d}-{_timestamp()}.json"
     payload = {
         "schema": "liepin_detail_smoke_interruption_v1",
         "campaign_id": paths.campaign_id,
@@ -407,10 +413,40 @@ def _validate_target_pack(plan: Any) -> dict[str, Any]:
     contacts = plan.get("contacts")
     if not isinstance(contacts, list):
         raise ValueError("target pack contacts must be a list")
-    for index, contact in enumerate(contacts):
-        if not isinstance(contact, dict):
-            raise ValueError(f"target pack contact {index} must be an object")
     return plan
+
+
+def _validate_detail_contacts(contacts: list[Any], limit: int) -> list[dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    for selected_index, contact in enumerate(contacts[:limit]):
+        if not isinstance(contact, dict):
+            raise ValueError(f"target pack contact {selected_index} must be an object")
+
+        platform_id = str(contact.get("platform_id") or "").strip()
+        if not platform_id:
+            raise ValueError(f"target pack contact {selected_index} platform_id must be non-empty")
+
+        user_id_encode = str(contact.get("user_id_encode") or "").strip()
+        if not user_id_encode:
+            raise ValueError(f"target pack contact {selected_index} user_id_encode must be non-empty")
+
+        profile_url = str(contact.get("profile_url") or "").strip()
+        if not profile_url:
+            raise ValueError(f"target pack contact {selected_index} profile_url must be non-empty")
+        profile_url = validate_detail_url(profile_url)
+
+        raw_index = contact.get("index", selected_index)
+        if type(raw_index) is not int or raw_index < 0:
+            raise ValueError(f"target pack contact {selected_index} index must be a non-negative int")
+
+        normalized = dict(contact)
+        normalized["index"] = raw_index
+        normalized["platform_id"] = platform_id
+        normalized["user_id_encode"] = user_id_encode
+        normalized["profile_url"] = profile_url
+        normalized["raw_ref"] = contact.get("raw_ref") if isinstance(contact.get("raw_ref"), dict) else {}
+        selected.append(normalized)
+    return selected
 
 
 def run_live_detail_smoke(
@@ -430,7 +466,7 @@ def run_live_detail_smoke(
     plan_path = _target_pack_path(paths.root, target_pack)
     plan = _validate_target_pack(_load_json(plan_path))
     pack_id = _pack_id(plan, plan_path)
-    contacts = [contact for contact in plan["contacts"][:limit] if isinstance(contact, dict)]
+    contacts = _validate_detail_contacts(plan["contacts"], limit)
     resolved_run_id = run_id or f"liepin-detail-live-{datetime.now().date().isoformat()}"
     job_dir = paths.raw_dir / "detail-live" / pack_id
     completed_jobs = load_completed_detail_jobs(job_dir)
