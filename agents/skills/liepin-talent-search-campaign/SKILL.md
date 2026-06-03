@@ -65,6 +65,8 @@ description: Use when the user wants to create or run a Liepin recruiting-side t
 - `structured/candidate-summaries.jsonl`
 - `reports/search-summary.json`
 - `reports/search-summary.md`
+- `reports/candidate-pool-diagnostic.json`
+- `reports/candidate-pool-diagnostic.md`
 - `reports/interruption-*.json`
 
 ## 安全边界
@@ -72,7 +74,7 @@ description: Use when the user wants to create or run a Liepin recruiting-side t
 - 不绕过登录、验证码、安全页、权限、付费限制、搜索日限或平台风控。
 - 遇到登录失效、验证码、安全页、403、429、432、非 JSON、HTML 响应、`flag != 1` 或模板漂移，必须立即停止并写恢复计划。
 - 停机不等于失败；只要 raw 和 continuation 完整，可以在用户处理平台状态后恢复。
-- P0 不抓简历详情，不还原脱敏姓名，不写主人才库。
+- P0 不抓简历详情，不还原脱敏姓名，不写主人才库。候选池诊断只基于列表摘要生成详情优先级预览，不等同于推荐报告。
 
 ## 自动交接
 

@@ -28,6 +28,7 @@ from scripts.liepin_cdp_browser_bootstrap import (  # noqa: E402
     launch_browser_process,
     write_manifest,
 )
+from scripts.liepin_candidate_pool_diagnostic import diagnose_candidate_pool  # noqa: E402
 from scripts.liepin_search_live_gate import run_live_search  # noqa: E402
 from scripts.liepin_search_standardize import standardize_campaign  # noqa: E402
 
@@ -208,6 +209,9 @@ def main(argv: list[str] | None = None) -> int:
     summarize_parser = subparsers.add_parser("summarize")
     summarize_parser.add_argument("--campaign-root", required=True)
 
+    diagnose = subparsers.add_parser("diagnose-pool")
+    diagnose.add_argument("--campaign-root", required=True)
+
     launch = subparsers.add_parser("launch-browser")
     launch.add_argument("--browser", type=Path)
     launch.add_argument("--profile", type=Path, default=DEFAULT_PROFILE)
@@ -237,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
             result = standardize_campaign(args.campaign_root)
         elif args.command == "summarize":
             result = summarize(args.campaign_root)
+        elif args.command == "diagnose-pool":
+            result = diagnose_candidate_pool(args.campaign_root)
         elif args.command == "launch-browser":
             result = launch_browser(
                 browser=args.browser,

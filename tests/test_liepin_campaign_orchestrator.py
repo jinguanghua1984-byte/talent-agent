@@ -98,6 +98,27 @@ def test_standardize_and_summarize_commands(tmp_path: Path):
     assert json.loads(summarized.stdout)["candidate_count"] == 1
 
 
+def test_diagnose_pool_command_writes_candidate_pool_report(tmp_path: Path):
+    root = tmp_path / "liepin-demo"
+    paths = ensure_campaign(root)
+    mark_page_completed(
+        paths,
+        cur_page=0,
+        payload=_search_payload(),
+        request={"endpoint": "search-resumes"},
+        run_id="run-001",
+    )
+    assert _run_cli("standardize", "--campaign-root", str(root)).returncode == 0
+
+    completed = _run_cli("diagnose-pool", "--campaign-root", str(root))
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["schema"] == "liepin_candidate_pool_diagnostic_v1"
+    assert payload["candidate_count"] == 1
+    assert (root / "reports" / "candidate-pool-diagnostic.json").exists()
+
+
 def test_status_prints_empty_or_existing_stage_state(tmp_path: Path):
     root = tmp_path / "liepin-demo"
     assert _run_cli("init", "--campaign-root", str(root), "--job-id", "75703601").returncode == 0
