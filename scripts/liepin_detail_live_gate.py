@@ -57,6 +57,16 @@ BUSINESS_BLOCK_MARKERS = (
     "受限",
 )
 DETAIL_JOB_NAME_RE = re.compile(r"^job-(\d{3})\.json$")
+REPORT_SENSITIVE_STRING_MARKERS = (
+    "showresumedetail",
+    "ckid",
+    "skid",
+    "fkid",
+    "ck_id",
+    "sk_id",
+    "fk_id",
+    "liepin.com/resume",
+)
 
 
 def _now() -> str:
@@ -224,6 +234,13 @@ def load_completed_detail_jobs(job_dir: str | Path) -> dict[int, str]:
 def sanitize_detail_result_for_report(payload: Any) -> Any:
     if isinstance(payload, list):
         return [sanitize_detail_result_for_report(item) for item in payload]
+    if isinstance(payload, str):
+        lowered = payload.lower()
+        if any(marker in lowered for marker in REPORT_SENSITIVE_STRING_MARKERS):
+            return "[redacted]"
+        if "res_id_encode" in lowered and ("://" in lowered or "/" in lowered or "?" in lowered):
+            return "[redacted]"
+        return payload
     if not isinstance(payload, dict):
         return payload
 
@@ -378,7 +395,7 @@ def _write_summary(
     completed: int,
     failed: int,
     blocked: bool,
-    template_drift: bool,
+    template_drift: bool | int,
     captured_field_groups: list[str],
     status: str,
     stop_reason: str | None,
@@ -393,7 +410,7 @@ def _write_summary(
         "completed": completed,
         "failed": failed,
         "blocked": blocked,
-        "template_drift": template_drift,
+        "template_drift": 1 if template_drift else 0,
         "captured_field_groups": sorted(set(captured_field_groups)),
         "status": status,
         "stopReason": stop_reason,
@@ -543,6 +560,69 @@ def run_live_detail_smoke(
         for position, contact in enumerate(contacts):
             job_index = int(contact.get("index") if type(contact.get("index")) is int else position)
             if job_index in completed_jobs:
+                completed_platform_id = completed_jobs[job_index]
+                if completed_platform_id != str(contact.get("platform_id") or ""):
+                    reason = "resume_platform_mismatch"
+                    result.update(
+                        {
+                            "status": "blocked",
+                            "stopReason": reason,
+                            "completed": newly_completed,
+                            "failed": failed,
+                        }
+                    )
+                    _write_continuation(
+                        paths,
+                        pack_id,
+                        plan_path,
+                        contact,
+                        job_index,
+                        reason,
+                        job_dir,
+                        resolved_run_id,
+                    )
+                    _write_interruption(
+                        paths=paths,
+                        pack_id=pack_id,
+                        run_id=resolved_run_id,
+                        reason=reason,
+                        job_index=job_index,
+                        contact=contact,
+                        response={
+                            "status": "blocked",
+                            "reason": reason,
+                            "completed_platform_id": completed_platform_id,
+                            "target_platform_id": str(contact.get("platform_id") or ""),
+                        },
+                    )
+                    _write_summary(
+                        paths=paths,
+                        pack_id=pack_id,
+                        run_id=resolved_run_id,
+                        targets=len(contacts),
+                        completed=newly_completed,
+                        failed=failed,
+                        blocked=True,
+                        template_drift=0,
+                        captured_field_groups=captured_groups,
+                        status="blocked",
+                        stop_reason=reason,
+                        next_step=f"resume_after_{reason}",
+                    )
+                    _append_detail_ledger(
+                        paths,
+                        {
+                            "event": "detail_blocked",
+                            "reason": reason,
+                            "stage": "resume",
+                            "pack_id": pack_id,
+                            "job_index": job_index,
+                            "platform_id": str(contact.get("platform_id") or ""),
+                            "completed_platform_id": completed_platform_id,
+                            "run_id": resolved_run_id,
+                        },
+                    )
+                    return result
                 continue
 
             response = session.evaluate(build_detail_fetch_expression(str(contact["profile_url"])), timeout_seconds)

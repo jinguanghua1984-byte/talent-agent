@@ -131,6 +131,31 @@ def test_sanitize_detail_result_for_report_removes_sensitive_fields():
     assert sanitized["response"]["httpStatus"] == 403
 
 
+def test_sanitize_detail_result_for_report_redacts_sensitive_string_values():
+    payload = {
+        "response": {
+            "data": {
+                "msg": "go https://h.liepin.com/resume/showresumedetail/?ck_id=secret",
+                "nested": {
+                    "redirect": "resume/showresumedetail/?sk_id=x",
+                    "trace": "ckId=a&skId=b&fkId=c",
+                },
+                "plain": "正常消息",
+            }
+        }
+    }
+
+    sanitized = sanitize_detail_result_for_report(payload)
+    dumped = json.dumps(sanitized, ensure_ascii=False)
+
+    assert sanitized["response"]["data"]["msg"] == "[redacted]"
+    assert sanitized["response"]["data"]["nested"]["redirect"] == "[redacted]"
+    assert sanitized["response"]["data"]["nested"]["trace"] == "[redacted]"
+    assert sanitized["response"]["data"]["plain"] == "正常消息"
+    for marker in ("showresumedetail", "ck_id", "sk_id", "ckId", "skId", "fkId", "h.liepin.com/resume"):
+        assert marker not in dumped
+
+
 def _contact(platform_id: str, index: int) -> dict:
     return {
         "index": index,
@@ -382,9 +407,64 @@ def test_run_live_detail_smoke_blocks_partial_detail_and_marks_template_drift(tm
     assert result["stopReason"] == "partial_detail"
     summary = json.loads((paths.reports_dir / "detail-smoke-summary.json").read_text(encoding="utf-8-sig"))
     assert summary["template_drift"] == 1
+    assert type(summary["template_drift"]) is int
     interruptions = sorted(paths.reports_dir.glob("interruption-detail-liepin-detail-p0-smoke-001-*.json"))
     assert len(interruptions) == 1
     assert "run-partial" in interruptions[0].name or "job-000" in interruptions[0].name
+
+
+def test_run_live_detail_smoke_blocks_on_resume_platform_mismatch_without_fetching_next(
+    tmp_path: Path,
+    monkeypatch,
+):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    _write_target_pack(paths.root, [_contact("res-1", 0), _contact("res-2", 1)])
+    job_dir = paths.root / "raw" / "detail-live" / "liepin-detail-p0-smoke-001"
+    job_dir.mkdir(parents=True)
+    detail_job_path(job_dir, 0).write_text(
+        json.dumps(
+            {
+                "schema": "liepin_detail_smoke_job_v1",
+                "status": "done",
+                "platform_id": "other",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    expressions: list[str] = []
+
+    class FakeSession:
+        def __init__(self, websocket_url, timeout=30):
+            pass
+
+        def evaluate(self, expression, timeout=30):
+            expressions.append(expression)
+            if len(expressions) == 1:
+                return {"hasLiepinSearch": True, "hasLoginPrompt": False, "hasCaptcha": False}
+            raise AssertionError(f"unexpected fetch after mismatch: {expression}")
+
+        def close(self):
+            pass
+
+    _patch_liepin_target(monkeypatch, FakeSession)
+
+    result = run_live_detail_smoke(
+        campaign_root=paths.root,
+        target_pack="raw/detail-targets/liepin-detail-p0-smoke-001.json",
+        cdp_url="http://127.0.0.1:9898",
+        delay_seconds=0,
+        timeout_seconds=1,
+        run_id="run-mismatch",
+    )
+
+    assert result["status"] == "blocked"
+    assert result["stopReason"] == "resume_platform_mismatch"
+    assert len(expressions) == 1
+    assert all("res_id_encode=res-2" not in expression for expression in expressions)
+    summary = json.loads((paths.reports_dir / "detail-smoke-summary.json").read_text(encoding="utf-8-sig"))
+    assert summary["status"] == "blocked"
+    assert summary["stopReason"] == "resume_platform_mismatch"
 
 
 def test_run_live_detail_smoke_resume_skips_completed_jobs(tmp_path: Path, monkeypatch):
