@@ -44,11 +44,17 @@ def test_build_detail_fetch_expression_uses_credentials_and_safe_headers():
 
 
 def test_build_detail_fetch_expression_rejects_forbidden_auth_headers():
-    with pytest.raises(ValueError, match="forbidden"):
-        build_detail_fetch_expression(
-            "https://h.liepin.com/resume/showresumedetail/?res_id_encode=res-1",
-            headers={"Cookie": "sid=secret"},
-        )
+    detail_url = "https://h.liepin.com/resume/showresumedetail/?res_id_encode=res-1"
+    for header_name, header_value in (
+        ("Cookie", "sid=secret"),
+        ("Authorization", "Bearer secret"),
+        ("Proxy-Authorization", "Bearer secret"),
+    ):
+        with pytest.raises(ValueError, match="forbidden"):
+            build_detail_fetch_expression(
+                detail_url,
+                headers={header_name: header_value},
+            )
 
 
 def test_classify_detail_result_detects_blocks_partial_and_success():
@@ -64,19 +70,23 @@ def test_classify_detail_result_detects_blocks_partial_and_success():
 def test_detail_job_path_and_load_completed_detail_jobs(tmp_path: Path):
     job_dir = tmp_path / "jobs"
     job_dir.mkdir()
-    detail_job_path(job_dir, 2).write_text(
-        json.dumps({"status": "done", "platform_id": "res-2"}, ensure_ascii=False),
+    detail_job_path(job_dir, 12).write_text(
+        json.dumps({"status": "done", "platform_id": "res-12"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (job_dir / "job-2.json").write_text(
+        json.dumps({"status": "done", "platform_id": "res-noncanonical"}, ensure_ascii=False),
         encoding="utf-8",
     )
     detail_job_path(job_dir, 3).write_text(
         json.dumps({"status": "blocked", "platform_id": "res-3"}, ensure_ascii=False),
         encoding="utf-8",
     )
-    (job_dir / "job-bad.json").write_text("{}", encoding="utf-8")
+    (job_dir / "job-abc.json").write_text("{}", encoding="utf-8")
     (job_dir / "job-004.json").write_text("{bad", encoding="utf-8")
 
     assert detail_job_path(job_dir, 2) == job_dir / "job-002.json"
-    assert load_completed_detail_jobs(job_dir) == {2: "res-2"}
+    assert load_completed_detail_jobs(job_dir) == {12: "res-12"}
 
     with pytest.raises(ValueError, match="non-negative"):
         detail_job_path(job_dir, -1)

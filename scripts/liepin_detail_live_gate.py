@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,6 +40,7 @@ BUSINESS_BLOCK_MARKERS = (
     "余额不足",
     "受限",
 )
+DETAIL_JOB_NAME_RE = re.compile(r"^job-(\d{3})\.json$")
 
 
 def _now() -> str:
@@ -149,12 +151,10 @@ def detail_job_path(job_dir: str | Path, index: int) -> Path:
 def load_completed_detail_jobs(job_dir: str | Path) -> dict[int, str]:
     completed: dict[int, str] = {}
     for raw_path in Path(job_dir).glob("job-*.json"):
-        try:
-            index = int(raw_path.stem.rsplit("-", 1)[1])
-        except (IndexError, ValueError):
+        match = DETAIL_JOB_NAME_RE.fullmatch(raw_path.name)
+        if not match:
             continue
-        if index < 0:
-            continue
+        index = int(match.group(1))
         try:
             payload = _load_json(raw_path)
         except (OSError, json.JSONDecodeError):
