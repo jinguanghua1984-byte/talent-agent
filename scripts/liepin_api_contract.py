@@ -93,6 +93,16 @@ def _dq_codes(items: Any) -> str:
     return ",".join(codes)
 
 
+def _has_explicit_override(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str) and value == "":
+        return False
+    if isinstance(value, (list, dict, tuple, set)) and not value:
+        return False
+    return True
+
+
 def merge_condition_data(
     condition_data: dict[str, Any] | None,
     overrides: dict[str, Any] | None = None,
@@ -123,7 +133,8 @@ def merge_condition_data(
         params["wantDqs"] = want_dqs
 
     for key, value in (overrides or {}).items():
-        params[key] = value
+        if _has_explicit_override(value):
+            params[key] = value
 
     return params
 

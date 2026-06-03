@@ -3,6 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import scripts.liepin_campaign_orchestrator as orchestrator
 from scripts.liepin_campaign import ensure_campaign, mark_page_completed
 
 
@@ -52,7 +53,7 @@ def test_init_cli_writes_campaign_contracts(tmp_path: Path):
     manifest = json.loads((root / "campaign-manifest.json").read_text(encoding="utf-8-sig"))
     assert requirements["job_id"] == 75703601
     assert strategy["page_plan"] == {"start_cur_page": 0, "max_pages": 1}
-    assert run_policy["execution_surface"] == "chrome_in_page_fetch"
+    assert run_policy["execution_surface"] == "cdp_in_page_fetch"
     assert run_policy["allow_main_db_write"] is False
     assert manifest["schema"] == "liepin_talent_search_campaign_v1"
 
@@ -107,3 +108,71 @@ def test_status_prints_empty_or_existing_stage_state(tmp_path: Path):
     payload = json.loads(completed.stdout)
     assert payload["campaign_root"] == str(root)
     assert payload["has_continuation_plan"] is False
+
+
+def test_launch_browser_command_dry_run_writes_manifest(tmp_path: Path):
+    browser = tmp_path / "chrome"
+    browser.write_text("", encoding="utf-8")
+    manifest_path = tmp_path / "liepin-session.json"
+
+    completed = _run_cli(
+        "launch-browser",
+        "--browser",
+        str(browser),
+        "--manifest-out",
+        str(manifest_path),
+        "--dry-run",
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert payload["status"] == "dry_run"
+    assert payload["cdp_url"] == "http://127.0.0.1:9898"
+    assert payload["manifest_out"] == str(manifest_path)
+    assert manifest["schema"] == "liepin_cdp_browser_session_v1"
+
+
+def test_run_live_search_command_delegates_to_live_gate(tmp_path: Path, monkeypatch, capsys):
+    calls = []
+
+    def fake_run_live_search(**kwargs):
+        calls.append(kwargs)
+        return {
+            "status": "completed",
+            "campaign_id": Path(kwargs["campaign_root"]).name,
+            "pagesCompleted": [0],
+        }
+
+    monkeypatch.setattr(orchestrator, "run_live_search", fake_run_live_search)
+
+    result = orchestrator.main(
+        [
+            "run-live-search",
+            "--campaign-root",
+            str(tmp_path / "liepin-demo"),
+            "--cdp-url",
+            "http://127.0.0.1:9898",
+            "--max-pages",
+            "1",
+            "--delay-seconds",
+            "0",
+            "--timeout-seconds",
+            "1",
+            "--run-id",
+            "run-test",
+        ]
+    )
+
+    assert result == 0
+    assert calls == [
+        {
+            "campaign_root": str(tmp_path / "liepin-demo"),
+            "cdp_url": "http://127.0.0.1:9898",
+            "delay_seconds": 0,
+            "timeout_seconds": 1,
+            "max_pages": 1,
+            "run_id": "run-test",
+        }
+    ]
+    assert json.loads(capsys.readouterr().out)["pagesCompleted"] == [0]

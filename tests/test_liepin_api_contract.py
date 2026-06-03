@@ -77,6 +77,40 @@ def test_merge_condition_data_applies_default_shape_and_overrides():
     assert params["anyKeyword"] == "0"
 
 
+def test_merge_condition_data_ignores_empty_placeholder_overrides():
+    condition_data = {
+        "workYearsLow": 3,
+        "workYearsHigh": 99,
+        "eduLevels": ["040", "030", "010"],
+        "eduLevelTz": True,
+        "wantDqsOut": [{"dqCode": "010", "dqName": "北京"}],
+        "searchType": "1",
+        "sortType": "0",
+    }
+
+    params = merge_condition_data(
+        condition_data,
+        overrides={
+            "keyword": "",
+            "wantDqs": "",
+            "eduLevels": [],
+            "workYearsLow": None,
+            "workYearsHigh": None,
+            "sortType": "0",
+            "resumetype": "0",
+        },
+        job_id=75703601,
+        cur_page=0,
+    )
+
+    assert params["wantDqs"] == "010"
+    assert params["workYearsLow"] == 3
+    assert params["workYearsHigh"] == 99
+    assert params["eduLevels"] == ["040", "030", "010"]
+    assert params["sortType"] == "0"
+    assert params["resumetype"] == "0"
+
+
 @pytest.mark.parametrize(
     ("status", "content_type", "raw_text", "parsed", "reason"),
     [

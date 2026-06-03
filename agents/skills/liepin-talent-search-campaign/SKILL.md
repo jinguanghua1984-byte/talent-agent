@@ -36,7 +36,7 @@ description: Use when the user wants to create or run a Liepin recruiting-side t
 
 ## 默认运行策略
 
-- `execution_surface="chrome_in_page_fetch"`
+- `execution_surface="cdp_in_page_fetch"`
 - 默认 `max_pages=1`
 - 单次人工确认后最多 `max_pages=5`
 - `allow_detail_fetch=false`
