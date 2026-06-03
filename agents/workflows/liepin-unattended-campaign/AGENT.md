@@ -114,7 +114,7 @@ POST https://api-h.liepin.com/api/com.liepin.searchfront4r.h.search-resumes
 
 详情 smoke 逐人写 `raw/detail-live/<pack_id>/job-*.json`，并追加 `state/detail-request-ledger.jsonl`。遇到登录页、验证码、安全页、401、403、429、432、非 JSON、业务阻断或 partial capture 时立即停止，写 interruption 和 continuation。
 
-详情 smoke 只写 `reports/detail-smoke-summary.json` 和 `reports/detail-smoke-summary.md` 作为执行摘要，不生成推荐结论，不写 Campaign DB，不写主库，不写 outreach queue。
+详情 smoke 只写 `reports/detail-smoke-summary.json` 和 `reports/detail-smoke-summary.md` 作为执行摘要，不生成推荐报告，不生成推荐结论，不写 Campaign DB，不写主库，不写 `data/talent.db`，不写外联队列（outreach queue），不生成飞书交付包（Feishu package）。
 
 ### S8 关闭
 

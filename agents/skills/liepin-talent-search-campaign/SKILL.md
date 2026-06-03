@@ -83,7 +83,7 @@ description: Use when the user wants to create or run a Liepin recruiting-side t
 - target pack 生成只读取本地 `structured/candidate-summaries.jsonl`，不触发猎聘请求。
 - live 详情 smoke 遇到登录、验证码、安全页、401、403、429、432、非 JSON、业务阻断或 partial capture 必须立即停止并写 interruption/continuation。
 - 详情 smoke 不写 Campaign DB，不写主库，不写 `data/talent.db`。
-- 详情 smoke 不生成推荐结论，不生成 outreach queue，不生成 Feishu package。
+- 详情 smoke 不生成推荐报告，不生成推荐结论，不生成外联队列（outreach queue），不生成飞书交付包（Feishu package）。
 
 ## 自动交接
 

@@ -266,6 +266,23 @@ def test_liepin_contracts_define_detail_smoke_boundary():
         assert "上限 20" in text
         assert "不写 Campaign DB" in text
         assert "不写主库" in text
+        assert "data/talent.db" in text
+        assert "推荐报告" in text
+        assert "外联队列" in text
+        assert "飞书交付包" in text
+        assert "不触发猎聘请求" in text
+        for stop_marker in [
+            "登录",
+            "验证码",
+            "401",
+            "403",
+            "429",
+            "432",
+            "非 JSON",
+            "partial capture",
+        ]:
+            assert stop_marker in text
+        assert "安全页" in text or "安全验证" in text
 
     assert "plan-detail-smoke" in workflow
     assert "run-live-detail-smoke" in workflow
