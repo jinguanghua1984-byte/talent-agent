@@ -1,10 +1,13 @@
 import json
+from pathlib import Path
 
 import pytest
 
 from scripts.jd_feedback_note_parser import (
     build_feedback_prompt,
     extract_json_object,
+    main,
+    parse_feedback_csv,
     parse_feedback_note,
 )
 
@@ -27,6 +30,22 @@ class FakeClient:
         return self.response
 
 
+class QueueClient:
+    def __init__(self, responses: list[str]):
+        self.responses = responses
+        self.calls: list[dict] = []
+
+    def complete(self, messages, model, max_tokens):
+        self.calls.append(
+            {
+                "messages": messages,
+                "model": model,
+                "max_tokens": max_tokens,
+            }
+        )
+        return self.responses.pop(0)
+
+
 def _response(**overrides) -> str:
     data = {
         "feedback_label": "认可",
@@ -37,6 +56,48 @@ def _response(**overrides) -> str:
     }
     data.update(overrides)
     return json.dumps(data, ensure_ascii=False)
+
+
+def _run_root(tmp_path: Path) -> Path:
+    root = tmp_path / "run"
+    (root / "profile").mkdir(parents=True)
+    (root / "scoring").mkdir()
+    (root / "reports").mkdir()
+    (root / "run-manifest.json").write_text(
+        json.dumps({"output_dir": "data/output/demo-run"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (root / "profile" / "role-profile.json").write_text(
+        json.dumps(
+            {
+                "schema": "role_profile_v1",
+                "version": "profile-v1",
+                "role_id": "demo-role",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (root / "scoring" / "scorecard.json").write_text(
+        json.dumps(
+            {
+                "schema": "scorecard_v1",
+                "version": "v1",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (root / "reports" / "outreach-queue.csv").write_text(
+        (
+            "candidate_id,rank,grade,score,feedback_note\n"
+            "101,1,A,88,候选人方向准确，可以沟通。\n"
+            "102,2,A,84,看起来相关，但证据不够。\n"
+            "103,3,C,61,\n"
+        ),
+        encoding="utf-8-sig",
+    )
+    return root
 
 
 def test_build_feedback_prompt_includes_field_meanings_and_note() -> None:
@@ -141,3 +202,88 @@ def test_parse_feedback_note_handles_llm_failure_as_review_required() -> None:
         "review_required": True,
         "review_reasons": ["llm_error"],
     }
+
+
+def test_parse_feedback_csv_writes_delivery_feedback_and_review_queue(
+    tmp_path: Path,
+) -> None:
+    root = _run_root(tmp_path)
+    client = QueueClient(
+        [
+            _response(parse_confidence=0.91),
+            _response(
+                feedback_label="待定",
+                reason_codes=["evidence_too_shallow"],
+                parse_confidence=0.52,
+            ),
+        ]
+    )
+
+    result = parse_feedback_csv(root, client=client, model="model-x")
+
+    assert result["parsed_count"] == 2
+    assert result["accepted_count"] == 1
+    assert result["review_count"] == 1
+    delivery = json.loads(
+        (root / "feedback" / "delivery-feedback.json").read_text(encoding="utf-8-sig")
+    )
+    assert delivery["schema"] == "jd_delivery_feedback_v1"
+    assert delivery["role_id"] == "demo-role"
+    assert delivery["scorecard_version"] == "v1"
+    assert len(delivery["candidate_feedback"]) == 1
+    item = delivery["candidate_feedback"][0]
+    assert item["candidate_id"] == "101"
+    assert item["original_grade"] == "A"
+    assert item["original_score"] == 88
+    review = json.loads(
+        (root / "feedback" / "parse-review-queue.json").read_text(encoding="utf-8-sig")
+    )
+    assert review["schema"] == "jd_delivery_feedback_parse_review_queue_v1"
+    assert len(review["items"]) == 1
+    assert review["items"][0]["candidate_id"] == "102"
+    assert review["items"][0]["review_status"] == "pending"
+    summary = json.loads(
+        (root / "feedback" / "feedback-summary.json").read_text(encoding="utf-8-sig")
+    )
+    assert summary["metrics"]["accepted_at_10"] == 1
+
+
+def test_parse_feedback_csv_dry_run_does_not_write_outputs(tmp_path: Path) -> None:
+    root = _run_root(tmp_path)
+    client = QueueClient([_response(), _response(parse_confidence=0.52)])
+
+    result = parse_feedback_csv(root, client=client, model="model-x", dry_run=True)
+
+    assert result["parsed_count"] == 2
+    assert result["accepted_count"] == 1
+    assert result["review_count"] == 1
+    assert not (root / "feedback" / "delivery-feedback.json").exists()
+    assert not (root / "feedback" / "parse-review-queue.json").exists()
+    assert not (root / "feedback" / "feedback-summary.json").exists()
+    assert not (root / "feedback" / "calibration-suggestions.json").exists()
+
+
+def test_cli_parse_csv_uses_run_root(tmp_path: Path) -> None:
+    root = _run_root(tmp_path)
+    client = QueueClient([_response(), _response(parse_confidence=0.52)])
+
+    exit_code = main(["parse-csv", "--run-root", str(root)], client=client)
+
+    assert exit_code == 0
+    assert (root / "feedback" / "delivery-feedback.json").exists()
+    assert (root / "feedback" / "parse-review-queue.json").exists()
+
+
+def test_cli_parse_single_note_writes_json(tmp_path: Path) -> None:
+    out_path = tmp_path / "note.json"
+    client = QueueClient([_response()])
+
+    exit_code = main(
+        ["parse", "--note", "候选人方向准确，可以沟通。", "--out", str(out_path)],
+        client=client,
+    )
+
+    assert exit_code == 0
+    result = json.loads(out_path.read_text(encoding="utf-8-sig"))
+    assert result["feedback_label"] == "认可"
+    assert result["feedback_note"] == "候选人方向准确，可以沟通。"
