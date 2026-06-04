@@ -4,26 +4,28 @@
 
 ## Active Task
 
-### 猎聘 Campaign DB 主库同步 handoff dry-run（2026-06-04）
+### 人才库推荐反馈自然语言解析调研与设计（2026-06-04）
 
 计划：
-- [x] 完成上一阶段 adaptive live recovery/idempotence 聚焦实现和合同更新。
-- [x] 对照 `talent_sync.py export/verify-bundle/import dry-run`，补猎聘 campaign-local DB 到主库同步 handoff RED 测试。
-- [x] 实现只读主库 dry-run/report 命令，不执行 import apply。
-- [x] 更新猎聘 skill/workflow，明确主库写入仍需单独确认。
-- [x] 验证 JD delivery 可承接主库中的猎聘来源 URL，并在猎聘 workflow 中明确后续推荐/飞书交付交给 `jd-talent-delivery`。
-- [x] 运行聚焦、猎聘聚焦、全量测试、敏感边界扫描和最终 diff 检查。
+- [x] 盘点现有 JD delivery feedback 设计、代码、schema、测试和业务指南。
+- [x] 确认当前反馈能力缺口：业务需要手填结构化字段和原因码，自然语言解析入口尚未落地。
+- [x] 给出自然语言反馈解析的可选方案、推荐架构和安全边界。
+- [x] 写入正式 spec，并按 review 修正数据 contract、review queue 和 run-root 入口。
+- [x] 写入实施计划。
+- [ ] 用户选择执行方式后，再进入代码改造。
 
 边界：
-- 只读取 campaign-local `talent.db` 并写 `exports/` 与 `reports/` handoff 产物。
-- 可对指定主库路径执行 dry-run plan；不得创建、修改或 apply 到 `data/talent.db`。
-- 不连接 CDP，不触发猎聘请求，不读取浏览器敏感存储。
+- 本阶段先调研和设计，不改业务代码，不改 `data/talent.db`，不触发平台采集或飞书云端写入。
+- 结构化反馈字段继续作为内部 contract；业务侧目标是只填写自然语言不适配说明。
+- AI 解析结果必须可审计、可回退、可人工覆盖；不得自动直接修改评分卡或主库。
 
 阶段结果：
-- adaptive live recovery/idempotence 已完成：`tests/test_liepin_adaptive_search_live_gate.py` -> `5 passed`；猎聘聚焦 + 架构测试 -> `162 passed`；`git diff --check` 通过。
-- 新增 `main-db-sync-handoff`：导出 campaign-local sync bundle、verify bundle、生成主库 dry-run plan 和 `reports/main-db-sync-handoff.json/.md`；明确 `no_main_db_write=true`。
-- JD delivery 兼容性已补测试：猎聘脱敏 `profile_url` 可进入推荐 JSON 与 outreach CSV，质量门禁通过；猎聘 workflow 不直接生成推荐/飞书交付，而是在主库同步后交给 `jd-talent-delivery`。
-- 最终验证：JD delivery + 猎聘聚焦集合 `184 passed`；全量测试 `1232 passed, 1 warning`，warning 为既有 BOSS event loop deprecation；敏感边界扫描仅命中测试负断言和禁止条款；`git diff --check` 通过。
+- 已确认现有 Phase 1：`scripts/jd_delivery_feedback.py` 可编译结构化反馈，`reports/outreach-queue.csv` 已含 8 个空反馈列，S9 反馈回收默认只生成本地校准建议。
+- 已确认缺口：`docs/manual/jd-delivery-feedback-guide.md` 要求业务理解 `feedback_label`、`feedback_stage`、`reason_codes` 等字段，填写复杂度偏高。
+- 正式 spec：`docs/superpowers/specs/2026-06-04-jd-delivery-natural-language-feedback-design.md`。
+- 实施计划：`docs/superpowers/plans/2026-06-04-jd-delivery-feedback-note-parser.md`。
+- 设计决策：外联表只保留 `feedback_note`；LLM 直接解析；prompt 必须输出 `parse_confidence`；低置信度/降级条目进入 `parse-review-queue.json` 且默认不进入校准闭环；批量解析以 `--run-root` 为主入口；移除生命周期布尔列和 `actionable_at_30`。
+- 验证：计划自审通过；`git diff --check` 通过。
 
 ## Open Items
 
