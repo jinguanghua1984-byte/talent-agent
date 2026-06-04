@@ -135,6 +135,29 @@ def test_missing_real_name_is_reported_and_not_exported(tmp_path: Path) -> None:
     assert (root / "structured/maimai-match-targets.jsonl").read_text(encoding="utf-8") == ""
 
 
+def test_dry_run_real_name_status_blocks_even_with_non_empty_real_name(tmp_path: Path) -> None:
+    root = _campaign_root(tmp_path)
+    _append_jsonl(
+        root / "structured/candidates.jsonl",
+        {
+            "candidate_key": "boss-app:dry-run-name",
+            "real_name": "张三",
+            "real_name_status": "not_available_dry_run",
+            "current_company": "字节跳动",
+            "current_title": "产品经理",
+            "recommendation": "contact",
+        },
+    )
+
+    summary = export_targets(root)
+
+    assert summary["selected_count"] == 1
+    assert summary["target_count"] == 0
+    assert summary["missing_real_name_count"] == 1
+    assert summary["missing_real_name"] == ["boss-app:dry-run-name"]
+    assert (root / "structured/maimai-match-targets.jsonl").read_text(encoding="utf-8") == ""
+
+
 def test_missing_campaign_file_raises_file_not_found(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         export_targets(tmp_path / "missing-campaign")

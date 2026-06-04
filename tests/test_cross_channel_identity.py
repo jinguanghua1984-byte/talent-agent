@@ -80,6 +80,42 @@ def test_strong_high_precision_hit_auto_binds_with_high_score() -> None:
     assert decision.to_dict()["hit"]["platform_id"] == "maimai-1"
 
 
+def test_no_hits_returns_not_found_without_target_identity() -> None:
+    decision = decide_match(
+        _target(),
+        [],
+        "name_company_title",
+        "张三 字节跳动 高级 AI 产品负责人",
+    )
+
+    assert decision.match_status == "not_found"
+    assert decision.confidence == 0
+    assert decision.target_platform_id == ""
+    assert decision.target_profile_url == ""
+    assert decision.hit is None
+
+
+def test_mid_score_high_precision_hit_requires_confirmation() -> None:
+    decision = decide_match(
+        _target(),
+        [
+            MaimaiSearchHit(
+                platform_id="maimai-mid",
+                name="张三",
+                company="字节跳动",
+                title="销售经理",
+                profile_url="https://maimai.cn/profile/detail?dstu=maimai-mid",
+            )
+        ],
+        "name_company_title",
+        "张三 字节跳动 高级 AI 产品负责人",
+    )
+
+    assert 70 <= decision.confidence < 95
+    assert decision.match_status == "pending_confirmation"
+    assert decision.decision_reason == "score_requires_confirmation"
+
+
 def test_name_company_fallback_never_auto_binds() -> None:
     target = _target()
     hit = MaimaiSearchHit(
