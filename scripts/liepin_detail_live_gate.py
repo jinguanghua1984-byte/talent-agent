@@ -14,7 +14,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -26,6 +26,8 @@ from scripts.liepin_search_live_gate import (  # noqa: E402
     DEFAULT_CDP_URL,
     DEFAULT_DELAY_SECONDS,
     DEFAULT_TIMEOUT_SECONDS,
+    _load_request_template,
+    _template_headers_for_request,
     find_liepin_target,
     health_expression,
     is_blocking_health,
@@ -35,10 +37,35 @@ from scripts.liepin_search_live_gate import (  # noqa: E402
 
 DETAIL_BLOCK_STATUSES = {401, 403, 429, 432}
 DETAIL_TARGET_SCHEMA = "liepin_detail_smoke_targets_v1"
+DETAIL_PACK_TARGET_SCHEMA = "liepin_detail_pack_plan_v1"
 DETAIL_RUN_SCHEMA = "liepin_detail_smoke_run_v1"
+DETAIL_PACK_RUN_SCHEMA = "liepin_detail_pack_run_v1"
 DETAIL_JOB_SCHEMA = "liepin_detail_smoke_job_v1"
 DETAIL_SUMMARY_SCHEMA = "liepin_detail_smoke_summary_v1"
+DETAIL_PACK_SUMMARY_SCHEMA = "liepin_detail_pack_summary_v1"
 DETAIL_CONTINUATION_SCHEMA = "liepin_detail_smoke_continuation_v1"
+TERMINAL_DETAIL_JOB_STATUSES = {"done", "privacy_protected"}
+PRIVACY_PROTECTED_CODES = {"11000"}
+RESUME_VIEW_URL = "https://api-h.liepin.com/api/com.liepin.rresume.userh.pc.resume-view"
+RESUME_VIEW_PARAM_KEYS = (
+    "showsearchfeedback",
+    "res_id_encode",
+    "index",
+    "position",
+    "cur_page",
+    "pageSize",
+    "ck_id",
+    "sk_id",
+    "fk_id",
+    "sfrom",
+    "res_source",
+    "type",
+    "sss",
+    "sScene",
+    "dqCode",
+    "pgRef",
+    "searchHiliteKeys",
+)
 
 DETAIL_PAYLOAD_KEYS = {
     "name",
@@ -47,6 +74,10 @@ DETAIL_PAYLOAD_KEYS = {
     "workList",
     "workExperience",
     "educations",
+    "resumeDetailVo",
+    "resumeAnalysisModelVo",
+    "operateButtonVo",
+    "imInfoVo",
 }
 BUSINESS_BLOCK_MARKERS = (
     "验证码",
@@ -55,6 +86,22 @@ BUSINESS_BLOCK_MARKERS = (
     "无权限",
     "余额不足",
     "受限",
+)
+BUSINESS_BLOCK_MESSAGE_KEYS = {
+    "msg",
+    "message",
+    "error",
+    "errorMsg",
+    "errorMessage",
+    "tips",
+    "tip",
+    "title",
+}
+HTML_DETAIL_MARKERS = (
+    "<!doctype html",
+    "<html",
+    "id=\"app\"",
+    "id='app'",
 )
 DETAIL_JOB_NAME_RE = re.compile(r"^job-(\d{3})\.json$")
 PACK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -175,6 +222,56 @@ def build_detail_fetch_expression(url: str, headers: Mapping[str, Any] | None = 
 """.strip()
 
 
+def _resume_view_param_form(detail_url: str) -> dict[str, str]:
+    safe_url = validate_detail_url(detail_url)
+    query = dict(parse_qsl(urlsplit(safe_url).query, keep_blank_values=True))
+    param_form = {key: query[key] for key in RESUME_VIEW_PARAM_KEYS if key in query}
+    res_id = query.get("res_id_encode")
+    if res_id:
+        param_form["resIdEncode"] = res_id
+    return param_form
+
+
+def build_resume_view_fetch_expression(detail_url: str, headers: Mapping[str, Any] | None = None) -> str:
+    param_form = _resume_view_param_form(detail_url)
+    safe_headers = sanitize_liepin_request_headers(headers)
+    safe_headers.setdefault("Accept", "application/json, text/plain, */*")
+    body = urlencode(
+        {"paramForm": json.dumps(param_form, ensure_ascii=False, separators=(",", ":"))},
+        doseq=False,
+    )
+    url_json = json.dumps(RESUME_VIEW_URL, ensure_ascii=False)
+    headers_json = json.dumps(safe_headers, ensure_ascii=False)
+    body_json = json.dumps(body, ensure_ascii=False)
+    return f"""
+(async () => {{
+  const response = await fetch({url_json}, {{
+    method: "POST",
+    headers: {headers_json},
+    body: {body_json},
+    credentials: "include"
+  }});
+  const raw = await response.text();
+  let data = null;
+  let parseError = null;
+  try {{
+    data = JSON.parse(raw);
+  }} catch (err) {{
+    parseError = err && err.message ? err.message : String(err);
+  }}
+  return {{
+    status: "ok",
+    httpStatus: response.status,
+    contentType: response.headers.get("content-type") || "",
+    rawLength: raw.length,
+    parseError,
+    data,
+    rawPreview: raw.slice(0, 2000)
+  }};
+}})()
+""".strip()
+
+
 def _looks_like_detail_payload(data: Any) -> bool:
     if not isinstance(data, dict):
         return False
@@ -191,19 +288,32 @@ def _string_blob(value: Any) -> str:
         return str(value)
 
 
+def _business_block_text(response: Mapping[str, Any], data: Any) -> str:
+    values: list[Any] = [response.get("rawPreview")]
+    if isinstance(data, Mapping):
+        values.extend(data.get(key) for key in BUSINESS_BLOCK_MESSAGE_KEYS)
+    return _string_blob(values)
+
+
 def classify_detail_result(response: Mapping[str, Any]) -> str | None:
     http_status = response.get("httpStatus")
     if http_status in DETAIL_BLOCK_STATUSES:
         return f"http_{http_status}"
     if response.get("parseError"):
+        content_type = str(response.get("contentType") or "").lower()
+        raw_preview = str(response.get("rawPreview") or "").lower()
+        if "html" in content_type or any(marker in raw_preview for marker in HTML_DETAIL_MARKERS):
+            return "detail_html"
         return "non_json"
 
     data = response.get("data")
-    if any(marker in _string_blob({"data": data, "rawPreview": response.get("rawPreview")}) for marker in BUSINESS_BLOCK_MARKERS):
+    if any(marker in _business_block_text(response, data) for marker in BUSINESS_BLOCK_MARKERS):
         return "business_block"
 
     if isinstance(data, dict):
         code = data.get("code")
+        if str(code) in PRIVACY_PROTECTED_CODES:
+            return "privacy_protected"
         if code in DETAIL_BLOCK_STATUSES or str(code) in {str(status) for status in DETAIL_BLOCK_STATUSES}:
             return "business_block"
         flag = data.get("flag")
@@ -233,7 +343,7 @@ def load_completed_detail_jobs(job_dir: str | Path) -> dict[int, str]:
             payload = _load_json(raw_path)
         except (OSError, json.JSONDecodeError):
             continue
-        if not isinstance(payload, dict) or payload.get("status") != "done":
+        if not isinstance(payload, dict) or payload.get("status") not in TERMINAL_DETAIL_JOB_STATUSES:
             continue
         platform_id = str(payload.get("platform_id") or payload.get("platformId") or "")
         if platform_id:
@@ -300,6 +410,42 @@ def _write_detail_job(
                 "parseError": response.get("parseError"),
                 "data": response.get("data"),
                 "rawPreview": response.get("rawPreview") or "",
+                "captured_at": _now(),
+            }
+        ],
+        "completed_at": _now(),
+    }
+    atomic_write_json(raw_path, payload)
+    return raw_path
+
+
+def _write_privacy_protected_job(
+    job_dir: str | Path,
+    index: int,
+    contact: Mapping[str, Any],
+    response: Mapping[str, Any],
+    run_id: str,
+) -> Path:
+    raw_path = detail_job_path(job_dir, index)
+    payload = {
+        "schema": DETAIL_JOB_SCHEMA,
+        "status": "privacy_protected",
+        "run_id": run_id,
+        "index": index,
+        "platform": "liepin",
+        "platform_id": str(contact.get("platform_id") or ""),
+        "user_id_encode": str(contact.get("user_id_encode") or ""),
+        "profile_url_ref": True,
+        "profile_url": str(contact.get("profile_url") or ""),
+        "raw_ref": contact.get("raw_ref") if isinstance(contact.get("raw_ref"), dict) else {},
+        "requests": [
+            {
+                "type": "detail",
+                "httpStatus": response.get("httpStatus"),
+                "contentType": response.get("contentType") or "",
+                "rawLength": response.get("rawLength", 0),
+                "parseError": response.get("parseError"),
+                "data": response.get("data"),
                 "captured_at": _now(),
             }
         ],
@@ -378,15 +524,16 @@ def _write_interruption(
     return report_path
 
 
-def _summary_markdown(summary: Mapping[str, Any]) -> str:
+def _summary_markdown(summary: Mapping[str, Any], *, title: str = "猎聘详情 smoke 执行摘要") -> str:
     lines = [
-        "# 猎聘详情 smoke 执行摘要",
+        f"# {title}",
         "",
         f"- campaign：{summary['campaign_id']}",
         f"- target pack：{summary['pack_id']}",
         f"- 状态：{summary['status']}",
         f"- 目标数：{summary['targets']}",
         f"- 本次完成：{summary['completed']}",
+        f"- 已跳过终态：{summary.get('skipped_terminal', 0)}",
         f"- 失败：{summary['failed']}",
         f"- 阻断：{summary['blocked']}",
         f"- 停止原因：{summary.get('stopReason') or ''}",
@@ -394,6 +541,14 @@ def _summary_markdown(summary: Mapping[str, Any]) -> str:
         "",
     ]
     return "\n".join(lines)
+
+
+def _next_step_for_reason(reason: str | None) -> str:
+    if reason == "detail_html":
+        return "calibrate_detail_api"
+    if reason:
+        return f"resume_after_{reason}"
+    return "review_detail_smoke_summary"
 
 
 def _write_summary(
@@ -404,21 +559,28 @@ def _write_summary(
     targets: int,
     completed: int,
     failed: int,
+    privacy_protected: int = 0,
     blocked: bool,
     template_drift: bool | int,
     captured_field_groups: list[str],
     status: str,
     stop_reason: str | None,
     next_step: str,
+    skipped_terminal: int = 0,
+    schema: str = DETAIL_SUMMARY_SCHEMA,
+    report_basename: str = "detail-smoke-summary",
+    title: str = "猎聘详情 smoke 执行摘要",
 ) -> dict[str, Any]:
     summary = {
-        "schema": DETAIL_SUMMARY_SCHEMA,
+        "schema": schema,
         "campaign_id": paths.campaign_id,
         "pack_id": pack_id,
         "run_id": run_id,
         "targets": targets,
         "completed": completed,
+        "skipped_terminal": skipped_terminal,
         "failed": failed,
+        "privacy_protected": privacy_protected,
         "blocked": blocked,
         "template_drift": 1 if template_drift else 0,
         "captured_field_groups": sorted(set(captured_field_groups)),
@@ -427,16 +589,20 @@ def _write_summary(
         "next_step": next_step,
         "generatedAt": _now(),
     }
-    atomic_write_json(paths.reports_dir / "detail-smoke-summary.json", summary)
-    (paths.reports_dir / "detail-smoke-summary.md").write_text(_summary_markdown(summary), encoding="utf-8")
+    atomic_write_json(paths.reports_dir / f"{report_basename}.json", summary)
+    (paths.reports_dir / f"{report_basename}.md").write_text(
+        _summary_markdown(summary, title=title),
+        encoding="utf-8",
+    )
     return summary
 
 
-def _validate_target_pack(plan: Any) -> dict[str, Any]:
+def _validate_target_pack(plan: Any, allowed_schemas: tuple[str, ...] = (DETAIL_TARGET_SCHEMA,)) -> dict[str, Any]:
     if not isinstance(plan, dict):
         raise ValueError("target pack must be an object")
-    if plan.get("schema") != DETAIL_TARGET_SCHEMA:
-        raise ValueError(f"target pack schema must be {DETAIL_TARGET_SCHEMA}")
+    if plan.get("schema") not in allowed_schemas:
+        expected = ", ".join(allowed_schemas)
+        raise ValueError(f"target pack schema must be one of: {expected}")
     contacts = plan.get("contacts")
     if not isinstance(contacts, list):
         raise ValueError("target pack contacts must be a list")
@@ -485,32 +651,96 @@ def run_live_detail_smoke(
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     limit: int = 10,
     run_id: str | None = None,
+    _limit_max: int = 20,
+    _run_schema: str = DETAIL_RUN_SCHEMA,
+    _summary_schema: str = DETAIL_SUMMARY_SCHEMA,
+    _summary_report_basename: str | None = "detail-smoke-summary",
+    _summary_title: str = "猎聘详情 smoke 执行摘要",
+    _completed_next_step: str = "review_detail_smoke_summary",
+    _target_schemas: tuple[str, ...] = (DETAIL_TARGET_SCHEMA,),
 ) -> dict[str, Any]:
-    if type(limit) is not int or limit < 1 or limit > 20:
-        raise ValueError("limit must be between 1 and 20")
+    if type(limit) is not int or limit < 1 or limit > _limit_max:
+        raise ValueError(f"limit must be between 1 and {_limit_max}")
 
     paths = ensure_campaign(campaign_root)
     plan_path = _target_pack_path(paths.root, target_pack)
-    plan = _validate_target_pack(_load_json(plan_path))
+    plan = _validate_target_pack(_load_json(plan_path), _target_schemas)
     pack_id = _pack_id(plan, plan_path)
     contacts = _validate_detail_contacts(plan["contacts"], limit)
+    summary_report_basename = _summary_report_basename or f"detail-pack-{pack_id}-summary"
     resolved_run_id = run_id or f"liepin-detail-live-{datetime.now().date().isoformat()}"
     job_dir = paths.raw_dir / "detail-live" / pack_id
     completed_jobs = load_completed_detail_jobs(job_dir)
+    request_template = _load_request_template(paths)
     captured_groups: list[str] = []
     newly_completed = 0
     failed = 0
+    privacy_protected = 0
+    skipped_terminal = 0
+
+    terminal_for_all = bool(contacts)
+    for position, contact in enumerate(contacts):
+        job_index = int(contact.get("index") if type(contact.get("index")) is int else position)
+        completed_platform_id = completed_jobs.get(job_index)
+        if completed_platform_id != str(contact.get("platform_id") or ""):
+            terminal_for_all = False
+            break
+    if terminal_for_all:
+        skipped_terminal = len(contacts)
+        result = {
+            "schema": _run_schema,
+            "campaign_id": paths.campaign_id,
+            "pack_id": pack_id,
+            "run_id": resolved_run_id,
+            "target_pack": _relative_path(plan_path, paths.root),
+            "targets": len(contacts),
+            "completed": 0,
+            "skipped_terminal": skipped_terminal,
+            "failed": 0,
+            "status": "completed",
+            "generatedAt": _now(),
+        }
+        _write_summary(
+            paths=paths,
+            pack_id=pack_id,
+            run_id=resolved_run_id,
+            targets=len(contacts),
+            completed=0,
+            failed=0,
+            privacy_protected=0,
+            blocked=False,
+            template_drift=False,
+            captured_field_groups=[],
+            status="completed",
+            stop_reason=None,
+            next_step=_completed_next_step,
+            skipped_terminal=skipped_terminal,
+            schema=_summary_schema,
+            report_basename=summary_report_basename,
+            title=_summary_title,
+        )
+        _append_detail_ledger(
+            paths,
+            {
+                "event": "detail_pack_already_terminal",
+                "pack_id": pack_id,
+                "run_id": resolved_run_id,
+                "targets": len(contacts),
+            },
+        )
+        return result
 
     target = find_liepin_target(list_targets(cdp_url))
     session = CdpSession(str(target["webSocketDebuggerUrl"]), timeout=timeout_seconds)
     result: dict[str, Any] = {
-        "schema": DETAIL_RUN_SCHEMA,
+        "schema": _run_schema,
         "campaign_id": paths.campaign_id,
         "pack_id": pack_id,
         "run_id": resolved_run_id,
         "target_pack": _relative_path(plan_path, paths.root),
         "targets": len(contacts),
         "completed": 0,
+        "skipped_terminal": 0,
         "failed": 0,
         "status": "running",
         "generatedAt": _now(),
@@ -553,7 +783,11 @@ def run_live_detail_smoke(
                 captured_field_groups=[],
                 status="blocked",
                 stop_reason=health_block,
-                next_step=f"resume_after_{health_block}",
+                next_step=_next_step_for_reason(health_block),
+                skipped_terminal=0,
+                schema=_summary_schema,
+                report_basename=summary_report_basename,
+                title=_summary_title,
             )
             _append_detail_ledger(
                 paths,
@@ -578,6 +812,7 @@ def run_live_detail_smoke(
                             "status": "blocked",
                             "stopReason": reason,
                             "completed": newly_completed,
+                            "skipped_terminal": skipped_terminal,
                             "failed": failed,
                         }
                     )
@@ -617,7 +852,11 @@ def run_live_detail_smoke(
                         captured_field_groups=captured_groups,
                         status="blocked",
                         stop_reason=reason,
-                        next_step=f"resume_after_{reason}",
+                        next_step=_next_step_for_reason(reason),
+                        skipped_terminal=skipped_terminal,
+                        schema=_summary_schema,
+                        report_basename=summary_report_basename,
+                        title=_summary_title,
                     )
                     _append_detail_ledger(
                         paths,
@@ -633,12 +872,46 @@ def run_live_detail_smoke(
                         },
                     )
                     return result
+                skipped_terminal += 1
+                _append_detail_ledger(
+                    paths,
+                    {
+                        "event": "detail_skipped_terminal",
+                        "pack_id": pack_id,
+                        "job_index": job_index,
+                        "platform_id": str(contact.get("platform_id") or ""),
+                        "run_id": resolved_run_id,
+                    },
+                )
                 continue
 
-            response = session.evaluate(build_detail_fetch_expression(str(contact["profile_url"])), timeout_seconds)
+            response = session.evaluate(
+                build_resume_view_fetch_expression(
+                    str(contact["profile_url"]),
+                    headers=_template_headers_for_request(request_template),
+                ),
+                timeout_seconds,
+            )
             if not isinstance(response, dict):
                 raise RuntimeError("detail response was not an object")
             reason = classify_detail_result(response)
+            if reason == "privacy_protected":
+                raw_path = _write_privacy_protected_job(job_dir, job_index, contact, response, resolved_run_id)
+                privacy_protected += 1
+                _append_detail_ledger(
+                    paths,
+                    {
+                        "event": "detail_privacy_protected",
+                        "pack_id": pack_id,
+                        "job_index": job_index,
+                        "platform_id": str(contact.get("platform_id") or ""),
+                        "raw_path": _relative_path(raw_path, paths.root),
+                        "run_id": resolved_run_id,
+                    },
+                )
+                if position < len(contacts) - 1 and delay_seconds > 0:
+                    time.sleep(delay_seconds)
+                continue
             if reason:
                 failed += 1
                 result.update(
@@ -646,6 +919,7 @@ def run_live_detail_smoke(
                         "status": "blocked",
                         "stopReason": reason,
                         "completed": newly_completed,
+                        "skipped_terminal": skipped_terminal,
                         "failed": failed,
                     }
                 )
@@ -675,12 +949,17 @@ def run_live_detail_smoke(
                     targets=len(contacts),
                     completed=newly_completed,
                     failed=failed,
+                    privacy_protected=privacy_protected,
                     blocked=True,
                     template_drift=(reason == "partial_detail"),
                     captured_field_groups=captured_groups,
                     status="blocked",
                     stop_reason=reason,
-                    next_step=f"resume_after_{reason}",
+                    next_step=_next_step_for_reason(reason),
+                    skipped_terminal=skipped_terminal,
+                    schema=_summary_schema,
+                    report_basename=summary_report_basename,
+                    title=_summary_title,
                 )
                 _append_detail_ledger(
                     paths,
@@ -713,7 +992,16 @@ def run_live_detail_smoke(
             if position < len(contacts) - 1 and delay_seconds > 0:
                 time.sleep(delay_seconds)
 
-        result.update({"status": "completed", "completed": newly_completed, "failed": failed})
+        result.update(
+            {
+                "status": "completed",
+                "completed": newly_completed,
+                "skipped_terminal": skipped_terminal,
+                "failed": failed,
+            }
+        )
+        if privacy_protected:
+            result["privacy_protected"] = privacy_protected
         _write_summary(
             paths=paths,
             pack_id=pack_id,
@@ -721,16 +1009,51 @@ def run_live_detail_smoke(
             targets=len(contacts),
             completed=newly_completed,
             failed=failed,
+            privacy_protected=privacy_protected,
             blocked=False,
             template_drift=False,
             captured_field_groups=captured_groups,
             status="completed",
             stop_reason=None,
-            next_step="review_detail_smoke_summary",
+            next_step=_completed_next_step,
+            skipped_terminal=skipped_terminal,
+            schema=_summary_schema,
+            report_basename=summary_report_basename,
+            title=_summary_title,
         )
         return result
     finally:
         session.close()
+
+
+def run_live_detail_pack(
+    *,
+    campaign_root: str | Path,
+    target_pack: str | Path,
+    cdp_url: str = DEFAULT_CDP_URL,
+    delay_seconds: float = DEFAULT_DELAY_SECONDS,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    limit: int = 100,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """执行任意已规划详情 pack，保留 smoke gate 的安全边界。"""
+
+    return run_live_detail_smoke(
+        campaign_root=campaign_root,
+        target_pack=target_pack,
+        cdp_url=cdp_url,
+        delay_seconds=delay_seconds,
+        timeout_seconds=timeout_seconds,
+        limit=limit,
+        run_id=run_id,
+        _limit_max=100,
+        _run_schema=DETAIL_PACK_RUN_SCHEMA,
+        _summary_schema=DETAIL_PACK_SUMMARY_SCHEMA,
+        _summary_report_basename=None,
+        _summary_title="猎聘详情 pack 执行摘要",
+        _completed_next_step="review_detail_pack_summary",
+        _target_schemas=(DETAIL_TARGET_SCHEMA, DETAIL_PACK_TARGET_SCHEMA),
+    )
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

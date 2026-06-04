@@ -17,6 +17,7 @@ from scripts.liepin_campaign import (  # noqa: E402
     ensure_campaign,
     write_continuation_plan,
 )
+from scripts.liepin_campaign_summary import write_campaign_summary  # noqa: E402
 from scripts.liepin_cdp_browser_bootstrap import (  # noqa: E402
     DEFAULT_MANIFEST,
     DEFAULT_PORT,
@@ -29,9 +30,12 @@ from scripts.liepin_cdp_browser_bootstrap import (  # noqa: E402
     write_manifest,
 )
 from scripts.liepin_candidate_pool_diagnostic import diagnose_candidate_pool  # noqa: E402
-from scripts.liepin_detail_live_gate import run_live_detail_smoke  # noqa: E402
-from scripts.liepin_detail_targets import plan_detail_smoke_targets  # noqa: E402
+from scripts.liepin_detail_api_calibrator import calibrate_detail_api  # noqa: E402
+from scripts.liepin_detail_dry_run import apply_detail_jobs, dry_run_detail_jobs  # noqa: E402
+from scripts.liepin_detail_live_gate import run_live_detail_pack, run_live_detail_smoke  # noqa: E402
+from scripts.liepin_detail_targets import plan_detail_packs, plan_detail_smoke_targets  # noqa: E402
 from scripts.liepin_search_live_gate import run_live_search  # noqa: E402
+from scripts.liepin_search_import import apply_search_import, dry_run_search_import  # noqa: E402
 from scripts.liepin_search_standardize import standardize_campaign  # noqa: E402
 
 
@@ -236,6 +240,13 @@ def main(argv: list[str] | None = None) -> int:
     detail_plan.add_argument("--priority", default="detail_p0")
     detail_plan.add_argument("--limit", type=int, default=10)
 
+    detail_packs = subparsers.add_parser("plan-detail-packs")
+    detail_packs.add_argument("--campaign-root", required=True)
+    detail_packs.add_argument("--priorities", default="detail_p0,detail_p1")
+    detail_packs.add_argument("--pack-size", type=int, default=100)
+    detail_packs.add_argument("--scope", default="p0-p1")
+    detail_packs.add_argument("--include-completed", action="store_true")
+
     detail_live = subparsers.add_parser("run-live-detail-smoke")
     detail_live.add_argument("--campaign-root", required=True)
     detail_live.add_argument("--target-pack", required=True)
@@ -244,6 +255,41 @@ def main(argv: list[str] | None = None) -> int:
     detail_live.add_argument("--delay-seconds", type=float, default=DEFAULT_RUN_POLICY["request_interval_seconds"])
     detail_live.add_argument("--timeout-seconds", type=float, default=30)
     detail_live.add_argument("--run-id")
+
+    detail_pack_live = subparsers.add_parser("run-live-detail-pack")
+    detail_pack_live.add_argument("--campaign-root", required=True)
+    detail_pack_live.add_argument("--target-pack", required=True)
+    detail_pack_live.add_argument("--cdp-url", default=f"http://127.0.0.1:{DEFAULT_PORT}")
+    detail_pack_live.add_argument("--limit", type=int, default=100)
+    detail_pack_live.add_argument("--delay-seconds", type=float, default=DEFAULT_RUN_POLICY["request_interval_seconds"])
+    detail_pack_live.add_argument("--timeout-seconds", type=float, default=30)
+    detail_pack_live.add_argument("--run-id")
+
+    detail_calibrate = subparsers.add_parser("calibrate-detail-api")
+    detail_calibrate.add_argument("--campaign-root", required=True)
+    detail_calibrate.add_argument("--cdp-url", default=f"http://127.0.0.1:{DEFAULT_PORT}")
+    detail_calibrate.add_argument("--listen-seconds", type=float, default=30)
+    detail_calibrate.add_argument("--timeout-seconds", type=float, default=30)
+    detail_calibrate.add_argument("--run-id")
+
+    detail_dry_run = subparsers.add_parser("detail-dry-run")
+    detail_dry_run.add_argument("--campaign-root", required=True)
+    detail_dry_run.add_argument("--target-pack", required=True)
+
+    detail_apply = subparsers.add_parser("detail-apply")
+    detail_apply.add_argument("--campaign-root", required=True)
+    detail_apply.add_argument("--target-pack", required=True)
+    detail_apply.add_argument("--confirm", default="")
+
+    import_search_dry = subparsers.add_parser("import-search-dry-run")
+    import_search_dry.add_argument("--campaign-root", required=True)
+
+    import_search_apply = subparsers.add_parser("import-search-apply")
+    import_search_apply.add_argument("--campaign-root", required=True)
+    import_search_apply.add_argument("--confirm", default="")
+
+    campaign_summary = subparsers.add_parser("campaign-summary")
+    campaign_summary.add_argument("--campaign-root", required=True)
 
     args = parser.parse_args(argv)
     try:
@@ -284,6 +330,15 @@ def main(argv: list[str] | None = None) -> int:
                 priority=args.priority,
                 limit=args.limit,
             )
+        elif args.command == "plan-detail-packs":
+            priorities = [item.strip() for item in args.priorities.split(",") if item.strip()]
+            result = plan_detail_packs(
+                campaign_root=args.campaign_root,
+                priorities=priorities,
+                pack_size=args.pack_size,
+                scope=args.scope,
+                exclude_completed=not args.include_completed,
+            )
         elif args.command == "run-live-detail-smoke":
             result = run_live_detail_smoke(
                 campaign_root=args.campaign_root,
@@ -294,6 +349,41 @@ def main(argv: list[str] | None = None) -> int:
                 timeout_seconds=args.timeout_seconds,
                 run_id=args.run_id,
             )
+        elif args.command == "run-live-detail-pack":
+            result = run_live_detail_pack(
+                campaign_root=args.campaign_root,
+                target_pack=args.target_pack,
+                cdp_url=args.cdp_url,
+                limit=args.limit,
+                delay_seconds=args.delay_seconds,
+                timeout_seconds=args.timeout_seconds,
+                run_id=args.run_id,
+            )
+        elif args.command == "calibrate-detail-api":
+            result = calibrate_detail_api(
+                campaign_root=args.campaign_root,
+                cdp_url=args.cdp_url,
+                listen_seconds=args.listen_seconds,
+                timeout_seconds=args.timeout_seconds,
+                run_id=args.run_id,
+            )
+        elif args.command == "detail-dry-run":
+            result = dry_run_detail_jobs(
+                campaign_root=args.campaign_root,
+                target_pack=args.target_pack,
+            )
+        elif args.command == "detail-apply":
+            result = apply_detail_jobs(
+                campaign_root=args.campaign_root,
+                target_pack=args.target_pack,
+                confirm=args.confirm,
+            )
+        elif args.command == "import-search-dry-run":
+            result = dry_run_search_import(campaign_root=args.campaign_root)
+        elif args.command == "import-search-apply":
+            result = apply_search_import(campaign_root=args.campaign_root, confirm=args.confirm)
+        elif args.command == "campaign-summary":
+            result = write_campaign_summary(campaign_root=args.campaign_root)
         else:
             raise ValueError(f"unsupported command: {args.command}")
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:

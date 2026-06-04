@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from scripts.liepin_campaign import ensure_campaign
-from scripts.liepin_detail_targets import plan_detail_smoke_targets
+from scripts.liepin_detail_targets import plan_detail_packs, plan_detail_smoke_targets
+from scripts.liepin_detail_live_gate import detail_job_path
 
 
 SENSITIVE_REPORT_MARKERS = (
@@ -279,3 +280,79 @@ def test_plan_detail_smoke_cli_prints_json(tmp_path: Path):
     payload = json.loads(completed.stdout)
     assert payload["selected_count"] == 1
     assert payload["skipped_count"] == 0
+
+
+def test_plan_detail_packs_selects_priorities_splits_and_excludes_terminal_jobs(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    rows = []
+    for index in range(7):
+        rows.append(_candidate(f"res-p0-{index}", card_index=index))
+    for index in range(5):
+        rows.append(
+            _candidate(
+                f"res-p1-{index}",
+                education="本科",
+                work_years=2,
+                active_name="30天内活跃",
+                card_index=20 + index,
+            )
+        )
+    rows.append(_candidate("res-skip", title="学生", company="大学", work_years=1, card_index=99))
+    _write_rows(paths.candidate_summaries, rows)
+    completed_dir = paths.raw_dir / "detail-live" / "liepin-detail-p0-smoke-001"
+    completed_dir.mkdir(parents=True)
+    detail_job_path(completed_dir, 0).write_text(
+        json.dumps({"schema": "liepin_detail_smoke_job_v1", "status": "done", "platform_id": "res-p0-0"}),
+        encoding="utf-8",
+    )
+    detail_job_path(completed_dir, 1).write_text(
+        json.dumps({"schema": "liepin_detail_smoke_job_v1", "status": "privacy_protected", "platform_id": "res-p0-1"}),
+        encoding="utf-8",
+    )
+
+    result = plan_detail_packs(
+        paths.root,
+        priorities=["detail_p0", "detail_p1"],
+        pack_size=5,
+        scope="p0-p1",
+        exclude_completed=True,
+    )
+
+    assert result["schema"] == "liepin_detail_pack_plan_v1"
+    assert result["selected_count"] == 10
+    assert result["excluded_completed_count"] == 2
+    assert result["priority_counts"] == {"detail_p0": 5, "detail_p1": 5}
+    assert result["pack_count"] == 2
+    assert [pack["contact_count"] for pack in result["packs"]] == [5, 5]
+    all_pack = json.loads((paths.root / result["all_targets_path"]).read_text(encoding="utf-8-sig"))
+    assert all(contact["platform_id"] != "res-p0-0" for contact in all_pack["contacts"])
+    assert all(contact["platform_id"] != "res-p0-1" for contact in all_pack["contacts"])
+    first_pack = json.loads((paths.root / result["packs"][0]["path"]).read_text(encoding="utf-8-sig"))
+    assert first_pack["metadata"]["no_live_request"] is True
+    assert first_pack["metadata"]["no_database_write"] is True
+    assert first_pack["contacts"][0]["priority"] == "detail_p0"
+
+
+def test_plan_detail_packs_writes_sanitized_reports(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    _write_rows(
+        paths.candidate_summaries,
+        [
+            _candidate(
+                "res-1",
+                search_page=(
+                    "https://h.liepin.com/resume/showresumedetail/"
+                    "?ck_id=secret-token&sk_id=s&fk_id=f&rawPreview=x"
+                ),
+            )
+        ],
+    )
+
+    result = plan_detail_packs(paths.root, priorities=["detail_p0"], pack_size=100, scope="p0")
+
+    assert result["selected_count"] == 1
+    report_json = (paths.reports_dir / "detail-pack-plan.json").read_text(encoding="utf-8-sig")
+    report_md = (paths.reports_dir / "detail-pack-plan.md").read_text(encoding="utf-8")
+    for report_text in (report_json, report_md):
+        _assert_report_text_is_sanitized(report_text)
+        assert "rawPreview" not in report_text

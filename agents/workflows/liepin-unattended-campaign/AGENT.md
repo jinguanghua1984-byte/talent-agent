@@ -92,6 +92,24 @@ POST https://api-h.liepin.com/api/com.liepin.searchfront4r.h.search-resumes
 
 运行 `scripts.liepin_campaign_orchestrator diagnose-pool`，只读取 `structured/candidate-summaries.jsonl`，生成 `reports/candidate-pool-diagnostic.json` 和 `reports/candidate-pool-diagnostic.md`。该阶段只做分布统计和 `detail_p0/detail_p1/detail_p2/skip` 详情优先级预览，不触发新的猎聘请求，不抓详情，不写数据库，不生成最终推荐报告。
 
+### S7d 搜索结果 Campaign DB dry-run/apply
+
+搜索标准化完成后，允许先做 search import dry-run：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator import-search-dry-run --campaign-root data/campaigns/<campaign_id>
+```
+
+该阶段只读取 `structured/candidate-summaries.jsonl`，在临时 DB 中模拟写入，生成 `reports/search-import-dry-run.json` 与 `reports/search-import-dry-run.md`。不得连接 CDP，不得触发猎聘请求，不得读取浏览器敏感存储，不得创建或修改 campaign-local `talent.db`。
+
+dry-run clean 后，允许在明确确认文本下写入 campaign-local DB：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator import-search-apply --campaign-root data/campaigns/<campaign_id> --confirm 确认写入猎聘搜索结果
+```
+
+`import-search-apply` 只写 `data/campaigns/<campaign_id>/talent.db`，并追加 `state/import-ledger.jsonl`；不得写主库 `data/talent.db`。搜索导入报告不得包含 `showresumedetail`、`ck_id/sk_id/fk_id`、`rawPreview` 或平台 token 值。
+
 ### S7a P1 详情 smoke 目标包
 
 候选池诊断完成后，详情 smoke 必须单独确认；不得把候选池诊断自动升级为详情请求。默认只选择 `detail_p0` 前 10 人，单次上限 20。
@@ -112,13 +130,106 @@ POST https://api-h.liepin.com/api/com.liepin.searchfront4r.h.search-resumes
 .venv/bin/python -m scripts.liepin_campaign_orchestrator run-live-detail-smoke --campaign-root data/campaigns/<campaign_id> --target-pack raw/detail-targets/liepin-detail-p0-smoke-001.json --cdp-url http://127.0.0.1:9898 --limit 10 --delay-seconds 3 --timeout-seconds 30 --run-id detail-smoke-001
 ```
 
-详情 smoke 逐人写 `raw/detail-live/<pack_id>/job-*.json`，并追加 `state/detail-request-ledger.jsonl`。遇到登录页、验证码、安全页、401、403、429、432、非 JSON、业务阻断或 partial capture 时立即停止，写 interruption 和 continuation。
+详情 smoke 逐人通过页面内 fetch 调用详情 JSON 接口：
+
+```text
+POST https://api-h.liepin.com/api/com.liepin.rresume.userh.pc.resume-view
+```
+
+请求体使用 `paramForm`，并复用 `state/request-template.json` 中清洗后的安全 header；不得读取 Cookie 或浏览器存储。逐人写 `raw/detail-live/<pack_id>/job-*.json`，并追加 `state/detail-request-ledger.jsonl`。遇到登录页、验证码、安全页、401、403、429、432、非 JSON、详情页 HTML、业务阻断或 partial capture 时立即停止，写 interruption 和 continuation。
+
+例外：详情接口返回 `code=11000` 且语义为候选人隐私保护时，这是候选级终态 `privacy_protected`，应写入对应 `job-*.json` 并继续后续候选；不得将其视为整包风控或整包失败。
+
+如果停止原因为 `detail_html`，说明 `showresumedetail` 返回详情页外壳而不是真实 JSON 详情接口；不得重试 `run-live-detail-smoke`。下一步只能先进入被动详情 API 校准，由用户在页面中手动打开详情页，CLI 只监听 CDP Network 事件：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator calibrate-detail-api --campaign-root data/campaigns/<campaign_id> --cdp-url http://127.0.0.1:9898 --listen-seconds 30 --run-id detail-api-calibration-001
+```
+
+`calibrate-detail-api` 不导航、不点击、不发起猎聘请求；只记录允许 host 的 JSON XHR/Fetch 接口形态，包括 host、path、query key、payload key 和响应字段名。不得保存 Cookie、header 值、query 值、请求 body 值或响应字段值。
 
 详情 smoke 只写 `reports/detail-smoke-summary.json` 和 `reports/detail-smoke-summary.md` 作为执行摘要，不生成推荐报告，不生成推荐结论，不写 Campaign DB，不写主库，不写 `data/talent.db`，不写外联队列（outreach queue），不生成飞书交付包（Feishu package）。
 
+### S7c P1 详情 raw 离线 dry-run
+
+详情 smoke 完成后，允许运行离线 dry-run 验收：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator detail-dry-run --campaign-root data/campaigns/<campaign_id> --target-pack raw/detail-targets/liepin-detail-p0-smoke-001.json
+```
+
+该阶段只读取 target pack 和 `raw/detail-live/<pack_id>/job-*.json`，写 `reports/detail-dry-run.json` 与 `reports/detail-dry-run.md`。它不连接 CDP，不触发猎聘请求，不读取浏览器敏感存储，不写 Campaign DB，不写主库 `data/talent.db`。
+
+dry-run 必须统计：
+
+- `ready_for_campaign_db_count`：字段结构完整且无 apply blocker 的详情数。
+- `privacy_protected_count`：`code=11000` 的候选级隐私保护终态。
+- `missing_raw_count`、`failed_job_count`、`capture_blocker_count` 和 `apply_blocker_count`。
+- `clean`：缺 raw、unexpected raw、失败 job、capture blocker、apply blocker 均为 0 时为 true；隐私保护不视为整包阻断。
+
+`detail-dry-run` 仍不是 Campaign DB apply；搜索结果导入、详情 apply、主库同步、推荐和交付必须另起设计和实施计划，并经过 dry-run、备份、apply 和完整性验证。
+
+### S7e P1 详情 apply 到 Campaign DB
+
+`detail-dry-run` clean 且搜索结果已经写入 campaign-local `talent.db` 后，允许在确认文本下写入详情：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator detail-apply --campaign-root data/campaigns/<campaign_id> --target-pack raw/detail-targets/liepin-detail-p0-smoke-001.json --confirm 确认写入猎聘详情
+```
+
+`detail-apply` 只写 `data/campaigns/<campaign_id>/talent.db` 的 `candidate_details`，并追加 `state/import-ledger.jsonl`；不得写主库 `data/talent.db`。隐私保护候选计入 `privacy_protected_count`，不写详情，不视为整包失败。遇到缺 raw、unexpected raw、失败 job、capture blocker、apply blocker 或 campaign DB 缺失时必须拒绝写入。
+
+详情 apply 后仍不得生成推荐报告、推荐结论、外联队列或飞书交付包；这些必须另起设计。
+
+### S7f Campaign DB 本地摘要
+
+搜索结果和小批详情写入 campaign-local `talent.db` 后，允许生成只读本地摘要：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator campaign-summary --campaign-root data/campaigns/<campaign_id>
+```
+
+`campaign-summary` 只读 `data/campaigns/<campaign_id>/talent.db`，写 `reports/campaign-summary.json` 和 `reports/campaign-summary.md`。报告只包含候选总数、详情覆盖、城市/学历/年限/公司/职位分布和详情质量统计。它不是推荐报告，不生成推荐结论、外联队列或飞书交付包，不写 Campaign DB，不写主库 `data/talent.db`。
+
+### S7g Full detail pack planning
+
+需要扩大详情抓取前，必须先只做目标包规划：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator plan-detail-packs --campaign-root data/campaigns/<campaign_id> --priorities detail_p0,detail_p1 --pack-size 100 --scope p0-p1
+```
+
+`plan-detail-packs` 只读取 `structured/candidate-summaries.jsonl`、候选池诊断规则和既有 `raw/detail-live` terminal jobs。它会扣除已完成或隐私保护的 terminal jobs，写 `raw/detail-targets/detail-targets-<scope>.json`、`raw/detail-targets/detail-<scope>-pack-*.json`、`reports/detail-pack-plan.json` 和 `reports/detail-pack-plan.md`。
+
+该阶段只做 planning，不连接 CDP，不触发猎聘请求，不写 Campaign DB，不写主库 `data/talent.db`，不生成推荐报告、外联队列或飞书交付包。后续 live detail 扩大执行必须另起确认点。
+
+### S7h Full detail live execution recovery
+
+`plan-detail-packs` 完成并经过单独确认后，允许按单个 pack 执行 full detail live runner：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator run-live-detail-pack --campaign-root data/campaigns/<campaign_id> --target-pack raw/detail-targets/detail-p0-p1-pack-001.json --cdp-url http://127.0.0.1:9898 --limit 100 --delay-seconds 3 --timeout-seconds 30 --run-id detail-pack-001
+```
+
+`run-live-detail-pack` 只执行已规划 target pack，不重新选择候选，不自动扩大到其他 pack。执行面仍是已登录猎聘页面内 fetch：
+
+```text
+POST https://api-h.liepin.com/api/com.liepin.rresume.userh.pc.resume-view
+```
+
+请求体使用 `paramForm`，并复用 `state/request-template.json` 中清洗后的安全 header；不得读取 Cookie、localStorage、sessionStorage、Chrome profile 或 session store。
+
+恢复执行只信磁盘事实：扫描 `raw/detail-live/<pack_id>/job-*.json`。已完成或 `privacy_protected` 的 terminal job 必须跳过并向 `state/detail-request-ledger.jsonl` 追加 `detail_skipped_terminal`；全部 target 已经是 terminal job 时不得连接 CDP，只写 `reports/detail-pack-<pack_id>-summary.json/.md` 并追加 `detail_pack_already_terminal`。
+
+执行中逐人写 `raw/detail-live/<pack_id>/job-*.json`，追加 `state/detail-request-ledger.jsonl`，并在完成或停止时写 `reports/detail-pack-<pack_id>-summary.json` 与 `reports/detail-pack-<pack_id>-summary.md`。`code=11000` 仍是候选级 `privacy_protected` 终态，应继续后续候选。
+
+遇到登录页、验证码、安全页、401、403、429、432、非 JSON、详情页 HTML、业务阻断、platform mismatch 或 partial capture 时必须立即停止，写 `reports/interruption-detail-<pack_id>-*.json` 和 `state/detail-live-<pack_id>-continuation-after-<reason>.json`。停止后不得盲目重试；必须由用户处理平台状态或重新校准后恢复。
+
+该阶段只写 raw detail 和恢复账本，不写 Campaign DB，不写主库 `data/talent.db`，不生成推荐报告、推荐结论、外联队列或飞书交付包。详情入库必须回到离线 `detail-dry-run` 和确认文本 `detail-apply` 流程。
+
 ### S8 关闭
 
-P0 到搜索摘要和候选池诊断即止；P1 详情 smoke 只在单独确认后小批执行。后续 full detail、`detail_p1`、Campaign DB import、主库同步、推荐和交付必须另起设计和实施计划，并经过 dry-run、备份、apply 和完整性验证。
+P0 到搜索摘要和候选池诊断即止；P1 详情 smoke 只在单独确认后小批执行，详情 raw dry-run 和详情 apply 只服务于 campaign-local DB 闭环。Full detail pack planning 只生成目标包；Full detail live execution recovery 只写 raw detail 和恢复账本。主库同步、推荐和交付必须另起设计和实施计划，并经过 dry-run、备份、apply 和完整性验证。
 
 ## 验收
 

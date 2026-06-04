@@ -271,6 +271,21 @@ def test_liepin_contracts_define_detail_smoke_boundary():
         assert "外联队列" in text
         assert "飞书交付包" in text
         assert "不触发猎聘请求" in text
+        assert "detail-dry-run" in text
+        assert "import-search-dry-run" in text
+        assert "import-search-apply" in text
+        assert "确认写入猎聘搜索结果" in text
+        assert "detail-apply" in text
+        assert "确认写入猎聘详情" in text
+        assert "campaign-summary" in text
+        assert "reports/campaign-summary.json" in text
+        assert "plan-detail-packs" in text
+        assert "run-live-detail-pack" in text
+        assert "detail-pack-<pack_id>-summary.json" in text
+        assert "detail_pack_already_terminal" in text
+        assert "raw/detail-targets/detail-targets-<scope>.json" in text
+        assert "raw/detail-live/<pack_id>/job-*.json" in text
+        assert "calibrate-detail-api" in text
         for stop_marker in [
             "登录",
             "验证码",
@@ -286,5 +301,15 @@ def test_liepin_contracts_define_detail_smoke_boundary():
 
     assert "plan-detail-smoke" in workflow
     assert "run-live-detail-smoke" in workflow
+    assert "calibrate-detail-api" in workflow
     assert "raw/detail-live/<pack_id>/job-*.json" in workflow
     assert "state/detail-request-ledger.jsonl" in workflow
+    assert "reports/detail-dry-run.json" in workflow
+    assert "reports/search-import-dry-run.json" in workflow
+    assert "state/import-ledger.jsonl" in workflow
+    assert "candidate_details" in workflow
+    assert "不是推荐报告" in workflow
+    assert "Full detail pack planning" in workflow
+    assert "后续 live detail 扩大执行必须另起确认点" in workflow
+    assert "Full detail live execution recovery" in workflow
+    assert "全部 target 已经是 terminal job 时不得连接 CDP" in workflow

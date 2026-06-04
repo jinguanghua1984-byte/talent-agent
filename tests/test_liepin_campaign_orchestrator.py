@@ -304,3 +304,275 @@ def test_run_live_detail_smoke_command_delegates_to_live_gate(tmp_path: Path, mo
         }
     ]
     assert json.loads(capsys.readouterr().out)["completed_count"] == 2
+
+
+def test_run_live_detail_pack_command_delegates_to_live_gate(tmp_path: Path, monkeypatch, capsys):
+    calls = []
+
+    def fake_run_live_detail_pack(**kwargs):
+        calls.append(kwargs)
+        return {
+            "schema": "liepin_detail_pack_summary_v1",
+            "status": "completed",
+            "completed": 3,
+        }
+
+    monkeypatch.setattr(orchestrator, "run_live_detail_pack", fake_run_live_detail_pack)
+
+    result = orchestrator.main(
+        [
+            "run-live-detail-pack",
+            "--campaign-root",
+            str(tmp_path / "liepin-demo"),
+            "--target-pack",
+            "raw/detail-targets/detail-p0-p1-pack-001.json",
+            "--cdp-url",
+            "http://127.0.0.1:9898",
+            "--limit",
+            "100",
+            "--delay-seconds",
+            "0",
+            "--timeout-seconds",
+            "1",
+            "--run-id",
+            "detail-pack-test",
+        ]
+    )
+
+    assert result == 0
+    assert calls == [
+        {
+            "campaign_root": str(tmp_path / "liepin-demo"),
+            "target_pack": "raw/detail-targets/detail-p0-p1-pack-001.json",
+            "cdp_url": "http://127.0.0.1:9898",
+            "limit": 100,
+            "delay_seconds": 0,
+            "timeout_seconds": 1,
+            "run_id": "detail-pack-test",
+        }
+    ]
+    assert json.loads(capsys.readouterr().out)["completed"] == 3
+
+
+def test_calibrate_detail_api_command_delegates_to_calibrator(tmp_path: Path, monkeypatch, capsys):
+    calls = []
+
+    def fake_calibrate_detail_api(**kwargs):
+        calls.append(kwargs)
+        return {
+            "schema": "liepin_detail_api_calibration_v1",
+            "status": "captured",
+            "candidate_count": 1,
+        }
+
+    monkeypatch.setattr(orchestrator, "calibrate_detail_api", fake_calibrate_detail_api)
+
+    result = orchestrator.main(
+        [
+            "calibrate-detail-api",
+            "--campaign-root",
+            str(tmp_path / "liepin-demo"),
+            "--cdp-url",
+            "http://127.0.0.1:9898",
+            "--listen-seconds",
+            "0",
+            "--timeout-seconds",
+            "1",
+            "--run-id",
+            "calib-test",
+        ]
+    )
+
+    assert result == 0
+    assert calls == [
+        {
+            "campaign_root": str(tmp_path / "liepin-demo"),
+            "cdp_url": "http://127.0.0.1:9898",
+            "listen_seconds": 0,
+            "timeout_seconds": 1,
+            "run_id": "calib-test",
+        }
+    ]
+    assert json.loads(capsys.readouterr().out)["candidate_count"] == 1
+
+
+def test_detail_dry_run_command_delegates_to_dry_run(tmp_path: Path, monkeypatch, capsys):
+    calls = []
+
+    def fake_dry_run_detail_jobs(**kwargs):
+        calls.append(kwargs)
+        return {
+            "schema": "liepin_detail_dry_run_v1",
+            "mode": "dry-run",
+            "ready_for_campaign_db_count": 1,
+        }
+
+    monkeypatch.setattr(orchestrator, "dry_run_detail_jobs", fake_dry_run_detail_jobs)
+
+    result = orchestrator.main(
+        [
+            "detail-dry-run",
+            "--campaign-root",
+            str(tmp_path / "liepin-demo"),
+            "--target-pack",
+            "raw/detail-targets/liepin-detail-p0-smoke-001.json",
+        ]
+    )
+
+    assert result == 0
+    assert calls == [
+        {
+            "campaign_root": str(tmp_path / "liepin-demo"),
+            "target_pack": "raw/detail-targets/liepin-detail-p0-smoke-001.json",
+        }
+    ]
+    assert json.loads(capsys.readouterr().out)["ready_for_campaign_db_count"] == 1
+
+
+def test_import_search_commands_delegate_to_importer(tmp_path: Path, monkeypatch, capsys):
+    calls = []
+
+    def fake_dry_run_search_import(**kwargs):
+        calls.append(("dry", kwargs))
+        return {
+            "schema": "liepin_search_import_v1",
+            "mode": "dry-run",
+            "result": {"created": 1},
+        }
+
+    def fake_apply_search_import(**kwargs):
+        calls.append(("apply", kwargs))
+        return {
+            "schema": "liepin_search_import_v1",
+            "mode": "apply",
+            "result": {"created": 1},
+        }
+
+    monkeypatch.setattr(orchestrator, "dry_run_search_import", fake_dry_run_search_import)
+    monkeypatch.setattr(orchestrator, "apply_search_import", fake_apply_search_import)
+
+    dry_result = orchestrator.main(
+        [
+            "import-search-dry-run",
+            "--campaign-root",
+            str(tmp_path / "liepin-demo"),
+        ]
+    )
+    apply_result = orchestrator.main(
+        [
+            "import-search-apply",
+            "--campaign-root",
+            str(tmp_path / "liepin-demo"),
+            "--confirm",
+            "确认写入猎聘搜索结果",
+        ]
+    )
+
+    assert dry_result == 0
+    assert apply_result == 0
+    assert calls == [
+        ("dry", {"campaign_root": str(tmp_path / "liepin-demo")}),
+        ("apply", {"campaign_root": str(tmp_path / "liepin-demo"), "confirm": "确认写入猎聘搜索结果"}),
+    ]
+    assert '"mode": "dry-run"' in capsys.readouterr().out
+
+
+def test_detail_apply_command_delegates_to_detail_import(tmp_path: Path, monkeypatch, capsys):
+    calls = []
+
+    def fake_apply_detail_jobs(**kwargs):
+        calls.append(kwargs)
+        return {
+            "schema": "liepin_detail_apply_v1",
+            "mode": "apply",
+            "written": 1,
+        }
+
+    monkeypatch.setattr(orchestrator, "apply_detail_jobs", fake_apply_detail_jobs)
+
+    result = orchestrator.main(
+        [
+            "detail-apply",
+            "--campaign-root",
+            str(tmp_path / "liepin-demo"),
+            "--target-pack",
+            "raw/detail-targets/liepin-detail-p0-smoke-001.json",
+            "--confirm",
+            "确认写入猎聘详情",
+        ]
+    )
+
+    assert result == 0
+    assert calls == [
+        {
+            "campaign_root": str(tmp_path / "liepin-demo"),
+            "target_pack": "raw/detail-targets/liepin-detail-p0-smoke-001.json",
+            "confirm": "确认写入猎聘详情",
+        }
+    ]
+    assert json.loads(capsys.readouterr().out)["written"] == 1
+
+
+def test_campaign_summary_command_delegates_to_summary(tmp_path: Path, monkeypatch, capsys):
+    calls = []
+
+    def fake_write_campaign_summary(**kwargs):
+        calls.append(kwargs)
+        return {
+            "schema": "liepin_campaign_summary_v1",
+            "candidate_count": 3,
+        }
+
+    monkeypatch.setattr(orchestrator, "write_campaign_summary", fake_write_campaign_summary)
+
+    result = orchestrator.main(
+        [
+            "campaign-summary",
+            "--campaign-root",
+            str(tmp_path / "liepin-demo"),
+        ]
+    )
+
+    assert result == 0
+    assert calls == [{"campaign_root": str(tmp_path / "liepin-demo")}]
+    assert json.loads(capsys.readouterr().out)["candidate_count"] == 3
+
+
+def test_plan_detail_packs_command_delegates_to_planner(tmp_path: Path, monkeypatch, capsys):
+    calls = []
+
+    def fake_plan_detail_packs(**kwargs):
+        calls.append(kwargs)
+        return {
+            "schema": "liepin_detail_pack_plan_v1",
+            "selected_count": 10,
+        }
+
+    monkeypatch.setattr(orchestrator, "plan_detail_packs", fake_plan_detail_packs)
+
+    result = orchestrator.main(
+        [
+            "plan-detail-packs",
+            "--campaign-root",
+            str(tmp_path / "liepin-demo"),
+            "--priorities",
+            "detail_p0,detail_p1",
+            "--pack-size",
+            "100",
+            "--scope",
+            "p0-p1",
+            "--include-completed",
+        ]
+    )
+
+    assert result == 0
+    assert calls == [
+        {
+            "campaign_root": str(tmp_path / "liepin-demo"),
+            "priorities": ["detail_p0", "detail_p1"],
+            "pack_size": 100,
+            "scope": "p0-p1",
+            "exclude_completed": False,
+        }
+    ]
+    assert json.loads(capsys.readouterr().out)["selected_count"] == 10
