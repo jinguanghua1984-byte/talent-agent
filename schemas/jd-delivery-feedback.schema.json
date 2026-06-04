@@ -26,10 +26,9 @@
           "feedback_stage": { "enum": ["画像", "评分卡", "匹配", "报告", "候选人状态"] },
           "reason_codes": { "type": "array", "items": { "type": "string" } },
           "hunter_note": { "type": "string" },
-          "contacted": { "type": "boolean" },
-          "submitted_to_client": { "type": "boolean" },
-          "interviewed": { "type": "boolean" },
-          "offer": { "type": "boolean" }
+          "feedback_note": { "type": "string" },
+          "parse_source": { "enum": ["llm", "manual"] },
+          "parse_confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
         },
         "additionalProperties": true
       }

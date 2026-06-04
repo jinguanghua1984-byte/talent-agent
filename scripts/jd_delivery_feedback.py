@@ -42,7 +42,6 @@ VALID_REASON_CODES = {
 }
 
 REQUIRED_TOP_LEVEL_FIELDS = ("role_id", "run_id", "profile_version", "scorecard_version")
-ACTION_FIELDS = ("contacted", "submitted_to_client", "interviewed", "offer")
 
 
 def _read_json(path: str | Path) -> dict[str, Any]:
@@ -50,10 +49,6 @@ def _read_json(path: str | Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("feedback JSON must be an object")
     return data
-
-
-def _as_bool(value: Any) -> bool:
-    return value is True
 
 
 def load_feedback(path: str | Path) -> dict[str, Any]:
@@ -102,9 +97,17 @@ def load_feedback(path: str | Path) -> dict[str, Any]:
         if candidate_id in seen_candidate_ids:
             raise ValueError(f"duplicate candidate_id: {candidate_id}")
         seen_candidate_ids.add(candidate_id)
-        for field in ACTION_FIELDS:
-            if field in item and not isinstance(item[field], bool):
-                raise ValueError(f"candidate_feedback item {index} {field} must be a boolean")
+        if "parse_confidence" in item:
+            parse_confidence = item["parse_confidence"]
+            if (
+                not isinstance(parse_confidence, (int, float))
+                or isinstance(parse_confidence, bool)
+                or parse_confidence < 0
+                or parse_confidence > 1
+            ):
+                raise ValueError(
+                    f"candidate_feedback item {index} parse_confidence must be a number between 0 and 1"
+                )
     return data
 
 
@@ -169,16 +172,6 @@ def compile_feedback_summary(feedback: dict[str, Any]) -> dict[str, Any]:
     bad_top_10 = [
         item for item in items if item["rank"] <= 10 and item["feedback_label"] == "不认可"
     ]
-    actionable_top_30 = [
-        item
-        for item in items
-        if item["rank"] <= 30
-        and any(
-            _as_bool(item.get(field))
-            for field in ("contacted", "submitted_to_client", "interviewed", "offer")
-        )
-    ]
-
     return {
         "schema": SUMMARY_SCHEMA,
         "role_id": feedback.get("role_id") or "",
@@ -189,7 +182,6 @@ def compile_feedback_summary(feedback: dict[str, Any]) -> dict[str, Any]:
         "metrics": {
             "accepted_at_10": len(accepted_top_10),
             "accepted_at_30": len(accepted_top_30),
-            "actionable_at_30": len(actionable_top_30),
             "bad_at_10": len(bad_top_10),
         },
         "reason_distribution": dict(sorted(reason_counts.items())),

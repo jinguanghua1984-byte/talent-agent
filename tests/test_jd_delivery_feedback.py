@@ -33,10 +33,9 @@ def _feedback() -> dict:
                 "feedback_stage": "匹配",
                 "reason_codes": ["strong_candidate_ranked_low"],
                 "hunter_note": "候选人方向准确，可以沟通。",
-                "contacted": True,
-                "submitted_to_client": True,
-                "interviewed": False,
-                "offer": False,
+                "feedback_note": "候选人方向准确，可以沟通。",
+                "parse_source": "llm",
+                "parse_confidence": 0.93,
             },
             {
                 "candidate_id": "102",
@@ -47,10 +46,6 @@ def _feedback() -> dict:
                 "feedback_stage": "匹配",
                 "reason_codes": ["keyword_hit_but_wrong_duty", "evidence_too_shallow"],
                 "hunter_note": "词命中，但实际做应用层。",
-                "contacted": False,
-                "submitted_to_client": False,
-                "interviewed": False,
-                "offer": False,
             },
             {
                 "candidate_id": "130",
@@ -61,10 +56,6 @@ def _feedback() -> dict:
                 "feedback_stage": "评分卡",
                 "reason_codes": ["scorecard_bad_threshold"],
                 "hunter_note": "分数偏低，但实际经历很好。",
-                "contacted": True,
-                "submitted_to_client": False,
-                "interviewed": False,
-                "offer": False,
             },
         ],
     }
@@ -134,16 +125,6 @@ def test_load_feedback_rejects_missing_original_score(
         load_feedback(path)
 
 
-def test_load_feedback_rejects_non_boolean_action_flags(tmp_path: Path) -> None:
-    data = _feedback()
-    data["candidate_feedback"][0]["contacted"] = "true"
-    path = tmp_path / "delivery-feedback.json"
-    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-
-    with pytest.raises(ValueError, match="contacted must be a boolean"):
-        load_feedback(path)
-
-
 @pytest.mark.parametrize("field", ["candidate_id", "rank"])
 def test_load_feedback_rejects_duplicate_candidate_id_or_rank(
     tmp_path: Path, field: str
@@ -164,7 +145,7 @@ def test_compile_feedback_summary_calculates_topn_and_reason_metrics() -> None:
     assert summary["role_id"] == "training-inference-engineer"
     assert summary["metrics"]["accepted_at_10"] == 1
     assert summary["metrics"]["accepted_at_30"] == 2
-    assert summary["metrics"]["actionable_at_30"] == 2
+    assert "actionable_at_30" not in summary["metrics"]
     assert summary["metrics"]["bad_at_10"] == 1
     assert summary["reason_distribution"]["evidence_too_shallow"] == 1
     assert summary["grade_acceptance_rate"]["A"]["accepted"] == 1
@@ -199,6 +180,36 @@ def test_cli_writes_summary_and_calibration_files(tmp_path: Path) -> None:
     assert summary["metrics"]["accepted_at_30"] == 2
     assert suggestions["schema"] == "jd_delivery_calibration_suggestions_v1"
     assert "keyword_hit_but_wrong_duty" in suggestions["reason_distribution"]
+
+
+@pytest.mark.parametrize("parse_confidence", [-0.1, 1.1, "0.9"])
+def test_load_feedback_rejects_invalid_parse_confidence(
+    tmp_path: Path, parse_confidence: object
+) -> None:
+    data = _feedback()
+    data["candidate_feedback"][0]["parse_confidence"] = parse_confidence
+    path = tmp_path / "delivery-feedback.json"
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(
+        ValueError, match="parse_confidence must be a number between 0 and 1"
+    ):
+        load_feedback(path)
+
+
+def test_load_feedback_accepts_optional_feedback_note_and_parse_source(
+    tmp_path: Path,
+) -> None:
+    data = _feedback()
+    path = tmp_path / "delivery-feedback.json"
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    feedback = load_feedback(path)
+
+    item = feedback["candidate_feedback"][0]
+    assert item["feedback_note"] == "候选人方向准确，可以沟通。"
+    assert item["parse_source"] == "llm"
+    assert item["parse_confidence"] == 0.93
 
 
 def test_cli_reports_validation_errors_without_traceback(
