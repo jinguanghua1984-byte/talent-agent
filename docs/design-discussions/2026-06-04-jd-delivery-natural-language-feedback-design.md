@@ -1,5 +1,7 @@
 # JD 推荐反馈自然语言解析设计（2026-06-04）
 
+> 已替代：本文是早期讨论稿，包含“规则层 + LLM 层”和“保留结构化反馈列”的旧方向。正式实施以 `docs/superpowers/specs/2026-06-04-jd-delivery-natural-language-feedback-design.md` 为准：外联表只保留 `feedback_note`，直接使用 LLM 解析，低置信度/降级条目进入 review queue 且默认不进入校准闭环。
+
 ## 背景
 
 Phase 1 反馈闭环已于 2026-05-25 落地：外联表 `reports/outreach-queue.csv` 已含 8 个反馈列（`feedback_label`、`feedback_stage`、`reason_codes`、`hunter_note`、`contacted`、`submitted_to_client`、`interviewed`、`offer`），`scripts/jd_delivery_feedback.py` 能校验结构化 JSON、统计 `accepted_at_30/actionable_at_30/bad_at_10` 指标并输出校准建议。
