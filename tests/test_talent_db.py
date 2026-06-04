@@ -496,6 +496,19 @@ def test_cross_channel_audit_tables_and_methods(db: TalentDB):
         payload.pop(missing_field)
         with pytest.raises(ValueError, match=missing_field):
             db.record_identity_match(payload)
+    with pytest.raises(ValueError, match="score_breakdown"):
+        db.record_identity_match(
+            {
+                "candidate_id": candidate_id,
+                "source_platform": "boss",
+                "source_candidate_key": "boss-1",
+                "target_platform": "maimai",
+                "match_status": "rejected",
+                "query_text": "Cross Channel",
+                "query_level": "person",
+                "score_breakdown": ["invalid"],
+            }
+        )
     with pytest.raises(ValueError, match="Candidate does not exist"):
         db.record_field_value(
             {

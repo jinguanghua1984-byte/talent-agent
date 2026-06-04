@@ -1149,6 +1149,7 @@ class TalentDB:
         _validate_non_empty_string(data.get("query_level"), "query_level")
         _validate_non_empty_string(data.get("match_status"), "match_status")
         _validate_optional_number(data.get("confidence"), "confidence")
+        score_breakdown = _score_breakdown_json(data.get("score_breakdown"))
 
         with self._conn:
             cursor = self._conn.execute(
@@ -1172,7 +1173,7 @@ class TalentDB:
                     data["query_text"],
                     data["query_level"],
                     data.get("confidence") if data.get("confidence") is not None else 0,
-                    _json_dumps(data.get("score_breakdown") or {}),
+                    score_breakdown,
                     data["match_status"],
                     data.get("decision_reason"),
                     data.get("confirmed_by"),
@@ -2156,7 +2157,7 @@ class TalentDB:
                 row.get("query_text"),
                 row.get("query_level"),
                 row.get("confidence"),
-                _json_dumps(row.get("score_breakdown")),
+                _score_breakdown_json(row.get("score_breakdown")),
                 row["match_status"],
                 row.get("decision_reason"),
                 row.get("confirmed_by"),
@@ -2198,7 +2199,7 @@ class TalentDB:
                 row.get("query_text"),
                 row.get("query_level"),
                 row.get("confidence"),
-                _json_dumps(row.get("score_breakdown")),
+                _score_breakdown_json(row.get("score_breakdown")),
                 row.get("match_status"),
                 row.get("decision_reason"),
                 row.get("confirmed_by"),
@@ -2315,18 +2316,7 @@ class TalentDB:
             source_row = self._source_profile_by_sync_id(source_profile_sync_id)
             if source_row is not None and int(source_row["candidate_id"]) == candidate_id:
                 return int(source_row["id"])
-            return None
-
-        source_profile_id = _optional_int(
-            row.get("source_profile_id"),
-            "source_profile_id",
-        )
-        if source_profile_id is None:
-            return None
-        source_row = self._source_profile_by_id(source_profile_id)
-        if source_row is None or int(source_row["candidate_id"]) != candidate_id:
-            return None
-        return source_profile_id
+        return None
 
     def _import_sync_wechat_timelines(
         self,
@@ -3278,6 +3268,14 @@ def _json_dumps(value: Any) -> str | None:
 
 def _json_dumps_literal(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
+
+
+def _score_breakdown_json(value: Any) -> str:
+    if value is None:
+        return "{}"
+    if not isinstance(value, dict):
+        raise ValueError("score_breakdown must be a dict")
+    return _json_dumps(value) or "{}"
 
 
 def _empty_sync_import_counts() -> dict[str, int]:
