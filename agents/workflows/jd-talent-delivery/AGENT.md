@@ -186,12 +186,19 @@ lark-cli im +messages-send --as user --user-id <open_id> --text <message> --idem
 S9 不属于默认连续执行链路，只有用户要求回收或编译猎头反馈时才执行。S9 读取已发布的外联表反馈列或本地反馈 JSON，生成本地反馈产物：
 
 - `feedback/delivery-feedback.json`
+- `feedback/parse-review-queue.json`
 - `feedback/feedback-summary.json`
 - `feedback/calibration-suggestions.json`
 
-反馈列至少包含 `feedback_label`、`feedback_stage`、`reason_codes`、`hunter_note`、`contacted`、`submitted_to_client`、`interviewed` 和 `offer`。反馈导入默认 dry-run，不得写入 data/talent.db；也不得写入 `data/talent.db`，不得自动修改 `scoring/scorecard.json`，不得把猎头备注自动发布到 Wiki。
+外联表对业务只暴露一个反馈列：`feedback_note`。不得再要求业务填写 `feedback_label`、`feedback_stage`、`reason_codes`、`hunter_note` 或布尔跟进列。回收外联表后，使用解析命令：
 
-反馈编译指标至少包含 `accepted_at_30`、`actionable_at_30` 和 `bad_at_10`。输出只能作为下一轮岗位画像、评分卡和匹配策略的校准建议。
+```bash
+python -m scripts.jd_feedback_note_parser parse-csv --run-root <run_root>
+```
+
+AI 解析器把 `feedback_note` 转为内部结构化字段：`feedback_label`、`feedback_stage`、`reason_codes`、`hunter_note`。低置信度、被降级或需要人工复核的行写入 `feedback/parse-review-queue.json`，默认不得进入校准统计。
+
+反馈编译指标至少包含 `accepted_at_30`、`bad_at_10`、原因分布和 grade acceptance rate。输出只能作为下一轮岗位画像、评分卡和匹配策略的校准建议。S9 不得写入 data/talent.db，不得写入 `data/talent.db`，不得自动修改 `scoring/scorecard.json`，不得把猎头备注自动发布到 Wiki。
 
 ## Scorecard 一致性
 

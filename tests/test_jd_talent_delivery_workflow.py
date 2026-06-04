@@ -121,16 +121,18 @@ def test_workflow_documents_feedback_collection_contract() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
 
     for token in [
+        "feedback_note",
         "feedback/delivery-feedback.json",
+        "feedback/parse-review-queue.json",
         "feedback/feedback-summary.json",
         "feedback/calibration-suggestions.json",
-        "反馈导入默认 dry-run",
+        "python -m scripts.jd_feedback_note_parser parse-csv --run-root <run_root>",
         "不得写入 data/talent.db",
-        "reason_codes",
         "accepted_at_30",
-        "actionable_at_30",
+        "bad_at_10",
     ]:
         assert token in text
+    assert "actionable_at_30" not in text
 
 
 def test_workflow_does_not_require_second_confirmation_after_publish_dry_run() -> None:

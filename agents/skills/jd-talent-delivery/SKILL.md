@@ -47,7 +47,9 @@ description: Use when the user asks to turn a JD into a local talent-library rec
 
 ## 猎头反馈后续
 
-当用户要求回收或分析猎头反馈时，读取外联表反馈列或本地 `feedback/delivery-feedback.json`，编译 `feedback/feedback-summary.json` 和 `feedback/calibration-suggestions.json`。反馈列包含 `feedback_label`、`feedback_stage`、`reason_codes`、`hunter_note`、`contacted`、`submitted_to_client`、`interviewed` 和 `offer`。本步骤只生成校准建议，不写 `data/talent.db`，不自动修改评分卡，不自动发布猎头备注。
+当用户要求回收或分析猎头反馈时，外联表对业务只暴露 `feedback_note` 一个反馈列。使用 `python -m scripts.jd_feedback_note_parser parse-csv --run-root <run_root>` 调用 `jd_feedback_note_parser`，把自然语言反馈解析为内部 `feedback_label`、`feedback_stage`、`reason_codes`、`hunter_note`。低置信度、被降级或需要人工复核的行写入 `feedback/parse-review-queue.json`，默认不得进入校准统计。
+
+本步骤输出 `feedback/delivery-feedback.json`、`feedback/parse-review-queue.json`、`feedback/feedback-summary.json` 和 `feedback/calibration-suggestions.json`。指标至少包含 `accepted_at_30`、`bad_at_10`、原因分布和 grade acceptance rate。本步骤只生成校准建议，不写 `data/talent.db`，不自动修改评分卡，不自动发布猎头备注。
 
 ## 岗位画像 contract
 

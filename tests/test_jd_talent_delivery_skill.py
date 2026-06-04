@@ -115,10 +115,11 @@ def test_skill_documents_feedback_followup_contract() -> None:
 
     for token in [
         "猎头反馈",
-        "feedback_label",
-        "reason_codes",
+        "feedback_note",
+        "jd_feedback_note_parser",
+        "parse-review-queue.json",
         "delivery-feedback.json",
-        "feedback-summary.json",
         "只生成校准建议",
     ]:
         assert token in text
+    assert "actionable_at_30" not in text
