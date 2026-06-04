@@ -178,10 +178,10 @@ class TalentDB:
                 target_platform TEXT NOT NULL,
                 target_platform_id TEXT,
                 target_profile_url TEXT,
-                query_text TEXT,
-                query_level TEXT,
-                confidence REAL,
-                score_breakdown TEXT,
+                query_text TEXT NOT NULL,
+                query_level TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0,
+                score_breakdown TEXT NOT NULL DEFAULT '{}',
                 match_status TEXT NOT NULL,
                 decision_reason TEXT,
                 confirmed_by TEXT,
@@ -195,7 +195,7 @@ class TalentDB:
                 candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
                 field_name TEXT NOT NULL,
                 platform TEXT NOT NULL,
-                source_profile_id TEXT,
+                source_profile_id INTEGER REFERENCES source_profiles(id) ON DELETE SET NULL,
                 field_value TEXT NOT NULL,
                 confidence REAL,
                 merge_decision TEXT,
@@ -1145,6 +1145,8 @@ class TalentDB:
             "source_candidate_key",
         )
         _validate_non_empty_string(data.get("target_platform"), "target_platform")
+        _validate_non_empty_string(data.get("query_text"), "query_text")
+        _validate_non_empty_string(data.get("query_level"), "query_level")
         _validate_non_empty_string(data.get("match_status"), "match_status")
         _validate_optional_number(data.get("confidence"), "confidence")
 
@@ -1167,10 +1169,10 @@ class TalentDB:
                     data["target_platform"],
                     data.get("target_platform_id"),
                     data.get("target_profile_url"),
-                    data.get("query_text"),
-                    data.get("query_level"),
-                    data.get("confidence"),
-                    _json_dumps(data.get("score_breakdown")),
+                    data["query_text"],
+                    data["query_level"],
+                    data.get("confidence") if data.get("confidence") is not None else 0,
+                    _json_dumps(data.get("score_breakdown") or {}),
                     data["match_status"],
                     data.get("decision_reason"),
                     data.get("confirmed_by"),
@@ -1215,6 +1217,14 @@ class TalentDB:
         if "field_value" not in data:
             raise ValueError("field_value is required")
         _validate_optional_number(data.get("confidence"), "confidence")
+        source_profile_id = _optional_int(
+            data.get("source_profile_id"),
+            "source_profile_id",
+        )
+        if source_profile_id is not None and not self._source_profile_id_exists(
+            source_profile_id
+        ):
+            raise ValueError(f"Source profile does not exist: {source_profile_id}")
 
         with self._conn:
             cursor = self._conn.execute(
@@ -1230,7 +1240,7 @@ class TalentDB:
                     candidate_id,
                     data["field_name"],
                     data["platform"],
-                    data.get("source_profile_id"),
+                    source_profile_id,
                     _json_dumps_literal(data.get("field_value")),
                     data.get("confidence"),
                     data.get("merge_decision"),
@@ -1588,6 +1598,7 @@ class TalentDB:
     ) -> dict[str, Any]:
         summary = _new_sync_import_summary(manifest, table_rows)
         candidate_id_map: dict[str, int] = {}
+        source_profile_id_map: dict[str, int] = {}
         candidate_actions = plan.get("_candidate_actions", {})
 
         with self._conn:
@@ -1645,6 +1656,7 @@ class TalentDB:
             self._import_sync_source_profiles(
                 table_rows.get("source_profiles", []),
                 candidate_id_map,
+                source_profile_id_map,
                 summary,
             )
             self._import_sync_identity_matches(
@@ -1655,6 +1667,7 @@ class TalentDB:
             self._import_sync_field_values(
                 table_rows.get("candidate_field_values", []),
                 candidate_id_map,
+                source_profile_id_map,
                 summary,
             )
             self._import_sync_wechat_timelines(
@@ -1983,6 +1996,7 @@ class TalentDB:
         self,
         rows: list[dict[str, Any]],
         candidate_id_map: dict[str, int],
+        source_profile_id_map: dict[str, int],
         summary: dict[str, Any],
     ) -> None:
         for row in rows:
@@ -1996,7 +2010,9 @@ class TalentDB:
                 if int(source_by_sync["candidate_id"]) != candidate_id:
                     summary["skipped"]["source_profiles"] += 1
                     continue
-                self._update_sync_source_profile(int(source_by_sync["id"]), row)
+                source_id = int(source_by_sync["id"])
+                self._update_sync_source_profile(source_id, row)
+                _map_sync_id(source_profile_id_map, row.get("sync_id"), source_id)
                 summary["merged"]["source_profiles"] += 1
                 continue
 
@@ -2005,19 +2021,22 @@ class TalentDB:
                 if int(existing_source["candidate_id"]) != candidate_id:
                     summary["skipped"]["source_profiles"] += 1
                     continue
-                self._update_sync_source_profile(int(existing_source["id"]), row)
+                source_id = int(existing_source["id"])
+                self._update_sync_source_profile(source_id, row)
+                _map_sync_id(source_profile_id_map, row.get("sync_id"), source_id)
                 summary["merged"]["source_profiles"] += 1
                 continue
 
-            self._insert_sync_source_profile(candidate_id, row)
+            source_id = self._insert_sync_source_profile(candidate_id, row)
+            _map_sync_id(source_profile_id_map, row.get("sync_id"), source_id)
             summary["created"]["source_profiles"] += 1
 
     def _insert_sync_source_profile(
         self,
         candidate_id: int,
         row: dict[str, Any],
-    ) -> None:
-        self._conn.execute(
+    ) -> int:
+        cursor = self._conn.execute(
             """
             INSERT INTO source_profiles (
                 candidate_id, platform, platform_id, profile_url,
@@ -2035,6 +2054,7 @@ class TalentDB:
                 row.get("sync_id"),
             ),
         )
+        return int(cursor.lastrowid)
 
     def _update_sync_source_profile(
         self,
@@ -2193,6 +2213,7 @@ class TalentDB:
         self,
         rows: list[dict[str, Any]],
         candidate_id_map: dict[str, int],
+        source_profile_id_map: dict[str, int],
         summary: dict[str, Any],
     ) -> None:
         for row in rows:
@@ -2202,17 +2223,28 @@ class TalentDB:
                 continue
 
             value_by_sync = self._field_value_by_sync_id(row.get("sync_id"))
+            source_profile_id = self._sync_field_value_source_profile_id(
+                candidate_id,
+                row,
+                source_profile_id_map,
+            )
             if value_by_sync is not None:
-                self._update_sync_field_value(int(value_by_sync["id"]), candidate_id, row)
+                self._update_sync_field_value(
+                    int(value_by_sync["id"]),
+                    candidate_id,
+                    source_profile_id,
+                    row,
+                )
                 summary["merged"]["candidate_field_values"] += 1
                 continue
 
-            self._insert_sync_field_value(candidate_id, row)
+            self._insert_sync_field_value(candidate_id, source_profile_id, row)
             summary["created"]["candidate_field_values"] += 1
 
     def _insert_sync_field_value(
         self,
         candidate_id: int,
+        source_profile_id: int | None,
         row: dict[str, Any],
     ) -> None:
         self._conn.execute(
@@ -2228,7 +2260,7 @@ class TalentDB:
                 candidate_id,
                 row["field_name"],
                 row["platform"],
-                row.get("source_profile_id"),
+                source_profile_id,
                 _json_dumps_literal(row.get("field_value")),
                 row.get("confidence"),
                 row.get("merge_decision"),
@@ -2242,12 +2274,14 @@ class TalentDB:
         self,
         value_id: int,
         candidate_id: int,
+        source_profile_id: int | None,
         row: dict[str, Any],
     ) -> None:
         self._conn.execute(
             """
             UPDATE candidate_field_values
             SET candidate_id = ?,
+                source_profile_id = ?,
                 field_value = ?,
                 confidence = COALESCE(?, confidence),
                 merge_decision = COALESCE(?, merge_decision),
@@ -2257,6 +2291,7 @@ class TalentDB:
             """,
             (
                 candidate_id,
+                source_profile_id,
                 _json_dumps_literal(row.get("field_value")),
                 row.get("confidence"),
                 row.get("merge_decision"),
@@ -2265,6 +2300,33 @@ class TalentDB:
                 value_id,
             ),
         )
+
+    def _sync_field_value_source_profile_id(
+        self,
+        candidate_id: int,
+        row: dict[str, Any],
+        source_profile_id_map: dict[str, int],
+    ) -> int | None:
+        source_profile_sync_id = str(row.get("source_profile_sync_id") or "")
+        if source_profile_sync_id:
+            mapped_id = source_profile_id_map.get(source_profile_sync_id)
+            if mapped_id is not None:
+                return mapped_id
+            source_row = self._source_profile_by_sync_id(source_profile_sync_id)
+            if source_row is not None and int(source_row["candidate_id"]) == candidate_id:
+                return int(source_row["id"])
+            return None
+
+        source_profile_id = _optional_int(
+            row.get("source_profile_id"),
+            "source_profile_id",
+        )
+        if source_profile_id is None:
+            return None
+        source_row = self._source_profile_by_id(source_profile_id)
+        if source_row is None or int(source_row["candidate_id"]) != candidate_id:
+            return None
+        return source_profile_id
 
     def _import_sync_wechat_timelines(
         self,
@@ -2661,6 +2723,21 @@ class TalentDB:
             (sync_id,),
         ).fetchone()
 
+    def _source_profile_id_exists(self, source_profile_id: int) -> bool:
+        return self._source_profile_by_id(source_profile_id) is not None
+
+    def _source_profile_by_id(self, source_profile_id: int) -> sqlite3.Row | None:
+        row = self._conn.execute(
+            """
+            SELECT id, candidate_id, sync_id
+            FROM source_profiles
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (source_profile_id,),
+        ).fetchone()
+        return row
+
     def _identity_match_by_sync_id(self, sync_id: Any) -> sqlite3.Row | None:
         if not sync_id:
             return None
@@ -2878,6 +2955,7 @@ class TalentDB:
                 candidate_field_values.field_name,
                 candidate_field_values.platform,
                 candidate_field_values.source_profile_id,
+                source_profiles.sync_id AS source_profile_sync_id,
                 candidate_field_values.field_value,
                 candidate_field_values.confidence,
                 candidate_field_values.merge_decision,
@@ -2885,6 +2963,8 @@ class TalentDB:
                 candidate_field_values.created_at
             FROM candidate_field_values
             JOIN candidates ON candidates.id = candidate_field_values.candidate_id
+            LEFT JOIN source_profiles
+              ON source_profiles.id = candidate_field_values.source_profile_id
             ORDER BY candidate_field_values.sync_id
             """
         ).fetchall()
@@ -3291,6 +3371,12 @@ def _export_row(
     return data
 
 
+def _map_sync_id(mapping: dict[str, int], sync_id: Any, local_id: int) -> None:
+    sync_id_text = str(sync_id or "")
+    if sync_id_text:
+        mapping[sync_id_text] = local_id
+
+
 def _count_rows(conn: sqlite3.Connection, table: str, column: str, value: Any) -> int:
     row = conn.execute(
         f"SELECT COUNT(*) FROM {table} WHERE {column} = ?",
@@ -3356,7 +3442,11 @@ def _row_to_field_value(row: sqlite3.Row) -> CandidateFieldValue:
         candidate_id=int(row["candidate_id"]),
         field_name=row["field_name"],
         platform=row["platform"],
-        source_profile_id=row["source_profile_id"],
+        source_profile_id=(
+            int(row["source_profile_id"])
+            if row["source_profile_id"] is not None
+            else None
+        ),
         field_value=_json_loads(
             row["field_value"],
             None,
@@ -3501,6 +3591,21 @@ def _validate_optional_number(value: Any, field_name: str) -> None:
         raise ValueError(f"{field_name} must be a finite number")
     if not math.isfinite(float(value)):
         raise ValueError(f"{field_name} must be a finite number")
+
+
+def _optional_int(value: Any, field_name: str) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be an integer")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError as exc:
+            raise ValueError(f"{field_name} must be an integer") from exc
+    raise ValueError(f"{field_name} must be an integer")
 
 
 def _safe_fts_query(query: str) -> str:

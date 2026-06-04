@@ -290,6 +290,7 @@ def test_new_candidate_and_related_rows_receive_sync_ids(db: TalentDB):
     )
     db.update_overall_score(candidate_id, 88, "manual", {"note": "seed"})
     db.save_match_score(candidate_id, "jd-1", "final", 88, {"skill": 90}, "good")
+    source_profile_id = db.get_sources(candidate_id)[0].id
     identity_match_id = db.record_identity_match(
         {
             "candidate_id": candidate_id,
@@ -297,6 +298,8 @@ def test_new_candidate_and_related_rows_receive_sync_ids(db: TalentDB):
             "source_candidate_key": "boss-1",
             "target_platform": "maimai",
             "target_platform_id": "maimai-1",
+            "query_text": "Alice maimai",
+            "query_level": "person",
             "confidence": 0.92,
             "score_breakdown": {"name": 0.95},
             "match_status": "auto_matched",
@@ -307,7 +310,7 @@ def test_new_candidate_and_related_rows_receive_sync_ids(db: TalentDB):
             "candidate_id": candidate_id,
             "field_name": "hunting_status",
             "platform": "maimai",
-            "source_profile_id": "maimai-1",
+            "source_profile_id": source_profile_id,
             "field_value": "open",
             "confidence": 0.84,
             "merge_decision": "fill_empty",
@@ -374,6 +377,7 @@ def test_cross_channel_audit_tables_and_methods(db: TalentDB):
         },
         platform="boss",
     )
+    source_profile_id = db.get_sources(candidate_id)[0].id
 
     identity_match_id = db.record_identity_match(
         {
@@ -398,7 +402,7 @@ def test_cross_channel_audit_tables_and_methods(db: TalentDB):
             "candidate_id": candidate_id,
             "field_name": "current_title",
             "platform": "maimai",
-            "source_profile_id": "maimai-9",
+            "source_profile_id": source_profile_id,
             "field_value": {"value": "AI Product Lead", "evidence": ["headline"]},
             "confidence": 0.88,
             "merge_decision": "keep_primary",
@@ -408,6 +412,24 @@ def test_cross_channel_audit_tables_and_methods(db: TalentDB):
 
     identity_matches = db.identity_matches(candidate_id)
     field_values = db.field_values(candidate_id)
+    identity_columns = {
+        row["name"]: row
+        for row in db._conn.execute(
+            "PRAGMA table_info(candidate_identity_matches)"
+        ).fetchall()
+    }
+    field_value_columns = {
+        row["name"]: row
+        for row in db._conn.execute(
+            "PRAGMA table_info(candidate_field_values)"
+        ).fetchall()
+    }
+    field_value_fks = {
+        (row["from"], row["table"], row["to"])
+        for row in db._conn.execute(
+            "PRAGMA foreign_key_list(candidate_field_values)"
+        ).fetchall()
+    }
 
     assert len(identity_matches) == 1
     assert isinstance(identity_matches[0], talent_models.CandidateIdentityMatch)
@@ -420,6 +442,12 @@ def test_cross_channel_audit_tables_and_methods(db: TalentDB):
     assert identity_matches[0].score_breakdown == {"name": 0.97, "company": 0.9}
     assert identity_matches[0].match_status == "confirmed"
     assert identity_matches[0].confirmed_by == "hunter-a"
+    assert identity_columns["query_text"]["notnull"] == 1
+    assert identity_columns["query_level"]["notnull"] == 1
+    assert identity_columns["confidence"]["notnull"] == 1
+    assert identity_columns["confidence"]["dflt_value"] == "0"
+    assert identity_columns["score_breakdown"]["notnull"] == 1
+    assert identity_columns["score_breakdown"]["dflt_value"] == "'{}'"
 
     assert len(field_values) == 1
     assert isinstance(field_values[0], talent_models.CandidateFieldValue)
@@ -427,12 +455,19 @@ def test_cross_channel_audit_tables_and_methods(db: TalentDB):
     assert field_values[0].candidate_id == candidate_id
     assert field_values[0].field_name == "current_title"
     assert field_values[0].platform == "maimai"
-    assert field_values[0].source_profile_id == "maimai-9"
+    assert field_values[0].source_profile_id == source_profile_id
+    assert isinstance(field_values[0].source_profile_id, int)
     assert field_values[0].field_value == {
         "value": "AI Product Lead",
         "evidence": ["headline"],
     }
     assert field_values[0].merge_decision == "keep_primary"
+    assert field_value_columns["source_profile_id"]["type"] == "INTEGER"
+    assert (
+        "source_profile_id",
+        "source_profiles",
+        "id",
+    ) in field_value_fks
     assert db.identity_matches() == identity_matches
     assert db.field_values(candidate_id + 999) == []
 
@@ -444,8 +479,23 @@ def test_cross_channel_audit_tables_and_methods(db: TalentDB):
                 "source_candidate_key": "missing",
                 "target_platform": "maimai",
                 "match_status": "rejected",
+                "query_text": "missing",
+                "query_level": "person",
             }
         )
+    for missing_field in ("query_text", "query_level"):
+        payload = {
+            "candidate_id": candidate_id,
+            "source_platform": "boss",
+            "source_candidate_key": "boss-1",
+            "target_platform": "maimai",
+            "match_status": "rejected",
+            "query_text": "Cross Channel",
+            "query_level": "person",
+        }
+        payload.pop(missing_field)
+        with pytest.raises(ValueError, match=missing_field):
+            db.record_identity_match(payload)
     with pytest.raises(ValueError, match="Candidate does not exist"):
         db.record_field_value(
             {

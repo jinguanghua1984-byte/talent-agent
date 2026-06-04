@@ -219,7 +219,7 @@ class CandidateFieldValue:
     candidate_id: int
     field_name: str
     platform: str
-    source_profile_id: str | None = None
+    source_profile_id: int | None = None
     field_value: Any = None
     confidence: float | None = None
     merge_decision: str | None = None

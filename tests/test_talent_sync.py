@@ -114,6 +114,7 @@ def test_sync_bundle_round_trips_cross_channel_audit_tables(tmp_path: Path):
             },
             platform="boss",
         )
+        source_profile_id = source.get_sources(source_candidate_id)[0].id
         source.record_identity_match(
             {
                 "candidate_id": source_candidate_id,
@@ -137,7 +138,7 @@ def test_sync_bundle_round_trips_cross_channel_audit_tables(tmp_path: Path):
                 "candidate_id": source_candidate_id,
                 "field_name": "current_title",
                 "platform": "maimai",
-                "source_profile_id": "maimai-9",
+                "source_profile_id": source_profile_id,
                 "field_value": {"value": "AI Product Lead", "evidence": ["headline"]},
                 "confidence": 0.88,
                 "merge_decision": "keep_primary",
@@ -160,6 +161,7 @@ def test_sync_bundle_round_trips_cross_channel_audit_tables(tmp_path: Path):
     try:
         identity_matches = target.identity_matches()
         field_values = target.field_values()
+        target_sources = target.get_sources(field_values[0].candidate_id)
     finally:
         target.close()
 
@@ -181,6 +183,8 @@ def test_sync_bundle_round_trips_cross_channel_audit_tables(tmp_path: Path):
         "value": "AI Product Lead",
         "evidence": ["headline"],
     }
+    assert isinstance(field_values[0].source_profile_id, int)
+    assert target_sources[0].id == field_values[0].source_profile_id
     assert identity_matches[0].candidate_id == field_values[0].candidate_id
 
 
