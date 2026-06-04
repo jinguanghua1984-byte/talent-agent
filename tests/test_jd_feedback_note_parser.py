@@ -306,6 +306,60 @@ def test_parse_feedback_csv_rejects_duplicate_candidate_before_writing_outputs(
     assert not (root / "feedback" / "calibration-suggestions.json").exists()
 
 
+def test_parse_feedback_csv_rejects_duplicate_review_candidate_before_writing_outputs(
+    tmp_path: Path,
+) -> None:
+    root = _run_root(tmp_path)
+    (root / "reports" / "outreach-queue.csv").write_text(
+        (
+            "candidate_id,rank,grade,score,feedback_note\n"
+            "101,1,A,88,看起来相关，但证据不够。\n"
+            "101,2,A,84,也需要继续确认。\n"
+        ),
+        encoding="utf-8-sig",
+    )
+    client = QueueClient(
+        [
+            _response(feedback_label="待定", parse_confidence=0.52),
+            _response(feedback_label="待定", parse_confidence=0.52),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="duplicate candidate_id"):
+        parse_feedback_csv(root, client=client, model="model-x")
+
+    assert client.calls == []
+    assert not (root / "feedback" / "delivery-feedback.json").exists()
+    assert not (root / "feedback" / "parse-review-queue.json").exists()
+
+
+def test_parse_feedback_csv_rejects_duplicate_rank_across_accepted_and_review_rows(
+    tmp_path: Path,
+) -> None:
+    root = _run_root(tmp_path)
+    (root / "reports" / "outreach-queue.csv").write_text(
+        (
+            "candidate_id,rank,grade,score,feedback_note\n"
+            "101,1,A,88,候选人方向准确，可以沟通。\n"
+            "102,1,A,84,看起来相关，但证据不够。\n"
+        ),
+        encoding="utf-8-sig",
+    )
+    client = QueueClient(
+        [
+            _response(),
+            _response(feedback_label="待定", parse_confidence=0.52),
+        ]
+    )
+
+    with pytest.raises(ValueError, match="duplicate rank"):
+        parse_feedback_csv(root, client=client, model="model-x")
+
+    assert client.calls == []
+    assert not (root / "feedback" / "delivery-feedback.json").exists()
+    assert not (root / "feedback" / "parse-review-queue.json").exists()
+
+
 def test_cli_parse_csv_uses_run_root(tmp_path: Path) -> None:
     root = _run_root(tmp_path)
     client = QueueClient([_response(), _response(parse_confidence=0.52)])

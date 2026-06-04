@@ -116,7 +116,9 @@ def parse_feedback_csv(
 
     candidate_feedback: list[dict[str, Any]] = []
     review_items: list[dict[str, Any]] = []
-    parsed_count = 0
+    seen_candidate_ids: set[str] = set()
+    seen_ranks: set[int] = set()
+    rows_to_parse: list[dict[str, str | None]] = []
 
     with paths["csv"].open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
@@ -125,24 +127,28 @@ def parse_feedback_csv(
             note = (row.get("feedback_note") or "").strip()
             if not note:
                 continue
-            parsed_count += 1
-            parsed = parse_feedback_note(
-                note,
-                client=client,
-                provider=provider,
-                model=model,
+            _validate_unique_feedback_row(row, seen_candidate_ids, seen_ranks)
+            rows_to_parse.append(row)
+
+    for row in rows_to_parse:
+        note = (row.get("feedback_note") or "").strip()
+        parsed = parse_feedback_note(
+            note,
+            client=client,
+            provider=provider,
+            model=model,
+        )
+        item = _candidate_item(row, parsed)
+        if parsed["review_required"]:
+            review_items.append(
+                {
+                    **item,
+                    "review_status": "pending",
+                    "review_reasons": parsed["review_reasons"],
+                }
             )
-            item = _candidate_item(row, parsed)
-            if parsed["review_required"]:
-                review_items.append(
-                    {
-                        **item,
-                        "review_status": "pending",
-                        "review_reasons": parsed["review_reasons"],
-                    }
-                )
-            else:
-                candidate_feedback.append(item)
+        else:
+            candidate_feedback.append(item)
 
     delivery_feedback = {
         "schema": FEEDBACK_SCHEMA,
@@ -164,7 +170,7 @@ def parse_feedback_csv(
         "csv_path": str(paths["csv"]),
         "out_path": str(paths["delivery"]),
         "review_out_path": str(paths["review"]),
-        "parsed_count": parsed_count,
+        "parsed_count": len(rows_to_parse),
         "accepted_count": len(candidate_feedback),
         "review_count": len(review_items),
         "dry_run": dry_run,
@@ -308,6 +314,23 @@ def _candidate_item(row: dict[str, str | None], parsed: dict[str, Any]) -> dict[
     }
 
 
+def _validate_unique_feedback_row(
+    row: dict[str, str | None],
+    seen_candidate_ids: set[str],
+    seen_ranks: set[int],
+) -> None:
+    candidate_id = (row.get("candidate_id") or "").strip()
+    if not candidate_id:
+        raise ValueError("candidate_id is required")
+    if candidate_id in seen_candidate_ids:
+        raise ValueError(f"duplicate candidate_id: {candidate_id}")
+    rank = _required_int(row, "rank")
+    if rank in seen_ranks:
+        raise ValueError(f"duplicate rank: {rank}")
+    seen_candidate_ids.add(candidate_id)
+    seen_ranks.add(rank)
+
+
 def _required_text(row: dict[str, str | None], field: str) -> str:
     value = row.get(field)
     if value is None or not value.strip():
@@ -316,7 +339,10 @@ def _required_text(row: dict[str, str | None], field: str) -> str:
 
 
 def _required_int(row: dict[str, str | None], field: str) -> int:
-    value = _required_text(row, field)
+    return _parse_int(_required_text(row, field), field)
+
+
+def _parse_int(value: str, field: str) -> int:
     try:
         return int(value)
     except ValueError as exc:
