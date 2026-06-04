@@ -30,6 +30,8 @@ _SYNC_TABLES = (
     "candidates",
     "candidate_details",
     "source_profiles",
+    "candidate_identity_matches",
+    "candidate_field_values",
     "candidate_wechat_timelines",
     "score_events",
     "match_scores",
@@ -830,12 +832,21 @@ def _plan_child_rows(
     for table in (
         "candidate_details",
         "source_profiles",
+        "candidate_identity_matches",
+        "candidate_field_values",
         "candidate_wechat_timelines",
         "score_events",
         "match_scores",
     ):
         for row in table_rows.get(table, []):
             candidate_sync_id = str(row.get("candidate_sync_id") or "")
+            if table == "candidate_identity_matches" and not candidate_sync_id:
+                if _target_has_sync_id(conn, table, str(row.get("sync_id") or "")):
+                    plan["merged"][table] += 1
+                else:
+                    plan["created"][table] += 1
+                continue
+
             action = candidate_actions.get(candidate_sync_id, {})
             if action.get("action") not in {"create", "merge"}:
                 plan["skipped"][table] += 1

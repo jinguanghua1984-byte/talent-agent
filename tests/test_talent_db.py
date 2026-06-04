@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import scripts.talent_models as talent_models
 from scripts.talent_db import TalentDB
 from scripts.talent_models import (
     Candidate,
@@ -181,6 +182,8 @@ def test_creates_all_core_tables(db: TalentDB):
         "candidates",
         "candidate_details",
         "source_profiles",
+        "candidate_identity_matches",
+        "candidate_field_values",
         "score_events",
         "match_scores",
         "merge_log",
@@ -249,6 +252,8 @@ def test_sync_lookup_indexes_exist_for_import_planning(db: TalentDB):
         "candidates",
         "candidate_details",
         "source_profiles",
+        "candidate_identity_matches",
+        "candidate_field_values",
         "candidate_wechat_timelines",
         "score_events",
         "match_scores",
@@ -261,6 +266,14 @@ def test_sync_lookup_indexes_exist_for_import_planning(db: TalentDB):
     assert "idx_candidates_sync_id" in indexes_by_table["candidates"]
     assert "idx_candidate_details_sync_id" in indexes_by_table["candidate_details"]
     assert "idx_source_profiles_sync_id" in indexes_by_table["source_profiles"]
+    assert (
+        "idx_candidate_identity_matches_sync_id"
+        in indexes_by_table["candidate_identity_matches"]
+    )
+    assert (
+        "idx_candidate_field_values_sync_id"
+        in indexes_by_table["candidate_field_values"]
+    )
     assert "idx_wechat_timelines_sync_id" in indexes_by_table["candidate_wechat_timelines"]
     assert "idx_score_events_sync_id" in indexes_by_table["score_events"]
     assert "idx_match_scores_sync_id" in indexes_by_table["match_scores"]
@@ -277,6 +290,29 @@ def test_new_candidate_and_related_rows_receive_sync_ids(db: TalentDB):
     )
     db.update_overall_score(candidate_id, 88, "manual", {"note": "seed"})
     db.save_match_score(candidate_id, "jd-1", "final", 88, {"skill": 90}, "good")
+    identity_match_id = db.record_identity_match(
+        {
+            "candidate_id": candidate_id,
+            "source_platform": "boss",
+            "source_candidate_key": "boss-1",
+            "target_platform": "maimai",
+            "target_platform_id": "maimai-1",
+            "confidence": 0.92,
+            "score_breakdown": {"name": 0.95},
+            "match_status": "auto_matched",
+        }
+    )
+    field_value_id = db.record_field_value(
+        {
+            "candidate_id": candidate_id,
+            "field_name": "hunting_status",
+            "platform": "maimai",
+            "source_profile_id": "maimai-1",
+            "field_value": "open",
+            "confidence": 0.84,
+            "merge_decision": "fill_empty",
+        }
+    )
     db.add_wechat_timeline(
         candidate_id,
         {
@@ -305,6 +341,14 @@ def test_new_candidate_and_related_rows_receive_sync_ids(db: TalentDB):
         "SELECT sync_id FROM match_scores WHERE candidate_id = ?",
         (candidate_id,),
     ).fetchone()
+    identity_match = db._conn.execute(
+        "SELECT sync_id FROM candidate_identity_matches WHERE id = ?",
+        (identity_match_id,),
+    ).fetchone()
+    field_value = db._conn.execute(
+        "SELECT sync_id FROM candidate_field_values WHERE id = ?",
+        (field_value_id,),
+    ).fetchone()
     timeline = db._conn.execute(
         "SELECT sync_id FROM candidate_wechat_timelines WHERE candidate_id = ?",
         (candidate_id,),
@@ -315,7 +359,142 @@ def test_new_candidate_and_related_rows_receive_sync_ids(db: TalentDB):
     assert source["sync_id"]
     assert score_event["sync_id"]
     assert match_score["sync_id"]
+    assert identity_match["sync_id"]
+    assert field_value["sync_id"]
     assert timeline["sync_id"]
+
+
+def test_cross_channel_audit_tables_and_methods(db: TalentDB):
+    candidate_id = db.ingest(
+        {
+            "name": "Cross Channel",
+            "current_company": "BOSS Primary",
+            "current_title": "AI PM",
+            "platform_id": "boss-1",
+        },
+        platform="boss",
+    )
+
+    identity_match_id = db.record_identity_match(
+        {
+            "candidate_id": candidate_id,
+            "source_platform": "boss",
+            "source_candidate_key": "boss-1",
+            "target_platform": "maimai",
+            "target_platform_id": "maimai-9",
+            "target_profile_url": "https://maimai.cn/profile/detail?dstu=maimai-9",
+            "query_text": "Cross Channel AI PM",
+            "query_level": "person",
+            "confidence": 0.93,
+            "score_breakdown": {"name": 0.97, "company": 0.9},
+            "match_status": "confirmed",
+            "decision_reason": "name and company match",
+            "confirmed_by": "hunter-a",
+            "confirmed_at": "2026-06-04T10:00:00+08:00",
+        }
+    )
+    field_value_id = db.record_field_value(
+        {
+            "candidate_id": candidate_id,
+            "field_name": "current_title",
+            "platform": "maimai",
+            "source_profile_id": "maimai-9",
+            "field_value": {"value": "AI Product Lead", "evidence": ["headline"]},
+            "confidence": 0.88,
+            "merge_decision": "keep_primary",
+            "decision_reason": "BOSS profile is fresher",
+        }
+    )
+
+    identity_matches = db.identity_matches(candidate_id)
+    field_values = db.field_values(candidate_id)
+
+    assert len(identity_matches) == 1
+    assert isinstance(identity_matches[0], talent_models.CandidateIdentityMatch)
+    assert identity_matches[0].id == identity_match_id
+    assert identity_matches[0].candidate_id == candidate_id
+    assert identity_matches[0].source_platform == "boss"
+    assert identity_matches[0].source_candidate_key == "boss-1"
+    assert identity_matches[0].target_platform == "maimai"
+    assert identity_matches[0].target_platform_id == "maimai-9"
+    assert identity_matches[0].score_breakdown == {"name": 0.97, "company": 0.9}
+    assert identity_matches[0].match_status == "confirmed"
+    assert identity_matches[0].confirmed_by == "hunter-a"
+
+    assert len(field_values) == 1
+    assert isinstance(field_values[0], talent_models.CandidateFieldValue)
+    assert field_values[0].id == field_value_id
+    assert field_values[0].candidate_id == candidate_id
+    assert field_values[0].field_name == "current_title"
+    assert field_values[0].platform == "maimai"
+    assert field_values[0].source_profile_id == "maimai-9"
+    assert field_values[0].field_value == {
+        "value": "AI Product Lead",
+        "evidence": ["headline"],
+    }
+    assert field_values[0].merge_decision == "keep_primary"
+    assert db.identity_matches() == identity_matches
+    assert db.field_values(candidate_id + 999) == []
+
+    with pytest.raises(ValueError, match="Candidate does not exist"):
+        db.record_identity_match(
+            {
+                "candidate_id": candidate_id + 999,
+                "source_platform": "boss",
+                "source_candidate_key": "missing",
+                "target_platform": "maimai",
+                "match_status": "rejected",
+            }
+        )
+    with pytest.raises(ValueError, match="Candidate does not exist"):
+        db.record_field_value(
+            {
+                "candidate_id": candidate_id + 999,
+                "field_name": "current_title",
+                "platform": "maimai",
+                "field_value": None,
+            }
+        )
+
+
+def test_merge_candidate_source_keeps_existing_primary_fields(db: TalentDB):
+    candidate_id = db.ingest(
+        {
+            "name": "Primary Source",
+            "current_company": "BOSS Co",
+            "current_title": "Senior PM",
+            "platform_id": "boss-1",
+            "profile_url": "https://boss.example/profile/boss-1",
+        },
+        platform="boss",
+    )
+
+    db.merge_candidate_source(
+        candidate_id,
+        {
+            "name": "Primary Source",
+            "current_company": "Maimai Co",
+            "current_title": "Product Director",
+            "hunting_status": "open",
+            "platform_id": "maimai-1",
+            "profile_url": "https://maimai.cn/profile/detail?dstu=maimai-1",
+            "skill_tags": ["AI", "Growth"],
+        },
+        platform="maimai",
+    )
+
+    candidate = db.get(candidate_id)
+    sources = db.get_sources(candidate_id)
+
+    assert candidate is not None
+    assert candidate.current_company == "BOSS Co"
+    assert candidate.current_title == "Senior PM"
+    assert candidate.hunting_status == "open"
+    assert candidate.skill_tags == ("AI", "Growth")
+    assert [(source.platform, source.platform_id) for source in sources] == [
+        ("boss", "boss-1"),
+        ("maimai", "maimai-1"),
+    ]
 
 
 def test_init_is_idempotent(tmp_path: Path):

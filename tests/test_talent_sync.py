@@ -59,7 +59,10 @@ def test_export_full_bundle_contains_manifest_and_core_rows(tmp_path: Path):
         assert "checksums.sha256" in names
         assert "data/candidates.jsonl" in names
         assert "data/candidate_details.jsonl" in names
+        assert "data/candidate_identity_matches.jsonl" in names
+        assert "data/candidate_field_values.jsonl" in names
         assert "data/tombstones.jsonl" in names
+        listed_paths = {line.split("  ", 1)[1] for line in checksums}
         manifest = json.loads(bundle.read("manifest.json").decode("utf-8"))
         manifest_bytes = bundle.read("manifest.json")
         candidates_bytes = bundle.read("data/candidates.jsonl")
@@ -71,7 +74,16 @@ def test_export_full_bundle_contains_manifest_and_core_rows(tmp_path: Path):
     assert manifest["attachments"]["wechat_timelines"] is False
     assert candidate["sync_id"].startswith("candidate:")
     assert "id" not in candidate
-    assert len(checksums) == 8
+    assert len(checksums) == len(names) - 1
+    assert {
+        "manifest.json",
+        "data/candidates.jsonl",
+        "data/candidate_details.jsonl",
+        "data/source_profiles.jsonl",
+        "data/candidate_identity_matches.jsonl",
+        "data/candidate_field_values.jsonl",
+        "data/tombstones.jsonl",
+    }.issubset(listed_paths)
     assert any(line.endswith("  manifest.json") for line in checksums)
     assert any(line.endswith("  data/candidates.jsonl") for line in checksums)
     assert any(
@@ -84,6 +96,92 @@ def test_export_full_bundle_contains_manifest_and_core_rows(tmp_path: Path):
         and line.endswith("  data/candidates.jsonl")
         for line in checksums
     )
+
+
+def test_sync_bundle_round_trips_cross_channel_audit_tables(tmp_path: Path):
+    source_db = tmp_path / "source.db"
+    target_db = tmp_path / "target.db"
+    bundle_path = tmp_path / "bundle.zip"
+
+    source = TalentDB(source_db)
+    try:
+        source_candidate_id = source.ingest(
+            {
+                "name": "Cross Channel",
+                "current_company": "BOSS Co",
+                "current_title": "AI PM",
+                "platform_id": "boss-1",
+            },
+            platform="boss",
+        )
+        source.record_identity_match(
+            {
+                "candidate_id": source_candidate_id,
+                "source_platform": "boss",
+                "source_candidate_key": "boss-1",
+                "target_platform": "maimai",
+                "target_platform_id": "maimai-9",
+                "target_profile_url": "https://maimai.cn/profile/detail?dstu=maimai-9",
+                "query_text": "Cross Channel AI PM",
+                "query_level": "person",
+                "confidence": 0.93,
+                "score_breakdown": {"name": 0.97, "company": 0.9},
+                "match_status": "confirmed",
+                "decision_reason": "same person",
+                "confirmed_by": "hunter-a",
+                "confirmed_at": "2026-06-04T10:00:00+08:00",
+            }
+        )
+        source.record_field_value(
+            {
+                "candidate_id": source_candidate_id,
+                "field_name": "current_title",
+                "platform": "maimai",
+                "source_profile_id": "maimai-9",
+                "field_value": {"value": "AI Product Lead", "evidence": ["headline"]},
+                "confidence": 0.88,
+                "merge_decision": "keep_primary",
+                "decision_reason": "BOSS profile is fresher",
+            }
+        )
+    finally:
+        source.close()
+
+    summary = export_bundle(source_db, bundle_path, mode="full")
+    dry_run = import_bundle(bundle_path, target_db, apply=False)
+    apply_result = import_bundle(
+        bundle_path,
+        target_db,
+        apply=True,
+        confirm=CONFIRM_SYNC_TEXT,
+    )
+
+    target = TalentDB(target_db)
+    try:
+        identity_matches = target.identity_matches()
+        field_values = target.field_values()
+    finally:
+        target.close()
+
+    assert summary["tables"]["candidate_identity_matches"] == 1
+    assert summary["tables"]["candidate_field_values"] == 1
+    assert dry_run["tables"]["candidate_identity_matches"] == 1
+    assert dry_run["tables"]["candidate_field_values"] == 1
+    assert dry_run["created"]["candidate_identity_matches"] == 1
+    assert dry_run["created"]["candidate_field_values"] == 1
+    assert apply_result["created"]["candidate_identity_matches"] == 1
+    assert apply_result["created"]["candidate_field_values"] == 1
+    assert len(identity_matches) == 1
+    assert identity_matches[0].source_platform == "boss"
+    assert identity_matches[0].target_platform == "maimai"
+    assert identity_matches[0].score_breakdown == {"name": 0.97, "company": 0.9}
+    assert len(field_values) == 1
+    assert field_values[0].field_name == "current_title"
+    assert field_values[0].field_value == {
+        "value": "AI Product Lead",
+        "evidence": ["headline"],
+    }
+    assert identity_matches[0].candidate_id == field_values[0].candidate_id
 
 
 def test_import_bundle_handles_unicode_line_separator_inside_json_string(

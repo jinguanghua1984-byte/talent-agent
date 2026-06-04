@@ -193,6 +193,41 @@ class SourceProfile:
 
 
 @dataclass(frozen=True)
+class CandidateIdentityMatch:
+    id: int
+    candidate_id: int | None
+    source_platform: str
+    source_candidate_key: str
+    target_platform: str
+    target_platform_id: str | None = None
+    target_profile_url: str | None = None
+    query_text: str | None = None
+    query_level: str | None = None
+    confidence: float | None = None
+    score_breakdown: dict[str, Any] | None = None
+    match_status: str = ""
+    decision_reason: str | None = None
+    confirmed_by: str | None = None
+    confirmed_at: str | None = None
+    created_at: str = ""
+    updated_at: str = ""
+
+
+@dataclass(frozen=True)
+class CandidateFieldValue:
+    id: int
+    candidate_id: int
+    field_name: str
+    platform: str
+    source_profile_id: str | None = None
+    field_value: Any = None
+    confidence: float | None = None
+    merge_decision: str | None = None
+    decision_reason: str | None = None
+    created_at: str = ""
+
+
+@dataclass(frozen=True)
 class WechatTimeline:
     id: int
     candidate_id: int
