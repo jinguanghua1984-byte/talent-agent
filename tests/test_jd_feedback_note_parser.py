@@ -263,6 +263,49 @@ def test_parse_feedback_csv_dry_run_does_not_write_outputs(tmp_path: Path) -> No
     assert not (root / "feedback" / "calibration-suggestions.json").exists()
 
 
+def test_parse_feedback_csv_rejects_missing_feedback_note_column(
+    tmp_path: Path,
+) -> None:
+    root = _run_root(tmp_path)
+    (root / "reports" / "outreach-queue.csv").write_text(
+        (
+            "candidate_id,rank,grade,score\n"
+            "101,1,A,88\n"
+        ),
+        encoding="utf-8-sig",
+    )
+
+    with pytest.raises(
+        ValueError, match="outreach CSV missing required columns: feedback_note"
+    ):
+        parse_feedback_csv(root, client=QueueClient([]), model="model-x")
+
+    assert not (root / "feedback" / "delivery-feedback.json").exists()
+
+
+def test_parse_feedback_csv_rejects_duplicate_candidate_before_writing_outputs(
+    tmp_path: Path,
+) -> None:
+    root = _run_root(tmp_path)
+    (root / "reports" / "outreach-queue.csv").write_text(
+        (
+            "candidate_id,rank,grade,score,feedback_note\n"
+            "101,1,A,88,候选人方向准确，可以沟通。\n"
+            "101,2,A,84,候选人也很匹配，可以继续沟通。\n"
+        ),
+        encoding="utf-8-sig",
+    )
+    client = QueueClient([_response(), _response()])
+
+    with pytest.raises(ValueError, match="duplicate candidate_id"):
+        parse_feedback_csv(root, client=client, model="model-x")
+
+    assert not (root / "feedback" / "delivery-feedback.json").exists()
+    assert not (root / "feedback" / "parse-review-queue.json").exists()
+    assert not (root / "feedback" / "feedback-summary.json").exists()
+    assert not (root / "feedback" / "calibration-suggestions.json").exists()
+
+
 def test_cli_parse_csv_uses_run_root(tmp_path: Path) -> None:
     root = _run_root(tmp_path)
     client = QueueClient([_response(), _response(parse_confidence=0.52)])
@@ -272,6 +315,29 @@ def test_cli_parse_csv_uses_run_root(tmp_path: Path) -> None:
     assert exit_code == 0
     assert (root / "feedback" / "delivery-feedback.json").exists()
     assert (root / "feedback" / "parse-review-queue.json").exists()
+
+
+def test_cli_parse_csv_reports_validation_error_without_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _run_root(tmp_path)
+    (root / "reports" / "outreach-queue.csv").write_text(
+        (
+            "candidate_id,rank,grade,score\n"
+            "101,1,A,88\n"
+        ),
+        encoding="utf-8-sig",
+    )
+
+    exit_code = main(
+        ["parse-csv", "--run-root", str(root), "--model", "test"],
+        client=QueueClient([]),
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "error:" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_cli_parse_single_note_writes_json(tmp_path: Path) -> None:

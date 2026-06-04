@@ -5,6 +5,7 @@ import csv
 import json
 import re
 import sys
+from tempfile import TemporaryDirectory
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from scripts.jd_delivery_feedback import (
     VALID_REASON_CODES,
     build_suggestions,
     compile_feedback_summary,
+    load_feedback,
     write_json,
 )
 from scripts.pipeline_utils import call_llm_with_retry, create_llm_client
@@ -23,6 +25,7 @@ DEFAULT_MODEL = "intelligence"
 LOW_CONFIDENCE_THRESHOLD = 0.7
 FEEDBACK_SCHEMA = "jd_delivery_feedback_v1"
 REVIEW_QUEUE_SCHEMA = "jd_delivery_feedback_parse_review_queue_v1"
+REQUIRED_CSV_COLUMNS = {"candidate_id", "rank", "score", "grade", "feedback_note"}
 
 
 def build_feedback_prompt(feedback_note: str) -> str:
@@ -116,7 +119,9 @@ def parse_feedback_csv(
     parsed_count = 0
 
     with paths["csv"].open(encoding="utf-8-sig", newline="") as handle:
-        for row in csv.DictReader(handle):
+        reader = csv.DictReader(handle)
+        _validate_csv_columns(reader.fieldnames)
+        for row in reader:
             note = (row.get("feedback_note") or "").strip()
             if not note:
                 continue
@@ -147,6 +152,7 @@ def parse_feedback_csv(
         "reviewer_role": "senior_hunter",
         "candidate_feedback": candidate_feedback,
     }
+    validated_feedback = _validate_feedback_payload(delivery_feedback)
     review_queue = {
         "schema": REVIEW_QUEUE_SCHEMA,
         **metadata,
@@ -167,9 +173,9 @@ def parse_feedback_csv(
     if dry_run:
         return result
 
-    write_json(paths["delivery"], delivery_feedback)
+    write_json(paths["delivery"], validated_feedback)
     write_json(paths["review"], review_queue)
-    summary = compile_feedback_summary(delivery_feedback)
+    summary = compile_feedback_summary(validated_feedback)
     write_json(paths["summary"], summary)
     write_json(paths["suggestions"], build_suggestions(summary))
     return result
@@ -230,6 +236,21 @@ def _loads_object(text: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("LLM JSON response must be an object")
     return data
+
+
+def _validate_csv_columns(fieldnames: list[str] | None) -> None:
+    missing = sorted(REQUIRED_CSV_COLUMNS - set(fieldnames or []))
+    if missing:
+        raise ValueError(
+            "outreach CSV missing required columns: " + ", ".join(missing)
+        )
+
+
+def _validate_feedback_payload(feedback: dict[str, Any]) -> dict[str, Any]:
+    with TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "delivery-feedback.json"
+        write_json(path, feedback)
+        return load_feedback(path)
 
 
 def _output_paths(
