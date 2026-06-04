@@ -228,6 +228,45 @@ def test_boss_app_sourcing_contracts_define_external_executor_handoff():
     assert "动作级确认" in s6b_text
 
 
+def test_liepin_contracts_define_broad_recall_adaptive_planning_boundary():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "liepin-talent-search-campaign"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "liepin-unattended-campaign"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    assert "liepin_broad_recall_adaptive_v1" in skill
+    assert "plan-adaptive-search" in skill
+    assert "不触发猎聘请求" in skill
+    assert "liepin_broad_recall_adaptive_v1" in workflow
+    assert "plan-adaptive-search" in workflow
+    assert "run-live-adaptive-search" in workflow
+    assert "standardize-adaptive-search" in skill
+    assert "standardize-adaptive-search" in workflow
+    assert "broad-recall-summary" in skill
+    assert "broad-recall-summary" in workflow
+    assert "raw/search-adaptive" in skill
+    assert "reports/page-quality-<wave_id>.jsonl" in skill
+    assert "state/adaptive-unit-state-<wave_id>.json" in skill
+    assert "全终止" in workflow
+    assert "不得连接 CDP" in workflow
+    assert "main-db-sync-handoff" in skill
+    assert "main-db-sync-handoff" in workflow
+    assert "不得自动执行主库同步" in workflow
+    assert "jd-talent-delivery" in skill
+    assert "jd-talent-delivery" in workflow
+    assert "不写数据库" in workflow
+
+
 def test_boss_app_sourcing_capability_exception_keeps_executor_narrow():
     capabilities = (ROOT / "agents" / "capabilities.md").read_text(encoding="utf-8")
     workflow = (

@@ -8,6 +8,8 @@ import pytest
 
 from scripts.liepin_campaign import ensure_campaign
 from scripts.liepin_campaign_summary import build_campaign_summary, write_campaign_summary
+from scripts.liepin_search_import import CONFIRM_TEXT, apply_search_import
+from scripts.liepin_search_standardize import standardize_adaptive_search
 from scripts.talent_db import TalentDB
 
 
@@ -151,3 +153,76 @@ def test_campaign_summary_cli_prints_json(tmp_path: Path):
     assert payload["schema"] == "liepin_campaign_summary_v1"
     assert payload["candidate_count"] == 3
     assert (paths.reports_dir / "campaign-summary.json").exists()
+
+
+def test_adaptive_standardize_apply_then_campaign_summary_preserves_safe_audit_ref(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    raw_path = paths.root / "raw" / "search-adaptive" / "search-wave-001" / "unit-000001" / "page-000.json"
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_path.write_text(
+        json.dumps(
+            {
+                "schema": "liepin_adaptive_search_page_v1",
+                "wave_id": "search-wave-001",
+                "unit_id": "unit-000001",
+                "curPage": 0,
+                "payload": {
+                    "flag": 1,
+                    "data": {
+                        "ckId": "ck-1",
+                        "skId": "sk-1",
+                        "fkId": "fk-1",
+                        "cardResList": [
+                            {
+                                "usercIdEncode": "user-res-1",
+                                "detailUrl": (
+                                    "/resume/showresumedetail/?res_id_encode=res-1"
+                                    "&ck_id=ck-1&sk_id=sk-1&fk_id=fk-1"
+                                ),
+                                "simpleResumeForm": {
+                                    "resIdEncode": "res-1",
+                                    "resName": "张**",
+                                    "resCompany": "示例公司",
+                                    "resTitle": "AI产品经理",
+                                    "resDqName": "北京",
+                                    "resEdulevelName": "硕士",
+                                    "resWorkyearAge": 8,
+                                },
+                            }
+                        ],
+                    },
+                },
+                "request": {"endpoint": "search-resumes"},
+                "run_id": "adaptive-001",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    standardize_summary = standardize_adaptive_search(paths.root, wave_id="search-wave-001")
+    apply_summary = apply_search_import(paths.root, confirm=CONFIRM_TEXT)
+    campaign_summary = write_campaign_summary(paths.root)
+
+    assert standardize_summary["candidate_count"] == 1
+    assert apply_summary["mode"] == "apply"
+    assert campaign_summary["candidate_count"] == 1
+    assert campaign_summary["source_profile_count"] == 1
+    conn = sqlite3.connect(str(paths.root / "talent.db"))
+    try:
+        raw_profile = conn.execute(
+            "SELECT raw_profile FROM source_profiles WHERE platform='liepin' AND platform_id='res-1'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert "search-wave-001" in raw_profile
+    assert "unit-000001" in raw_profile
+    assert "showresumedetail" not in raw_profile
+    assert "ck_id=" not in raw_profile
+    assert "sk_id=" not in raw_profile
+    assert "fk_id=" not in raw_profile
+    report_dump = (paths.reports_dir / "campaign-summary.json").read_text(
+        encoding="utf-8-sig"
+    ) + (paths.reports_dir / "campaign-summary.md").read_text(encoding="utf-8")
+    assert "showresumedetail" not in report_dump
+    assert "ck_id=" not in report_dump

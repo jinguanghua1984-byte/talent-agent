@@ -118,6 +118,27 @@ def test_plan_detail_smoke_targets_selects_detail_p0_and_masks_reports(tmp_path:
         _assert_report_text_is_sanitized(report_text)
 
 
+def test_plan_detail_smoke_targets_preserves_adaptive_wave_audit_ref(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    row = _candidate(
+        "res-1",
+        search_page="raw/search-adaptive/search-wave-001/unit-000001/page-000.json",
+    )
+    row["raw_ref"]["wave_id"] = "search-wave-001"
+    row["raw_ref"]["unit_id"] = "unit-000001"
+    _write_rows(paths.candidate_summaries, [row])
+
+    result = plan_detail_smoke_targets(paths.root)
+
+    pack = json.loads((paths.root / result["target_pack"]).read_text(encoding="utf-8-sig"))
+    assert pack["contacts"][0]["raw_ref"] == {
+        "search_page": "raw/search-adaptive/search-wave-001/unit-000001/page-000.json",
+        "card_index": 0,
+        "wave_id": "search-wave-001",
+        "unit_id": "unit-000001",
+    }
+
+
 def test_plan_detail_smoke_targets_enforces_limit_bounds(tmp_path: Path):
     paths = ensure_campaign(tmp_path / "liepin-demo")
     _write_rows(paths.candidate_summaries, [_candidate(f"res-{index}", card_index=index) for index in range(25)])

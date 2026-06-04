@@ -12,6 +12,9 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.liepin_api_contract import DEFAULT_SEARCH_PARAMS  # noqa: E402
+from scripts.liepin_adaptive_search_live_gate import run_live_adaptive_search_wave  # noqa: E402
+from scripts.liepin_broad_recall_adaptive import plan_adaptive_search  # noqa: E402
+from scripts.liepin_broad_recall_summary import write_broad_recall_summary  # noqa: E402
 from scripts.liepin_campaign import (  # noqa: E402
     atomic_write_json,
     ensure_campaign,
@@ -36,7 +39,8 @@ from scripts.liepin_detail_live_gate import run_live_detail_pack, run_live_detai
 from scripts.liepin_detail_targets import plan_detail_packs, plan_detail_smoke_targets  # noqa: E402
 from scripts.liepin_search_live_gate import run_live_search  # noqa: E402
 from scripts.liepin_search_import import apply_search_import, dry_run_search_import  # noqa: E402
-from scripts.liepin_search_standardize import standardize_campaign  # noqa: E402
+from scripts.liepin_search_standardize import standardize_adaptive_search, standardize_campaign  # noqa: E402
+from scripts.liepin_main_db_sync_handoff import write_main_db_sync_handoff  # noqa: E402
 
 
 DEFAULT_RUN_POLICY: dict[str, Any] = {
@@ -209,8 +213,15 @@ def main(argv: list[str] | None = None) -> int:
     plan.add_argument("--campaign-root", required=True)
     plan.add_argument("--max-pages", type=int)
 
+    adaptive_plan = subparsers.add_parser("plan-adaptive-search")
+    adaptive_plan.add_argument("--campaign-root", required=True)
+
     standardize = subparsers.add_parser("standardize")
     standardize.add_argument("--campaign-root", required=True)
+
+    standardize_adaptive = subparsers.add_parser("standardize-adaptive-search")
+    standardize_adaptive.add_argument("--campaign-root", required=True)
+    standardize_adaptive.add_argument("--wave-id", default="")
 
     summarize_parser = subparsers.add_parser("summarize")
     summarize_parser.add_argument("--campaign-root", required=True)
@@ -234,6 +245,14 @@ def main(argv: list[str] | None = None) -> int:
     live.add_argument("--timeout-seconds", type=float, default=30)
     live.add_argument("--max-pages", type=int)
     live.add_argument("--run-id")
+
+    adaptive_live = subparsers.add_parser("run-live-adaptive-search")
+    adaptive_live.add_argument("--campaign-root", required=True)
+    adaptive_live.add_argument("--wave-plan", required=True)
+    adaptive_live.add_argument("--cdp-url", default=f"http://127.0.0.1:{DEFAULT_PORT}")
+    adaptive_live.add_argument("--delay-seconds", type=float, default=DEFAULT_RUN_POLICY["request_interval_seconds"])
+    adaptive_live.add_argument("--timeout-seconds", type=float, default=30)
+    adaptive_live.add_argument("--run-id")
 
     detail_plan = subparsers.add_parser("plan-detail-smoke")
     detail_plan.add_argument("--campaign-root", required=True)
@@ -291,6 +310,13 @@ def main(argv: list[str] | None = None) -> int:
     campaign_summary = subparsers.add_parser("campaign-summary")
     campaign_summary.add_argument("--campaign-root", required=True)
 
+    broad_summary = subparsers.add_parser("broad-recall-summary")
+    broad_summary.add_argument("--campaign-root", required=True)
+
+    main_db_handoff = subparsers.add_parser("main-db-sync-handoff")
+    main_db_handoff.add_argument("--campaign-root", required=True)
+    main_db_handoff.add_argument("--main-db", default="data/talent.db")
+
     args = parser.parse_args(argv)
     try:
         if args.command == "init":
@@ -299,8 +325,15 @@ def main(argv: list[str] | None = None) -> int:
             result = status(args.campaign_root)
         elif args.command == "plan-pages":
             result = plan_pages(args.campaign_root, args.max_pages)
+        elif args.command == "plan-adaptive-search":
+            result = plan_adaptive_search(args.campaign_root)
         elif args.command == "standardize":
             result = standardize_campaign(args.campaign_root)
+        elif args.command == "standardize-adaptive-search":
+            result = standardize_adaptive_search(
+                args.campaign_root,
+                wave_id=args.wave_id or None,
+            )
         elif args.command == "summarize":
             result = summarize(args.campaign_root)
         elif args.command == "diagnose-pool":
@@ -322,6 +355,15 @@ def main(argv: list[str] | None = None) -> int:
                 delay_seconds=args.delay_seconds,
                 timeout_seconds=args.timeout_seconds,
                 max_pages=args.max_pages,
+                run_id=args.run_id,
+            )
+        elif args.command == "run-live-adaptive-search":
+            result = run_live_adaptive_search_wave(
+                campaign_root=args.campaign_root,
+                wave_plan=args.wave_plan,
+                cdp_url=args.cdp_url,
+                delay_seconds=args.delay_seconds,
+                timeout_seconds=args.timeout_seconds,
                 run_id=args.run_id,
             )
         elif args.command == "plan-detail-smoke":
@@ -384,6 +426,13 @@ def main(argv: list[str] | None = None) -> int:
             result = apply_search_import(campaign_root=args.campaign_root, confirm=args.confirm)
         elif args.command == "campaign-summary":
             result = write_campaign_summary(campaign_root=args.campaign_root)
+        elif args.command == "broad-recall-summary":
+            result = write_broad_recall_summary(campaign_root=args.campaign_root)
+        elif args.command == "main-db-sync-handoff":
+            result = write_main_db_sync_handoff(
+                campaign_root=args.campaign_root,
+                main_db_path=args.main_db,
+            )
         else:
             raise ValueError(f"unsupported command: {args.command}")
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:

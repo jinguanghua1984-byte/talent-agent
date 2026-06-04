@@ -64,6 +64,68 @@ POST https://api-h.liepin.com/api/com.liepin.searchfront4r.h.get-search-conditio
 
 把 `strategy.json.page_plan` 展开为 `curPage` 计划。P0 默认 1 页，人工确认后最多 5 页。计划写入 `state/continuation-plan.json`。
 
+### S3a 宽召回 adaptive 搜索规划
+
+当 `strategy.json` 明确设置 `strategy_mode=liepin_broad_recall_adaptive_v1` 时，先运行离线规划：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator plan-adaptive-search --campaign-root data/campaigns/<campaign_id>
+```
+
+该阶段只读取 `strategy.json`，生成 `search-units.jsonl`、`raw/search-live-runs/wave-plan.json`、wave sidecar 和 `reports/broad-recall-plan.*`。它不连接 CDP，不触发猎聘请求，不读取浏览器敏感存储，不写数据库。
+
+S3a 完成后停止在确认点。后续要执行 live 搜索时，必须由用户单独确认，并继续沿用 S4 的登录、验证码、安全页、HTTP 403/429/432、非 JSON、`flag != 1` 和模板漂移停机规则。
+
+### S3b 宽召回 adaptive single-wave live 执行
+
+`plan-adaptive-search` 完成并经单独确认后，允许只执行一个已规划 wave sidecar：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator run-live-adaptive-search --campaign-root data/campaigns/<campaign_id> --wave-plan raw/search-live-runs/search-wave-001-plan.json --cdp-url http://127.0.0.1:9898 --delay-seconds 3 --timeout-seconds 30 --run-id adaptive-search-wave-001
+```
+
+`run-live-adaptive-search` 只读取 wave sidecar 中的 unit、页码和 `search_params_overrides`，不得重新生成搜索条件，不得自动扩大到其他 wave。执行中逐页写 `raw/search-adaptive/<wave_id>/<unit_id>/page-*.json`，追加 `state/request-ledger.jsonl`，并写 `reports/page-quality-<wave_id>.jsonl` 与 `state/adaptive-unit-state-<wave_id>.json`。
+
+恢复时只信磁盘事实：扫描 `raw/search-adaptive/<wave_id>/<unit_id>/page-*.json`、`reports/page-quality-<wave_id>.jsonl` 和 `state/adaptive-unit-state-<wave_id>.json`。已成功 raw 页面不得重复请求；已有 page-quality 行不得重复追加；从下一缺失页继续。当 unit 或整个 wave 已经全终止时，只更新恢复状态和 run summary，不得连接 CDP。
+
+该阶段通过已登录页面上下文调用猎聘搜索接口；不得读取 cookie、localStorage、sessionStorage、Chrome profile 或 session store。遇登录、验证码、安全页、HTTP 403/429/432、非 JSON、`flag != 1`、模板漂移或无法确认猎聘找简历页时立即停止并写 interruption/continuation。
+
+该阶段只写 raw search、页质报告和恢复状态，不写 Campaign DB，不写主库 `data/talent.db`，不生成推荐报告、外联队列或飞书交付包。搜索结果入库必须后续另跑 `import-search-dry-run` 和确认文本 `import-search-apply`。
+
+### S3c 宽召回 adaptive 搜索标准化
+
+adaptive live 完成后，先把指定 wave 的 raw search 标准化为候选摘要：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator standardize-adaptive-search --campaign-root data/campaigns/<campaign_id> --wave-id search-wave-001
+```
+
+`standardize-adaptive-search` 只读取 `raw/search-adaptive/<wave_id>/<unit_id>/page-*.json`，写 `structured/candidate-summaries.jsonl`、`reports/search-summary.json` 和 `reports/search-summary.md`。该阶段不连接 CDP，不触发猎聘请求，不读取浏览器敏感存储，不写数据库。标准化完成后，才允许回到 `import-search-dry-run` 和确认文本 `import-search-apply`。
+
+### S3d 宽召回 adaptive 摘要
+
+adaptive 搜索标准化、导入 dry-run/apply 和 Campaign Summary 完成后，可以生成只读宽召回摘要：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator broad-recall-summary --campaign-root data/campaigns/<campaign_id>
+```
+
+`broad-recall-summary` 只读取 `reports/page-quality-*.jsonl`、`reports/search-summary.json`、`reports/search-import-*.json` 和 `reports/campaign-summary.json`，写 `reports/broad-recall-summary.json` 与 `reports/broad-recall-summary.md`。它不连接 CDP，不触发猎聘请求，不写数据库，不生成推荐报告、外联队列或飞书交付包。
+
+### S3e 主库同步 handoff dry-run
+
+Campaign DB 摘要或 broad-recall summary 完成后，可以生成主库同步前置材料：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator main-db-sync-handoff --campaign-root data/campaigns/<campaign_id> --main-db data/talent.db
+```
+
+`main-db-sync-handoff` 只读取 campaign-local `talent.db`，导出 `exports/talent-sync-*.zip`，校验 bundle，并对目标主库执行 dry-run import plan，写 `reports/main-db-sync-handoff.json` 与 `reports/main-db-sync-handoff.md`。该阶段不得自动执行主库同步，不得执行 `talent_sync.py import --apply`，不得创建或修改 `data/talent.db`。
+
+真实主库写入必须另起确认流程：先 dry-run clean，再备份主库，再用同步确认文本 apply，最后执行完整性验证和冲突处理。
+
+猎聘寻访 workflow 到此只提供后续交付前置能力，不直接生成候选人推荐报告、外联队列或飞书交付包。主库同步完成后，后续精准匹配、推荐报告、外联表和飞书发布必须交给 `jd-talent-delivery`。
+
 ### S4 搜索执行
 
 逐页通过 CDP `Runtime.evaluate` 在已登录页面上下文内执行受控 fetch：
