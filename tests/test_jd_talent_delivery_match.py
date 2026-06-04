@@ -194,6 +194,25 @@ class TrackingUrlTalentDB(FakeTalentDB):
         ]
 
 
+class LiepinUrlTalentDB(FakeTalentDB):
+    def get_sources(self, candidate_id: int) -> list:
+        return [
+            type(
+                "Source",
+                (),
+                {
+                    "platform": "liepin",
+                    "platform_id": "res-101",
+                    "profile_url": (
+                        "https://h.liepin.com/resume/showresumedetail/"
+                        "?res_id_encode=res-101"
+                    ),
+                    "fetched_at": "2026-06-04",
+                },
+            )()
+        ]
+
+
 def test_run_match_outputs_reports_and_outreach(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(match, "TalentDB", FakeTalentDB)
     scorecard_path = tmp_path / "scorecard.json"
@@ -365,6 +384,32 @@ def test_outreach_url_retains_profile_token_and_angle_keeps_company_and_title(
     assert "show_tip" not in rows[0]["profile_url"]
     assert "字节跳动" in rows[0]["suggested_outreach_angle"]
     assert "推理框架工程师" in rows[0]["suggested_outreach_angle"]
+
+
+def test_outreach_url_preserves_sanitized_liepin_profile_url(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(match, "TalentDB", LiepinUrlTalentDB)
+    scorecard_path = tmp_path / "scorecard.json"
+    scorecard_path.write_text(
+        json.dumps(_scorecard(), ensure_ascii=False), encoding="utf-8"
+    )
+    out_dir = tmp_path / "delivery"
+
+    result = match.run_match(
+        db_path=tmp_path / "talent.db",
+        scorecard_path=scorecard_path,
+        out_dir=out_dir,
+        top_n=1,
+        limit=10,
+    )
+
+    expected_url = "https://h.liepin.com/resume/showresumedetail/?res_id_encode=res-101"
+    with (out_dir / "reports" / "outreach-queue.csv").open(encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[0]["platform_id"] == "res-101"
+    assert rows[0]["profile_url"] == expected_url
+    assert result_url(out_dir / "reports" / "talent-recommendation.json") == expected_url
+    quality = json.loads((out_dir / "reports" / "quality-gates.json").read_text(encoding="utf-8-sig"))
+    assert quality["status"] == "passed"
 
 
 def result_url(path: Path) -> str:

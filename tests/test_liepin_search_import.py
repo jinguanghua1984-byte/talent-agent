@@ -13,6 +13,7 @@ from scripts.liepin_search_import import (
     dry_run_search_import,
     search_summary_to_ingest_payload,
 )
+from scripts.liepin_search_standardize import standardize_adaptive_search
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -70,6 +71,82 @@ def test_search_summary_to_ingest_payload_sanitizes_token_fields():
     assert "sk_id=" not in dumped
     assert "fk_id=" not in dumped
     assert "ck-secret" not in dumped
+
+
+def test_search_summary_to_ingest_payload_preserves_adaptive_wave_audit_ref():
+    row = _summary("res-1")
+    row["raw_ref"]["search_page"] = "raw/search-adaptive/search-wave-001/unit-000001/page-000.json"
+    row["raw_ref"]["wave_id"] = "search-wave-001"
+    row["raw_ref"]["unit_id"] = "unit-000001"
+
+    payload = search_summary_to_ingest_payload(row)
+
+    assert payload["raw_profile"]["liepin_search_summary"]["raw_ref"] == {
+        "search_page": "raw/search-adaptive/search-wave-001/unit-000001/page-000.json",
+        "card_index": 0,
+        "wave_id": "search-wave-001",
+        "unit_id": "unit-000001",
+    }
+
+
+def test_adaptive_standardize_to_import_dry_run_does_not_create_campaign_db(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    raw_path = paths.root / "raw" / "search-adaptive" / "search-wave-001" / "unit-000001" / "page-000.json"
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_path.write_text(
+        json.dumps(
+            {
+                "schema": "liepin_adaptive_search_page_v1",
+                "wave_id": "search-wave-001",
+                "unit_id": "unit-000001",
+                "curPage": 0,
+                "payload": {
+                    "flag": 1,
+                    "data": {
+                        "ckId": "ck-1",
+                        "skId": "sk-1",
+                        "fkId": "fk-1",
+                        "cardResList": [
+                            {
+                                "usercIdEncode": "user-res-1",
+                                "detailUrl": (
+                                    "/resume/showresumedetail/?res_id_encode=res-1"
+                                    "&ck_id=ck-1&sk_id=sk-1&fk_id=fk-1"
+                                ),
+                                "simpleResumeForm": {
+                                    "resIdEncode": "res-1",
+                                    "resName": "张**",
+                                    "resCompany": "示例公司",
+                                    "resTitle": "AI产品经理",
+                                    "resDqName": "北京",
+                                    "resEdulevelName": "硕士",
+                                    "resWorkyearAge": 8,
+                                },
+                            }
+                        ],
+                    },
+                },
+                "request": {"endpoint": "search-resumes"},
+                "run_id": "adaptive-001",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    standardize_summary = standardize_adaptive_search(paths.root, wave_id="search-wave-001")
+    dry_run_summary = dry_run_search_import(paths.root)
+
+    assert standardize_summary["candidate_count"] == 1
+    assert dry_run_summary["mode"] == "dry-run"
+    assert dry_run_summary["result"]["created"] == 1
+    assert dry_run_summary["no_main_db_write"] is True
+    assert not (paths.root / "talent.db").exists()
+    report_dump = (paths.reports_dir / "search-import-dry-run.json").read_text(
+        encoding="utf-8-sig"
+    ) + (paths.reports_dir / "search-import-dry-run.md").read_text(encoding="utf-8")
+    assert "showresumedetail" not in report_dump
+    assert "ck_id=" not in report_dump
 
 
 def test_dry_run_search_import_does_not_create_campaign_db_and_writes_sanitized_report(tmp_path: Path):

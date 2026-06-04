@@ -105,6 +105,15 @@ def candidate_summary_from_card(
     }
 
 
+def _adaptive_metadata(raw: dict[str, Any]) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+    for key in ("wave_id", "unit_id"):
+        value = str(raw.get(key) or "").strip()
+        if value:
+            metadata[key] = value
+    return metadata
+
+
 def _standardize_raw_page(
     paths: LiepinCampaignPaths,
     raw_path: Path,
@@ -157,6 +166,12 @@ def _standardize_raw_page(
         for index, card in enumerate(cards)
         if isinstance(card, dict)
     ]
+    metadata = _adaptive_metadata(raw)
+    if metadata:
+        for row in rows:
+            raw_ref = row.get("raw_ref") if isinstance(row.get("raw_ref"), dict) else {}
+            raw_ref.update(metadata)
+            row["raw_ref"] = raw_ref
     return rows, None
 
 
@@ -207,12 +222,64 @@ def standardize_campaign(campaign_root: str | Path) -> dict[str, Any]:
     return summary
 
 
+def _adaptive_raw_pages(paths: LiepinCampaignPaths, wave_id: str | None = None) -> list[Path]:
+    root = paths.root / "raw" / "search-adaptive"
+    if wave_id:
+        return sorted((root / wave_id).glob("*/page-*.json"))
+    return sorted(root.glob("*/unit-*/page-*.json"))
+
+
+def standardize_adaptive_search(
+    campaign_root: str | Path,
+    *,
+    wave_id: str | None = None,
+) -> dict[str, Any]:
+    paths = ensure_campaign(campaign_root)
+    rows: list[dict[str, Any]] = []
+    skipped_pages: list[dict[str, Any]] = []
+    raw_pages = _adaptive_raw_pages(paths, wave_id=wave_id)
+    for raw_path in raw_pages:
+        page_rows, skip = _standardize_raw_page(paths, raw_path)
+        rows.extend(page_rows)
+        if skip:
+            skipped_pages.append(skip)
+
+    if rows:
+        _write_jsonl(paths.candidate_summaries, rows)
+    elif paths.candidate_summaries.exists():
+        paths.candidate_summaries.unlink()
+
+    status = "standardized"
+    if skipped_pages and not rows:
+        status = "template_drift"
+    elif skipped_pages:
+        status = "partial"
+
+    summary = {
+        "status": status,
+        "source": "adaptive_search",
+        "wave_id": wave_id or "",
+        "campaign_root": paths.root.as_posix(),
+        "pages_scanned": len(raw_pages),
+        "candidate_count": len(rows),
+        "skipped_pages": skipped_pages,
+    }
+    _write_json(paths.search_summary_json, summary)
+    _write_markdown_summary(paths, summary)
+    return summary
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="标准化猎聘搜索 raw")
     parser.add_argument("--campaign-root", required=True)
+    parser.add_argument("--adaptive", action="store_true")
+    parser.add_argument("--wave-id", default="")
     args = parser.parse_args(argv)
     try:
-        summary = standardize_campaign(args.campaign_root)
+        if args.adaptive:
+            summary = standardize_adaptive_search(args.campaign_root, wave_id=args.wave_id or None)
+        else:
+            summary = standardize_campaign(args.campaign_root)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

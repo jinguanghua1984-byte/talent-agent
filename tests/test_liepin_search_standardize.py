@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from scripts.liepin_campaign import ensure_campaign, mark_page_completed
-from scripts.liepin_search_standardize import standardize_campaign
+from scripts.liepin_search_standardize import standardize_adaptive_search, standardize_campaign
 
 
 def _liepin_search_payload() -> dict:
@@ -151,3 +151,82 @@ def test_standardize_cli_writes_summary_reports(tmp_path: Path):
     assert stdout_summary["candidate_count"] == 1
     assert file_summary["candidate_count"] == 1
     assert "候选人摘要数：1" in paths.search_summary_md.read_text(encoding="utf-8")
+
+
+def test_standardize_adaptive_search_reads_wave_raw_pages(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    raw_path = paths.root / "raw" / "search-adaptive" / "search-wave-001" / "unit-000001" / "page-000.json"
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_path.write_text(
+        json.dumps(
+            {
+                "schema": "liepin_adaptive_search_page_v1",
+                "wave_id": "search-wave-001",
+                "unit_id": "unit-000001",
+                "curPage": 0,
+                "payload": _liepin_search_payload(),
+                "request": {"endpoint": "search-resumes"},
+                "run_id": "adaptive-001",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    summary = standardize_adaptive_search(paths.root, wave_id="search-wave-001")
+
+    assert summary["status"] == "standardized"
+    assert summary["source"] == "adaptive_search"
+    assert summary["wave_id"] == "search-wave-001"
+    assert summary["candidate_count"] == 1
+    rows = [
+        json.loads(line)
+        for line in paths.candidate_summaries.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert rows[0]["platform_id"] == "res-1"
+    assert rows[0]["raw_ref"]["search_page"] == "raw/search-adaptive/search-wave-001/unit-000001/page-000.json"
+    assert rows[0]["raw_ref"]["wave_id"] == "search-wave-001"
+    assert rows[0]["raw_ref"]["unit_id"] == "unit-000001"
+
+
+def test_standardize_adaptive_search_cli_writes_summary(tmp_path: Path):
+    paths = ensure_campaign(tmp_path / "liepin-demo")
+    raw_path = paths.root / "raw" / "search-adaptive" / "search-wave-001" / "unit-000001" / "page-000.json"
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_path.write_text(
+        json.dumps(
+            {
+                "schema": "liepin_adaptive_search_page_v1",
+                "wave_id": "search-wave-001",
+                "unit_id": "unit-000001",
+                "curPage": 0,
+                "payload": _liepin_search_payload(),
+                "request": {"endpoint": "search-resumes"},
+                "run_id": "adaptive-001",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.liepin_campaign_orchestrator",
+            "standardize-adaptive-search",
+            "--campaign-root",
+            str(paths.root),
+            "--wave-id",
+            "search-wave-001",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout_summary = json.loads(completed.stdout)
+    assert stdout_summary["source"] == "adaptive_search"
+    assert stdout_summary["candidate_count"] == 1

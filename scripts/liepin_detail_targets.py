@@ -67,10 +67,15 @@ def _raw_ref(row: dict[str, Any]) -> dict[str, Any]:
     value = row.get("raw_ref")
     if not isinstance(value, dict):
         return {}
-    return {
+    raw_ref = {
         "search_page": _sanitize_search_page(value.get("search_page")),
         "card_index": value.get("card_index"),
     }
+    for key in ("wave_id", "unit_id"):
+        text = str(value.get(key) or "").strip()
+        if text:
+            raw_ref[key] = text
+    return raw_ref
 
 
 def _sanitize_search_page(value: Any) -> str:

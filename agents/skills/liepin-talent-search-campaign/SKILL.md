@@ -117,6 +117,38 @@ description: Use when the user wants to create or run a Liepin recruiting-side t
 - 摘要只包含候选总数、详情覆盖、城市/学历/年限/公司/职位分布和详情质量统计。
 - `campaign-summary` 不是推荐报告，不生成外联队列，不发布飞书，不写 Campaign DB，不写主库。
 
+## 主库同步 handoff 边界
+
+- Campaign DB 摘要完成后，可以运行 `main-db-sync-handoff` 生成主库同步前置材料：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator main-db-sync-handoff --campaign-root data/campaigns/<campaign_id> --main-db data/talent.db
+```
+
+- `main-db-sync-handoff` 只读取 campaign-local `talent.db`，导出 `exports/talent-sync-*.zip`，校验 bundle，并对目标主库执行 `talent_sync.py import` 等价 dry-run plan。
+- 该阶段只写 `exports/` 和 `reports/main-db-sync-handoff.json/.md`；不执行 `talent_sync.py import --apply`，不创建或修改主库 `data/talent.db`。
+- 主库写入仍必须另起人工确认流程，且需要 dry-run clean、备份、apply 确认文本和完整性验证。
+- 猎聘寻访 workflow 不直接生成候选人推荐报告、外联队列或飞书交付包；主库同步完成后，后续精准匹配、推荐报告、外联表和飞书发布交给 `jd-talent-delivery`。
+
+## 宽召回 adaptive 规划边界
+
+- 当用户要求扩候选池、宽召回、多公司多关键词、对标脉脉宽召回，或明确设置 `strategy_mode=liepin_broad_recall_adaptive_v1` 时，先进入离线规划阶段。
+- 离线规划命令为：
+
+```bash
+.venv/bin/python -m scripts.liepin_campaign_orchestrator plan-adaptive-search --campaign-root data/campaigns/<campaign_id>
+```
+
+- `plan-adaptive-search` 只读取 `strategy.json`，生成 `search-units.jsonl`、`raw/search-live-runs/wave-plan.json`、wave sidecar 和 `reports/broad-recall-plan.*`。
+- 该阶段不连接 CDP，不触发猎聘请求，不读取浏览器敏感存储，不写 Campaign DB，不写主库 `data/talent.db`。
+- 后续 live 搜索必须另起确认点；不得由规划命令自动升级为 live execution。
+- 单个 wave 的 live 执行命令为 `run-live-adaptive-search`，只读取已生成的 wave sidecar；不得重新生成条件或扩大到其他 wave。
+- `run-live-adaptive-search` 恢复执行只信磁盘事实：扫描 `raw/search-adaptive/<wave_id>/<unit_id>/page-*.json`、`reports/page-quality-<wave_id>.jsonl` 和 `state/adaptive-unit-state-<wave_id>.json`；已存在 raw 的页面必须跳过，不得重复请求，不得复制已有 page-quality 行。
+- 当单个 unit 已因 `unit_max_pages` 耗尽或连续低质量页终止时，只更新恢复状态；当整个 wave 的已存在 raw 足以判定全终止时，不得连接 CDP。
+- `run-live-adaptive-search` 仍不写 Campaign DB、不写主库、不生成推荐报告、外联队列或飞书交付包；搜索结果入库必须回到 `import-search-dry-run/apply` 确认流程。
+- adaptive live 完成后先运行 `standardize-adaptive-search`，把 `raw/search-adaptive/<wave_id>` 标准化为 `structured/candidate-summaries.jsonl`；该阶段仍不连接 CDP、不触发请求、不写数据库。
+- adaptive 搜索标准化、导入 dry-run/apply 和 Campaign Summary 后，可以运行 `broad-recall-summary` 汇总页质、标准化、导入和 Campaign DB 摘要；该报告不是推荐报告，不生成外联队列或飞书交付。
+
 ## 自动交接
 
 合同文件生成后，读取并执行 `agents/workflows/liepin-unattended-campaign/AGENT.md`。真实浏览器内请求必须由 workflow 按阶段和运行策略控制。

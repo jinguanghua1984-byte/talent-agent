@@ -222,6 +222,79 @@ def test_run_live_search_command_delegates_to_live_gate(tmp_path: Path, monkeypa
     assert json.loads(capsys.readouterr().out)["pagesCompleted"] == [0]
 
 
+def test_plan_adaptive_search_command_delegates_without_live_side_effects(tmp_path: Path, monkeypatch, capsys):
+    calls = []
+
+    def fake_plan_adaptive_search(campaign_root):
+        calls.append(campaign_root)
+        return {
+            "schema": "liepin_adaptive_search_plan_v1",
+            "campaign_root": str(campaign_root),
+            "unit_count": 2,
+            "no_live_request": True,
+            "no_database_write": True,
+        }
+
+    monkeypatch.setattr(orchestrator, "plan_adaptive_search", fake_plan_adaptive_search)
+
+    result = orchestrator.main(["plan-adaptive-search", "--campaign-root", str(tmp_path / "liepin-demo")])
+
+    assert result == 0
+    assert calls == [str(tmp_path / "liepin-demo")]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema"] == "liepin_adaptive_search_plan_v1"
+    assert payload["no_live_request"] is True
+    assert payload["no_database_write"] is True
+
+
+def test_run_live_adaptive_search_command_delegates_to_runner(tmp_path: Path, monkeypatch, capsys):
+    calls = []
+
+    def fake_run_live_adaptive_search_wave(**kwargs):
+        calls.append(kwargs)
+        return {
+            "schema": "liepin_adaptive_search_live_run_v1",
+            "status": "completed",
+            "wave_id": "search-wave-001",
+            "pagesCompleted": [{"unit_id": "unit-000001", "page": 0}],
+        }
+
+    monkeypatch.setattr(orchestrator, "run_live_adaptive_search_wave", fake_run_live_adaptive_search_wave)
+
+    result = orchestrator.main(
+        [
+            "run-live-adaptive-search",
+            "--campaign-root",
+            str(tmp_path / "liepin-demo"),
+            "--wave-plan",
+            "raw/search-live-runs/search-wave-001-plan.json",
+            "--cdp-url",
+            "http://127.0.0.1:9898",
+            "--delay-seconds",
+            "0",
+            "--timeout-seconds",
+            "1",
+            "--run-id",
+            "adaptive-test",
+        ]
+    )
+
+    assert result == 0
+    assert calls == [
+        {
+            "campaign_root": str(tmp_path / "liepin-demo"),
+            "wave_plan": "raw/search-live-runs/search-wave-001-plan.json",
+            "cdp_url": "http://127.0.0.1:9898",
+            "delay_seconds": 0,
+            "timeout_seconds": 1,
+            "run_id": "adaptive-test",
+        }
+    ]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["schema"] == "liepin_adaptive_search_live_run_v1"
+    assert payload["status"] == "completed"
+
+
 def test_plan_detail_smoke_command_delegates_to_target_planner(tmp_path: Path, monkeypatch, capsys):
     calls = []
 
@@ -536,6 +609,33 @@ def test_campaign_summary_command_delegates_to_summary(tmp_path: Path, monkeypat
     assert result == 0
     assert calls == [{"campaign_root": str(tmp_path / "liepin-demo")}]
     assert json.loads(capsys.readouterr().out)["candidate_count"] == 3
+
+
+def test_main_db_sync_handoff_command_delegates_to_handoff(tmp_path: Path, monkeypatch, capsys):
+    calls = []
+
+    def fake_write_main_db_sync_handoff(**kwargs):
+        calls.append(kwargs)
+        return {
+            "schema": "liepin_main_db_sync_handoff_v1",
+            "no_main_db_write": True,
+        }
+
+    monkeypatch.setattr(orchestrator, "write_main_db_sync_handoff", fake_write_main_db_sync_handoff)
+
+    result = orchestrator.main(
+        [
+            "main-db-sync-handoff",
+            "--campaign-root",
+            str(tmp_path / "liepin-demo"),
+            "--main-db",
+            str(tmp_path / "main.db"),
+        ]
+    )
+
+    assert result == 0
+    assert calls == [{"campaign_root": str(tmp_path / "liepin-demo"), "main_db_path": str(tmp_path / "main.db")}]
+    assert json.loads(capsys.readouterr().out)["no_main_db_write"] is True
 
 
 def test_plan_detail_packs_command_delegates_to_planner(tmp_path: Path, monkeypatch, capsys):

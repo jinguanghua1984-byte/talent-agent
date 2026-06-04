@@ -79,6 +79,8 @@ def _sanitized_raw_profile(row: dict[str, Any]) -> dict[str, Any]:
     safe_ref = {
         "search_page": raw_ref.get("search_page"),
         "card_index": raw_ref.get("card_index"),
+        "wave_id": raw_ref.get("wave_id"),
+        "unit_id": raw_ref.get("unit_id"),
     }
     return {
         "liepin_search_summary": {
