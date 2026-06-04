@@ -245,7 +245,8 @@ def test_run_match_outputs_reports_and_outreach(tmp_path: Path, monkeypatch) -> 
         out_dir / "reports" / "outreach-queue.csv"
     ).open(encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
-    expected_feedback_fields = [
+    expected_feedback_fields = ["feedback_note"]
+    removed_feedback_fields = [
         "feedback_label",
         "feedback_stage",
         "reason_codes",
@@ -258,6 +259,8 @@ def test_run_match_outputs_reports_and_outreach(tmp_path: Path, monkeypatch) -> 
     for field in expected_feedback_fields:
         assert field in rows[0]
         assert rows[0][field] == ""
+    for field in removed_feedback_fields:
+        assert field not in rows[0]
     assert rows[0]["candidate_id"] == "101"
     assert rows[0]["priority"] in {"P0", "P1"}
     assert rows[0]["grade"]

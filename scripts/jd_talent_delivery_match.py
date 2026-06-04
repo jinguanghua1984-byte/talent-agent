@@ -45,14 +45,7 @@ CSV_FIELDS = [
 ]
 
 FEEDBACK_CSV_FIELDS = [
-    "feedback_label",
-    "feedback_stage",
-    "reason_codes",
-    "hunter_note",
-    "contacted",
-    "submitted_to_client",
-    "interviewed",
-    "offer",
+    "feedback_note",
 ]
 
 HARD_RISK_FLAGS = {
@@ -771,14 +764,7 @@ def _outreach_row(rank: int, item: dict[str, Any]) -> dict[str, Any]:
         "risk_summary": item.get("risk_summary") or "无明显硬风险",
         "suggested_outreach_angle": _outreach_angle(item),
         "profile_url": item.get("profile_url", ""),
-        "feedback_label": "",
-        "feedback_stage": "",
-        "reason_codes": "",
-        "hunter_note": "",
-        "contacted": "",
-        "submitted_to_client": "",
-        "interviewed": "",
-        "offer": "",
+        "feedback_note": "",
     }
 
 
