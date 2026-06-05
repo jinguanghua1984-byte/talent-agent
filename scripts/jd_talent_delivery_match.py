@@ -226,11 +226,24 @@ def _candidate_text(bundle: CandidateBundle, include_detail: bool) -> str:
 
 
 def _source_url(bundle: CandidateBundle) -> str:
-    for source in bundle.sources:
+    for source in sorted(bundle.sources, key=_source_priority):
         url = getattr(source, "profile_url", "") or ""
-        if url:
+        if not url:
+            continue
+        if getattr(source, "platform", "") == "maimai":
             return build_openable_maimai_profile_url(str(url))
+        return str(url)
     return ""
+
+
+def _source_priority(source: Any) -> tuple[int, int]:
+    platform = str(getattr(source, "platform", "") or "")
+    url = str(getattr(source, "profile_url", "") or "")
+    if platform == "maimai" and url:
+        return (0, 0)
+    if url:
+        return (1, 0)
+    return (2, 0)
 
 
 def _platform_id(bundle: CandidateBundle) -> str:
