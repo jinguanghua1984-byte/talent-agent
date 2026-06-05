@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -190,6 +192,63 @@ def test_import_bound_candidates_blocks_unconfirmed_rows_without_writing(
         db.close()
 
 
+def test_import_bound_candidates_clean_gate_blocks_mixed_unconfirmed_rows(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "campaign"
+    db_path = root / "talent.db"
+    pending = _bound_row(status="pending_confirmation")
+    pending["target"]["candidate_key"] = "boss-app:2"
+    pending["decision"]["source_candidate_key"] = "boss-app:2"
+    _write_jsonl(root / BOUND_FILE, [_bound_row(), pending])
+
+    result = cross_channel_import.import_bound_candidates(root, db_path, dry_run=False)
+
+    assert result["would_import"] == 1
+    assert result["created"] == 0
+    assert result["blocked"][0]["reason"] == "identity_not_confirmed"
+    db = TalentDB(db_path)
+    try:
+        assert db.count() == 0
+        assert db.identity_matches() == []
+        assert db.field_values() == []
+    finally:
+        db.close()
+    report = json.loads(
+        (root / "reports/cross-channel-import-result.json").read_text(encoding="utf-8")
+    )
+    assert report["created"] == 0
+
+
+def test_import_bound_candidates_clean_gate_blocks_mixed_schema_errors(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "campaign"
+    db_path = root / "talent.db"
+    bad = _bound_row()
+    bad["target"]["candidate_key"] = "boss-app:2"
+    bad["decision"]["source_candidate_key"] = "boss-app:2"
+    bad["decision"]["confidence"] = "bad"
+    _write_jsonl(root / BOUND_FILE, [_bound_row(), bad])
+
+    result = cross_channel_import.import_bound_candidates(root, db_path, dry_run=False)
+
+    assert result["would_import"] == 1
+    assert result["created"] == 0
+    assert result["errors"] == [
+        {
+            "line": 2,
+            "candidate_key": "boss-app:2",
+            "errors": ["decision.confidence must be a number"],
+        }
+    ]
+    db = TalentDB(db_path)
+    try:
+        assert db.count() == 0
+    finally:
+        db.close()
+
+
 def test_import_bound_candidates_rejects_missing_bound_file(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="cross-channel-bound-candidates.jsonl"):
         cross_channel_import.import_bound_candidates(
@@ -224,6 +283,72 @@ def test_import_bound_candidates_field_audit_uses_maimai_source_profile_id(
     ]
     assert maimai_audits
     assert all(field.source_profile_id == maimai_source.id for field in maimai_audits)
+
+
+def test_import_bound_candidates_audits_maimai_name_conflict_with_source_id(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "campaign"
+    db_path = root / "talent.db"
+    row = _bound_row()
+    row["maimai_hit"]["name"] = "陶壮-Maimai"
+    _write_jsonl(root / BOUND_FILE, [row])
+
+    cross_channel_import.import_bound_candidates(root, db_path, dry_run=False)
+
+    db = TalentDB(db_path)
+    try:
+        candidate = db.search().items[0]
+        maimai_source = next(
+            source
+            for source in db.get_sources(candidate.id)
+            if source.platform == "maimai"
+        )
+        fields = db.field_values(candidate.id)
+    finally:
+        db.close()
+
+    name_audit = next(field for field in fields if field.field_name == "name")
+    assert candidate.name == "陶壮"
+    assert name_audit.merge_decision == "primary_kept"
+    assert name_audit.source_profile_id == maimai_source.id
+    assert name_audit.field_value == {
+        "boss_primary": "陶壮",
+        "maimai_value": "陶壮-Maimai",
+    }
+
+
+def test_cross_channel_import_cli_returns_nonzero_for_blocked_without_writing(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "campaign"
+    db_path = root / "talent.db"
+    _write_jsonl(root / BOUND_FILE, [_bound_row(status="pending_confirmation")])
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.cross_channel_import",
+            "import",
+            "--campaign-root",
+            str(root),
+            "--db",
+            str(db_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 1
+    output = json.loads(completed.stdout)
+    assert output["blocked"][0]["reason"] == "identity_not_confirmed"
+    db = TalentDB(db_path)
+    try:
+        assert db.count() == 0
+    finally:
+        db.close()
 
 
 def test_load_bound_candidates_rejects_non_object_jsonl(tmp_path: Path) -> None:

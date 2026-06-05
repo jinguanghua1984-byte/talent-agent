@@ -29,6 +29,7 @@ PRIMARY_FIELDS = (
     "education",
 )
 AUDIT_FIELDS = (
+    "name",
     "current_company",
     "current_title",
     "city",
@@ -124,6 +125,11 @@ def _row_errors(bound: BoundRow) -> list[str]:
         score_breakdown = decision.get("score_breakdown")
         if score_breakdown is not None and not isinstance(score_breakdown, dict):
             errors.append("decision.score_breakdown must be an object")
+        confidence = decision.get("confidence")
+        if confidence is not None and (
+            isinstance(confidence, bool) or not isinstance(confidence, (int, float))
+        ):
+            errors.append("decision.confidence must be a number")
 
     return errors
 
@@ -332,6 +338,9 @@ def import_bound_candidates(
     report_path = root / (REPORT_DRY_RUN if dry_run else REPORT_APPLY)
     if dry_run:
         TalentDB(db_path).close()
+        _write_json(report_path, result)
+        return result
+    if blocked or errors:
         _write_json(report_path, result)
         return result
 
