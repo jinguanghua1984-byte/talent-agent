@@ -16,6 +16,8 @@
 ## Recent Done
 
 - 2026-06-05：BOSS-Maimai cross-channel delivery 已合入主线：完成多渠道审计 schema/sync、BOSS target、Maimai identity scoring、Campaign DB import、主库 sync gate、JD handoff 和脉脉 URL 优先级；完整记录已归档到 `tasks/archive/2026-06.md`。
+- 2026-06-05：已用新版推荐人选反馈使用说明覆盖指定 Feishu Wiki 文档，原 Wiki 节点保持不变，docx revision 更新到 `5`；完整记录已归档到 `tasks/archive/2026-06.md`。
+- 2026-06-05：推荐人选反馈使用说明已按最新 `feedback_note` 解析实现更新，补充系统列、AI 解析、review queue 和安全边界；完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-05：JD 推荐反馈自然语言解析已完成 review 收尾：review queue 行前置校验、非有限数字拒绝、标准 JSON 写出保护、全量测试通过；完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-04：猎聘 adaptive 规划、single-wave live runner、adaptive raw 标准化、search import dry-run/apply、broad-recall summary、detail target 审计链已完成并验证；完整记录已归档到 `tasks/archive/2026-06.md`。
 
