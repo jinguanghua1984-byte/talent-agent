@@ -38,9 +38,9 @@ Review：
 
 ## Recent Done
 
+- 2026-06-05：BOSS-Maimai cross-channel spec re-review 两项 blocking 修复已完成：`education` 不再作为 `name_school_title_core` auto-bind 证据，`decide_match` 无结果/低分统一返回 `no_match`，并同步 canonical skill/workflow 与设计文档。验证：目标 pytest `20 passed`，`git diff --check` 通过。完整记录见 `tasks/archive/2026-06.md`。
 - 2026-06-05：BOSS-Maimai cross-channel code-quality review 三项修复已完成：缺关键证据的 query 不再生成可 auto-bind 退化查询，目标导出在无 `boss_payload` 时保留完整原行上下文，JSONL 非对象行改为报错。验证：目标 pytest `19 passed`，`git diff --check` 通过。完整记录见 `tasks/archive/2026-06.md`。
 - 2026-06-02：BOSS 当前详情页触达执行器 MVP Task 6 已完成 canonical docs handoff：记录外部执行器产物、S6a handoff、existing sourcing 回写路径，并明确 Codex/Computer Use 不点击真实触达按钮。完整记录见 `tasks/archive/2026-06.md`。
-- 2026-06-02：BOSS App 第二轮定向 live 寻访已按用户指令停止并完成飞书汇总：推荐列表记录 `263` 人，真实触达 `14` 人，沟通页实名回填 `14` 人。完整记录见 `tasks/archive/2026-06.md`。
 
 ## Archive Index
 

@@ -121,6 +121,33 @@ def test_query_plan_skips_auto_bind_queries_when_current_company_is_missing() ->
     assert all(item.text != "李四 后端工程师" or not item.allow_auto_bind for item in plan)
 
 
+def test_query_plan_does_not_treat_education_only_as_school_auto_bind_evidence() -> None:
+    plan = build_query_plan(
+        {
+            "target_id": "target-1",
+            "candidate_key": "boss-app:1",
+            "real_name": "李四",
+            "current_company": "",
+            "current_title": "资深后端工程师",
+            "recent_companies": [],
+            "schools": [],
+            "education": "硕士",
+        }
+    )
+
+    assert [item.to_dict() for item in plan] == [
+        {
+            "level": "name_company_fallback",
+            "text": "李四",
+            "allow_auto_bind": False,
+        },
+    ]
+    assert all(
+        item.level != "name_school_title_core" or not item.allow_auto_bind
+        for item in plan
+    )
+
+
 def test_strong_high_precision_hit_auto_binds_with_high_score() -> None:
     target = _target()
     hit = MaimaiSearchHit(
@@ -142,7 +169,7 @@ def test_strong_high_precision_hit_auto_binds_with_high_score() -> None:
     assert decision.to_dict()["hit"]["platform_id"] == "maimai-1"
 
 
-def test_no_hits_returns_not_found_without_target_identity() -> None:
+def test_no_hits_returns_no_match_without_target_identity() -> None:
     decision = decide_match(
         _target(),
         [],
@@ -150,7 +177,7 @@ def test_no_hits_returns_not_found_without_target_identity() -> None:
         "张三 字节跳动 高级 AI 产品负责人",
     )
 
-    assert decision.match_status == "not_found"
+    assert decision.match_status == "no_match"
     assert decision.confidence == 0
     assert decision.target_platform_id == ""
     assert decision.target_profile_url == ""
@@ -218,7 +245,7 @@ def test_many_results_or_close_second_goes_pending() -> None:
     assert close_second.decision_reason == "second_score_gap_too_small"
 
 
-def test_low_score_is_not_found() -> None:
+def test_low_score_is_no_match() -> None:
     decision = decide_match(
         _target(),
         [MaimaiSearchHit(platform_id="other", name="王五", company="阿里", title="销售")],
@@ -226,7 +253,7 @@ def test_low_score_is_not_found() -> None:
         "张三 字节跳动 高级 AI 产品负责人",
     )
 
-    assert decision.match_status == "not_found"
+    assert decision.match_status == "no_match"
     assert decision.confidence < 70
 
 

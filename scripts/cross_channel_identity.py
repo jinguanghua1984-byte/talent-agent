@@ -204,15 +204,15 @@ def build_query_plan(target: BossMaimaiTarget | Mapping[str, Any]) -> list[Query
     item = _target_from_mapping(target)
     title_core = _title_core(item.current_title)
     recent_company = next((company for company in item.recent_companies if company), "")
-    school_or_education = next((school for school in item.schools if school), item.education)
+    school = next((school for school in item.schools if school), "")
     plan: list[QuerySpec] = []
     if item.current_company:
         plan.append(QuerySpec("name_company_title", _join_query(item.real_name, item.current_company, item.current_title), True))
         plan.append(QuerySpec("name_company_title_core", _join_query(item.real_name, item.current_company, title_core), True))
     if recent_company:
         plan.append(QuerySpec("name_recent_company_title", _join_query(item.real_name, recent_company, title_core), True))
-    if school_or_education:
-        plan.append(QuerySpec("name_school_title_core", _join_query(item.real_name, school_or_education, title_core), True))
+    if school:
+        plan.append(QuerySpec("name_school_title_core", _join_query(item.real_name, school, title_core), True))
     plan.append(QuerySpec(FALLBACK_LEVEL, _join_query(item.real_name, item.current_company), False))
     return plan
 
@@ -336,7 +336,7 @@ def decide_match(
 ) -> IdentityDecision:
     item = _target_from_mapping(target)
     if not hits:
-        return _decision(item, None, query_level, query_text, 0, {}, "not_found", "no_hits")
+        return _decision(item, None, query_level, query_text, 0, {}, "no_match", "no_hits")
 
     provisional = [
         (hit, score_hit(item, hit, query_level=query_level, result_count=len(hits), second_score=None))
@@ -362,7 +362,7 @@ def decide_match(
             query_text,
             best_score.total,
             best_score.breakdown,
-            "not_found",
+            "no_match",
             "score_below_threshold",
         )
     if query_level == FALLBACK_LEVEL:

@@ -66,10 +66,10 @@ description: "BOSS App 已筛优质人选补脉脉主页匹配、多渠道 Campa
 1. `name_company_title`
 2. `name_company_title_core`
 3. `name_recent_company_title`
-4. `name_school_title_core`
+4. `name_school_title_core`，仅在 BOSS 明确采集到 `schools` 字段时生成；纯 `education` 学历不得作为该层 auto-bind 证据
 5. `name_company_fallback`
 
-只有前四个层级命中且综合分数 `>=95`，才允许写入 `auto_bound`。`name_company_fallback` 命中、候选过多、第二名分差过小、综合分 `70-94`、冲突或缺字段时，必须进入 `pending_confirmation`，不得自动绑定。低于 70 或出现明确排除证据时写入 rejected，并保留原因。
+只有前四个层级命中且综合分数 `>=95`，才允许写入 `auto_bound`。`name_company_fallback` 命中、候选过多、第二名分差过小、综合分 `70-94`、冲突或缺字段时，必须进入 `pending_confirmation`，不得自动绑定。无结果或低于 70 写入 `no_match`；出现明确排除证据时写入 `rejected`，并保留原因。
 
 ## 主库写入授权
 
