@@ -59,6 +59,68 @@ def test_build_query_plan_accepts_mapping_dict() -> None:
     assert plan[2].text == "李四 百度 后端工程师"
 
 
+def test_query_plan_skips_auto_bind_queries_when_supporting_evidence_is_missing() -> None:
+    plan = build_query_plan(
+        {
+            "target_id": "target-1",
+            "candidate_key": "boss-app:1",
+            "real_name": "李四",
+            "current_company": "腾讯",
+            "current_title": "资深后端工程师",
+            "recent_companies": [],
+            "schools": [],
+            "education": "",
+        }
+    )
+
+    assert [item.to_dict() for item in plan] == [
+        {
+            "level": "name_company_title",
+            "text": "李四 腾讯 资深后端工程师",
+            "allow_auto_bind": True,
+        },
+        {
+            "level": "name_company_title_core",
+            "text": "李四 腾讯 后端工程师",
+            "allow_auto_bind": True,
+        },
+        {
+            "level": "name_company_fallback",
+            "text": "李四 腾讯",
+            "allow_auto_bind": False,
+        },
+    ]
+    assert all(item.text != "李四 后端工程师" or not item.allow_auto_bind for item in plan)
+
+
+def test_query_plan_skips_auto_bind_queries_when_current_company_is_missing() -> None:
+    plan = build_query_plan(
+        {
+            "target_id": "target-1",
+            "candidate_key": "boss-app:1",
+            "real_name": "李四",
+            "current_company": "",
+            "current_title": "资深后端工程师",
+            "recent_companies": [],
+            "schools": ["浙江大学"],
+        }
+    )
+
+    assert [item.to_dict() for item in plan] == [
+        {
+            "level": "name_school_title_core",
+            "text": "李四 浙江大学 后端工程师",
+            "allow_auto_bind": True,
+        },
+        {
+            "level": "name_company_fallback",
+            "text": "李四",
+            "allow_auto_bind": False,
+        },
+    ]
+    assert all(item.text != "李四 后端工程师" or not item.allow_auto_bind for item in plan)
+
+
 def test_strong_high_precision_hit_auto_binds_with_high_score() -> None:
     target = _target()
     hit = MaimaiSearchHit(

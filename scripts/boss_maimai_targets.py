@@ -18,6 +18,7 @@ from scripts.cross_channel_identity import BossMaimaiTarget, build_query_plan
 TARGET_SCHEMA = "boss_maimai_match_target_v1"
 CONTACT_RECOMMENDATIONS = {"contact", "would_contact"}
 BLOCKING_REAL_NAME_STATUSES = {"not_available_dry_run", "missing"}
+INTERNAL_PAYLOAD_KEYS = {"_source_index"}
 
 
 def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -34,8 +35,9 @@ def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
                 value = json.loads(text)
             except json.JSONDecodeError as exc:
                 raise ValueError(f"{file}: line {line_no}: invalid JSON: {exc.msg}") from exc
-            if isinstance(value, dict):
-                rows.append(value)
+            if not isinstance(value, dict):
+                raise ValueError(f"{file}: line {line_no}: expected object")
+            rows.append(value)
     return rows
 
 
@@ -145,6 +147,17 @@ def _schools(row: dict[str, Any]) -> list[str]:
     return _dedupe(values)
 
 
+def _clean_payload_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in row.items() if key not in INTERNAL_PAYLOAD_KEYS}
+
+
+def _boss_payload(row: dict[str, Any]) -> dict[str, Any]:
+    payload = row.get("boss_payload")
+    if isinstance(payload, dict) and payload:
+        return _clean_payload_row(payload)
+    return _clean_payload_row(row)
+
+
 def safe_target_id(candidate_key: str) -> str:
     value = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "-", candidate_key.strip())
     return value.strip("-") or "target"
@@ -161,7 +174,7 @@ def _target_from_candidate(row: dict[str, Any]) -> BossMaimaiTarget:
         education=str(row.get("education") or "").strip(),
         recent_companies=tuple(_recent_companies(row)),
         schools=tuple(_schools(row)),
-        boss_payload=dict(row.get("boss_payload") or {}),
+        boss_payload=_boss_payload(row),
     )
 
 

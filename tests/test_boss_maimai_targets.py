@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.boss_maimai_targets import export_targets, main
+from scripts.boss_maimai_targets import export_targets, load_jsonl, main
 
 
 def _append_jsonl(path: Path, row: dict) -> None:
@@ -112,6 +112,38 @@ def test_export_selects_nested_contact_and_would_contact_candidate(tmp_path: Pat
     assert row["schools"] == ["浙江大学"]
 
 
+def test_export_preserves_full_source_row_when_boss_payload_is_missing(tmp_path: Path) -> None:
+    root = _campaign_root(tmp_path)
+    _append_jsonl(
+        root / "structured/candidates.jsonl",
+        {
+            "candidate_key": "boss-app:full-row",
+            "real_name": "赵六",
+            "real_name_status": "captured",
+            "current_company": "美团",
+            "current_title": "算法工程师",
+            "city": "上海",
+            "education": "本科",
+            "recommendation": "contact",
+            "detail": {"work_years": "6年", "recent_companies": ["快手"], "schools": ["上海交通大学"]},
+            "screening": {"recommendation": "contact", "evidence_path": "reports/evidence.json"},
+            "work_years": "6年",
+            "evidence_path": "structured/details/boss-app-full-row.json",
+        },
+    )
+
+    export_targets(root)
+    row = json.loads((root / "structured/maimai-match-targets.jsonl").read_text(encoding="utf-8").strip())
+
+    assert row["boss_payload"]["candidate_key"] == "boss-app:full-row"
+    assert row["boss_payload"]["recommendation"] == "contact"
+    assert row["boss_payload"]["detail"]["work_years"] == "6年"
+    assert row["boss_payload"]["screening"]["evidence_path"] == "reports/evidence.json"
+    assert row["boss_payload"]["work_years"] == "6年"
+    assert row["boss_payload"]["evidence_path"] == "structured/details/boss-app-full-row.json"
+    assert "_source_index" not in row["boss_payload"]
+
+
 def test_missing_real_name_is_reported_and_not_exported(tmp_path: Path) -> None:
     root = _campaign_root(tmp_path)
     _append_jsonl(
@@ -161,6 +193,14 @@ def test_dry_run_real_name_status_blocks_even_with_non_empty_real_name(tmp_path:
 def test_missing_campaign_file_raises_file_not_found(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         export_targets(tmp_path / "missing-campaign")
+
+
+def test_load_jsonl_rejects_non_object_rows(tmp_path: Path) -> None:
+    path = tmp_path / "rows.jsonl"
+    path.write_text('{"ok": true}\n["not", "object"]\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"line 2: expected object"):
+        load_jsonl(path)
 
 
 def test_cli_export_prints_summary_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
