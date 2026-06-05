@@ -44,11 +44,12 @@ description: "BOSS App 已筛优质人选补脉脉主页匹配、多渠道 Campa
 - `structured/candidates.jsonl`：多渠道合并后的 Campaign DB 候选人视图。
 - `structured/contact-decisions.jsonl`：BOSS 联系意图、脉脉补全状态和后续交付建议。
 - `state/cross-channel-identity-ledger.jsonl`：身份匹配判定、证据、分数、自动绑定或待确认状态。
-- `reports/cross-channel-merge-dry-run.json`：Campaign DB 合并 dry-run。
-- `reports/campaign-quality-gates.json`：Campaign DB clean 结果。
+- `reports/cross-channel-import-dry-run.json`：Campaign DB 合并 dry-run。
+- `reports/cross-channel-import-result.json`：Campaign DB 合并 apply 结果。
+- `reports/campaign-db-quality-gates.json`：Campaign DB clean 结果。
 - `reports/main-db-sync-dry-run.json`：写入 `data/talent.db` 前的主库 dry-run。
-- `reports/main-db-sync-apply.json`：用户一次总授权后的主库 apply 结果。
-- `reports/delivery-handoff.json`：交给 `jd-talent-delivery` 的输入摘要。
+- `reports/main-db-sync-result.json`：用户一次总授权后的主库 apply 结果。
+- `state/jd-delivery-handoff.json`：交给 `jd-talent-delivery` 的输入摘要。
 
 ## Merge 边界
 
@@ -75,10 +76,10 @@ description: "BOSS App 已筛优质人选补脉脉主页匹配、多渠道 Campa
 
 主库路径固定为 `data/talent.db`。本 Skill 不允许在 Campaign DB clean 之前写主库。
 
-进入主库前必须先生成 `reports/main-db-sync-dry-run.json`，并完成备份、导出和校验。只有当 Campaign DB clean、dry-run 无阻塞冲突、用户给出一次总授权后，workflow 才能把本 campaign 合并写入 `data/talent.db`，并继续飞书交付。
+进入主库前必须先生成 `reports/main-db-sync-dry-run.json`，并完成导出 bundle、bundle 校验和 dry-run 校验。只有当 Campaign DB clean、dry-run 无阻塞冲突、用户给出一次总授权后，workflow 才能把本 campaign 合并写入 `data/talent.db`，并继续飞书交付。
 
 一次总授权只覆盖本 campaign、本次 dry-run 报告和本次交付目标；不得复用到其他 campaign 或之后变更过的数据集。
 
 ## 自动交接
 
-执行入口为 `agents/workflows/boss-maimai-cross-channel-delivery/AGENT.md`。workflow 完成 S9 主库 sync dry-run 与 apply 后，把交付摘要写入 `reports/delivery-handoff.json`，并交接给 `agents/workflows/jd-talent-delivery/AGENT.md` / `jd-talent-delivery` 继续生成 JD 推荐结果和飞书交付。
+执行入口为 `agents/workflows/boss-maimai-cross-channel-delivery/AGENT.md`。workflow 完成 S9 主库 sync dry-run 与 apply 后，把交付摘要写入 `state/jd-delivery-handoff.json`，并交接给 `agents/workflows/jd-talent-delivery/AGENT.md` / `jd-talent-delivery` 继续生成 JD 推荐结果和飞书交付。

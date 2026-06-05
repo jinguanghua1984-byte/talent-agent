@@ -4,43 +4,39 @@
 
 ## Active Task
 
-### BOSS AI Infra 训练和推理研发寻访（2026-06-02）
+### BOSS-Maimai cross-channel delivery（2026-06-05）
 
 计划：
-- [x] 读取 BOSS canonical skill/workflow，确认触达安全边界。
-- [x] 初始化 campaign 合同：目标职位为 AI Infra 训练和推理研发，硬性要求为一线互联网大厂履历、工龄 3-10 年、年龄不超过 40。
-- [x] 预检本机 BOSS App 推荐列表页并采集候选人卡片。
-- [ ] 对匹配人选进入详情页精筛，累计 20 名可联系人选后停止。
-- [x] 按本轮 campaign 级授权执行触达：同一职位、同一筛选规则、上限 20 人内，已判定 `contact` 且当前页为 `立即沟通` 的人选由执行器直接点击，不再逐人二次确认。
-- [x] 生成阶段执行摘要和推荐报告，推送飞书并通知。
+- [x] 实施 canonical skill/workflow/adapter 和架构测试。
+- [x] 扩展 TalentDB 多渠道审计 schema、sync export/import 和测试。
+- [x] 实施 BOSS target 生成、脉脉 identity scoring 和 Campaign DB import。
+- [x] 实施主库 sync gate、JD delivery handoff 和脉脉 URL 优先级。
+- [x] 运行聚焦测试、全量测试和 `git diff --check`，写 Review 并归档。
 
 边界：
-- 只使用 BOSS App 本机 UI 推荐列表，不使用 BOSS 网页端、CDP、浏览器扩展或 BOSS API。
-- 不处理验证码、安全验证、登录失效或付费/权限弹窗；遇到即写 continuation plan 并停止。
-- 不修改 BOSS 账号设置、职位设置、沟通话术或权限。
-- 本轮用户已明确授权“合适立即沟通，不用二次确认”，并在执行器确认问题后重申不要逐人确认；本 campaign 以此作为批量触达授权，范围仅限本职位、本筛选规则、最多 20 名判定为 `contact` 的候选人。
+- 只实现离线数据整合、Campaign DB 写入、主库 sync gate 和交付 handoff；不操作 BOSS/脉脉平台。
+- BOSS 为 primary，脉脉为 supplement；BOSS 非空核心字段不被脉脉覆盖。
+- Campaign DB 存在 blocked/errors、pending identity、pending merge、open sync conflict 或 dry-run 冲突时，不写 `data/talent.db`。
+- 主库写入必须同时满足 Campaign DB clean、dry-run clean、一次总授权 flag 和 `CONFIRM_SYNC_TEXT`。
 
 验证：
-- `.venv/bin/python -m scripts.boss_app_sourcing validate --campaign-root <campaign_root>`。
-- `.venv/bin/python -m scripts.boss_app_sourcing summarize --campaign-root <campaign_root>`。
-- 飞书推送后读取 publish/notification 结果文件确认。
+- `/Users/eric/workspace/talent-agent/.venv/bin/python -m pytest tests/test_agent_architecture.py tests/test_boss_maimai_targets.py tests/test_cross_channel_identity.py tests/test_cross_channel_import.py tests/test_campaign_to_delivery.py tests/test_jd_talent_delivery_match.py tests/test_talent_db.py tests/test_talent_sync.py -q`。
+- `/Users/eric/workspace/talent-agent/.venv/bin/python -m pytest tests -q`。
+- `git diff --check`。
 
 Review：
-- 2026-06-02：已真实触达 `17/20` 人，沟通页实名回填 `17` 人，执行器校验 `passed`。
-- 第 18 位候选人郭先生触发 BOSS 付费上限弹窗：`该职位今日沟通数已达上限，付费解锁上限`；已停止，未购买、未绕过，剩余 `3` 人待额度恢复后续跑。
-- 阶段报告与触达人选表已推送飞书 `JD需求交付`，并已通知 `JD需求协同`。回执：`data/campaigns/boss-ai-infra-training-inference-20260602/reports/feishu-publish-results.json`。
-- 2026-06-02：已修订 `boss-app-recommendation-sourcing` skill/workflow：campaign 级授权成立时，workflow 可直接调用外部执行器 `contact-current --execute`，不逐人确认；执行器仍只负责当前详情页 `立即沟通` 原子点击，列表、详情、筛选、翻页继续由 Computer Use 负责。
+- 2026-06-05：已完成 BOSS-Maimai cross-channel delivery 实现收口。聚焦测试 `249 passed`；全量测试 `1219 passed, 1 warning`，warning 为既有 `tests/test_boss.py::TestBossGetDetailUnavailable::test_get_detail_returns_none` event loop deprecation；`git diff --check` 通过。
 
 ## Open Items
 
-- BOSS 当前职位今日沟通数达到付费解锁上限；等待额度重置，或用户在 Codex 外处理付费额度后，继续补足剩余 `3` 人。
-- Campaign validate 仍有采集完整性问题：`8` 个历史候选缺详情、`2` 组重复签名；不影响本轮 `17` 条已送达审计，但续跑前应优先清理候选池去重/详情状态。
+- 子线程额度限制导致 Task 5 最后一轮复审、Task 6-8 由主线程本地执行；最终验证必须覆盖同等命令。
+- 真实 campaign 执行时，如出现 `pending_confirmation`、`no_match`、平台限制或 dry-run 冲突，必须按 workflow 停机并等待人工处理。
 
 ## Recent Done
 
-- 2026-06-05：BOSS-Maimai cross-channel Task 5 code-quality review 修复已完成：apply 写入改为 import-level transaction，新增 direct identity/field audit insert，修正 created/merged/pending/applied 计数、明确 Maimai source id/url gate、raw_profile 命名空间合并和 CLI preload 结构化错误。验证：`tests/test_cross_channel_import.py tests/test_talent_db.py` 146 passed；`tests/test_cross_channel_identity.py tests/test_boss_maimai_targets.py tests/test_cross_channel_import.py` 41 passed；`git diff --check` 通过。完整记录见 `tasks/archive/2026-06.md`。
-- 2026-06-05：BOSS-Maimai cross-channel Task 5 spec review 修复已完成：apply clean gate 遇 blocked/errors 零写库返回，identity schema/type 前置校验，name audit 记录 Maimai source_profile_id，并补 CLI 非 0 回归。验证：`tests/test_cross_channel_import.py tests/test_talent_db.py` 140 passed；`tests/test_cross_channel_identity.py tests/test_boss_maimai_targets.py tests/test_cross_channel_import.py` 35 passed；`git diff --check` 通过。完整记录见 `tasks/archive/2026-06.md`。
-- 2026-06-05：BOSS-Maimai cross-channel Task 5 候选导入已完成：新增 `scripts/cross_channel_import.py` 与 `tests/test_cross_channel_import.py`，实现 BOSS primary + Maimai supplement 写入 Campaign DB、identity/audit 记录、dry-run/apply report、blocked/errors CLI 非 0。验证：`tests/test_cross_channel_import.py tests/test_talent_db.py` 136 passed；`tests/test_cross_channel_identity.py tests/test_boss_maimai_targets.py tests/test_cross_channel_import.py` 31 passed；`git diff --check` 通过。完整记录见 `tasks/archive/2026-06.md`。
+- 2026-06-05：Task 7 已完成 `scripts/campaign_to_delivery.py` 与 `tests/test_campaign_to_delivery.py`，实现 Campaign DB quality gates、主库 bundle dry-run/apply、一次总授权 gate 和 `state/jd-delivery-handoff.json`。验证：`tests/test_campaign_to_delivery.py` 7 passed；`tests/test_campaign_to_delivery.py tests/test_talent_sync.py` 50 passed；`tests/test_cross_channel_import.py tests/test_campaign_to_delivery.py tests/test_jd_talent_delivery_match.py` 43 passed。
+- 2026-06-05：Task 6 已完成 JD delivery 脉脉 URL 优先级，BOSS source 在前时仍输出可打开的脉脉主页链接并保留 `trackable_token`。验证：`tests/test_jd_talent_delivery_match.py` 18 passed；`git diff --check` 通过。
+- 2026-06-05：Task 5 已完成并加固 Campaign DB import：BOSS primary + Maimai supplement 写入、clean gate、事务原子性、identity/field audit、CLI 结构化错误和 raw_profile 合并。完整记录见 `tasks/archive/2026-06.md`。
 
 ## Archive Index
 
