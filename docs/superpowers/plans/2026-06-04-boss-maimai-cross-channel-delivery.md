@@ -1752,13 +1752,15 @@ def build_query_plan(target: BossMaimaiTarget | dict[str, Any]) -> list[QuerySpe
     title_core = _title_core(title)
     recent_company = _text(target.recent_companies[0] if target.recent_companies else "")
     school = _text(target.schools[0] if target.schools else "")
-    queries = [
-        QuerySpec("name_company_title", _text(f"{name} {company} {title}"), True),
-        QuerySpec("name_company_title_core", _text(f"{name} {company} {title_core}"), True),
-        QuerySpec("name_recent_company_title", _text(f"{name} {recent_company or company} {title_core or title}"), True),
-        QuerySpec("name_school_title_core", _text(f"{name} {school} {title_core or title}"), True),
-        QuerySpec("name_company_fallback", _text(f"{name} {company}"), False),
-    ]
+    queries: list[QuerySpec] = []
+    if company:
+        queries.append(QuerySpec("name_company_title", _text(f"{name} {company} {title}"), True))
+        queries.append(QuerySpec("name_company_title_core", _text(f"{name} {company} {title_core}"), True))
+    if recent_company:
+        queries.append(QuerySpec("name_recent_company_title", _text(f"{name} {recent_company} {title_core or title}"), True))
+    if school:
+        queries.append(QuerySpec("name_school_title_core", _text(f"{name} {school} {title_core or title}"), True))
+    queries.append(QuerySpec("name_company_fallback", _text(f"{name} {company}"), False))
     seen: set[tuple[str, str]] = set()
     result: list[QuerySpec] = []
     for query in queries:
