@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from scripts import jd_talent_delivery_match as match
-from scripts.talent_models import Candidate, CandidateDetail, PageResult
+from scripts.talent_models import Candidate, CandidateDetail, PageResult, SourceProfile
 
 
 def _scorecard() -> dict:
@@ -413,6 +413,42 @@ def test_outreach_url_preserves_sanitized_liepin_profile_url(tmp_path: Path, mon
     assert result_url(out_dir / "reports" / "talent-recommendation.json") == expected_url
     quality = json.loads((out_dir / "reports" / "quality-gates.json").read_text(encoding="utf-8-sig"))
     assert quality["status"] == "passed"
+
+
+def test_source_url_prefers_openable_maimai_profile_url() -> None:
+    candidate = Candidate(
+        id=1,
+        name="陶壮",
+        current_company="华为技术有限公司",
+        current_title="大模型推理工程师",
+    )
+    bundle = match.CandidateBundle(
+        candidate=candidate,
+        detail=None,
+        sources=[
+            SourceProfile(
+                id=1,
+                candidate_id=1,
+                platform="boss_app",
+                platform_id="boss-001",
+                profile_url="boss://candidate/boss-001",
+            ),
+            SourceProfile(
+                id=2,
+                candidate_id=1,
+                platform="maimai",
+                platform_id="mm-001",
+                profile_url=(
+                    "https://maimai.cn/profile/detail?dstu=mm-001&"
+                    "trackable_token=tok&show_tip=1&utm_source=test"
+                ),
+            ),
+        ],
+    )
+
+    assert match._source_url(bundle) == (
+        "https://maimai.cn/profile/detail?dstu=mm-001&trackable_token=tok"
+    )
 
 
 def result_url(path: Path) -> str:

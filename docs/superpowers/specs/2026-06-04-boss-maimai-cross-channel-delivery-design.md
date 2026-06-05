@@ -84,7 +84,7 @@
 | `query_level` | `name_company_title`、`name_company_title_core`、`name_recent_company_title`、`name_school_title_core`、`name_company_fallback` |
 | `confidence` | 0-100 |
 | `score_breakdown` | JSON，记录姓名、公司、职位、城市、学历、经历重叠、结果数、第一二名差距 |
-| `match_status` | `auto_bound`、`pending_confirmation`、`confirmed_bound`、`rejected`、`not_found` |
+| `match_status` | `auto_bound`、`pending_confirmation`、`confirmed_bound`、`rejected`、`no_match` |
 | `decision_reason` | 判定摘要 |
 | `confirmed_by` | 人工确认来源，可为空 |
 | `confirmed_at` | 人工确认时间，可为空 |
@@ -136,7 +136,7 @@ query 顺序：
 1. `真实姓名 + 当前公司 + 当前职位`
 2. `真实姓名 + 当前公司 + 职位核心词`
 3. `真实姓名 + BOSS 详情中的最近公司 + 最近职位`
-4. `真实姓名 + 学校/学历 + 职位核心词`
+4. `真实姓名 + 学校 + 职位核心词`。仅在明确 `schools` 字段存在时生成；纯 `education` 学历不得作为该层 auto-bind 证据
 5. `真实姓名 + 公司`
 
 第 5 级 `姓名+公司` 只作为低优先级 fallback。它可能产生过多同名结果，不允许直接自动绑定。
@@ -144,9 +144,10 @@ query 顺序：
 自动绑定规则：
 
 - 只有 query level 属于前 4 级，且 identity score `>=95`，才允许 `auto_bound`。
+- 前 4 级 query 必须包含非空职位或有效职位核心词；缺职位时不得自动绑定，只能走不可自动绑定的 fallback 或人工确认。
 - 如果结果数过多、第一名与第二名差距小、或只靠 `姓名+公司` 命中，即使分数高也进入 `pending_confirmation`。
 - `70-94` 一律 `pending_confirmation`。
-- `<70` 标记 `not_found` 或 `rejected`。
+- `<70` 或无搜索结果标记 `no_match`；出现明确排除证据时标记 `rejected`。
 - 没有真实姓名时，不跑自动匹配，只生成待补姓名清单。
 
 identity score 至少包含：

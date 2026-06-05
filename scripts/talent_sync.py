@@ -30,6 +30,8 @@ _SYNC_TABLES = (
     "candidates",
     "candidate_details",
     "source_profiles",
+    "candidate_identity_matches",
+    "candidate_field_values",
     "candidate_wechat_timelines",
     "score_events",
     "match_scores",
@@ -830,15 +832,28 @@ def _plan_child_rows(
     for table in (
         "candidate_details",
         "source_profiles",
+        "candidate_identity_matches",
+        "candidate_field_values",
         "candidate_wechat_timelines",
         "score_events",
         "match_scores",
     ):
         for row in table_rows.get(table, []):
             candidate_sync_id = str(row.get("candidate_sync_id") or "")
+            if table == "candidate_identity_matches" and not candidate_sync_id:
+                if _target_has_sync_id(conn, table, str(row.get("sync_id") or "")):
+                    plan["merged"][table] += 1
+                else:
+                    plan["created"][table] += 1
+                continue
+
             action = candidate_actions.get(candidate_sync_id, {})
             if action.get("action") not in {"create", "merge"}:
                 plan["skipped"][table] += 1
+                continue
+
+            if table == "source_profiles":
+                _plan_source_profile_row(conn, row, action, plan)
                 continue
 
             if _target_has_sync_id(conn, table, str(row.get("sync_id") or "")):
@@ -847,6 +862,94 @@ def _plan_child_rows(
                 plan["created"][table] += 1
 
     plan["tombstoned"]["tombstones"] = len(table_rows.get("tombstones", []))
+
+
+def _plan_source_profile_row(
+    conn: sqlite3.Connection | None,
+    row: dict[str, Any],
+    action: dict[str, Any],
+    plan: dict[str, Any],
+) -> None:
+    if _target_has_sync_id(conn, "source_profiles", str(row.get("sync_id") or "")):
+        plan["merged"]["source_profiles"] += 1
+        return
+
+    local_candidate_id = action.get("local_candidate_id")
+    if local_candidate_id is None:
+        plan["created"]["source_profiles"] += 1
+        return
+
+    matched_candidate_id = _target_source_profile_candidate_id(
+        conn,
+        int(local_candidate_id),
+        row,
+    )
+    if matched_candidate_id is None:
+        plan["created"]["source_profiles"] += 1
+    elif matched_candidate_id == int(local_candidate_id):
+        plan["merged"]["source_profiles"] += 1
+    else:
+        plan["skipped"]["source_profiles"] += 1
+
+
+def _target_source_profile_candidate_id(
+    conn: sqlite3.Connection | None,
+    local_candidate_id: int,
+    row: dict[str, Any],
+) -> int | None:
+    if conn is None:
+        return None
+
+    platform = str(row.get("platform") or "")
+    if not platform:
+        return None
+    platform_id = row.get("platform_id")
+    if platform_id:
+        match = _fetch_optional(
+            conn,
+            """
+            SELECT candidate_id
+            FROM source_profiles
+            WHERE platform = ? AND platform_id = ?
+            ORDER BY id
+            LIMIT 1
+            """,
+            (platform, str(platform_id)),
+        )
+        return int(match["candidate_id"]) if match is not None else None
+
+    profile_url = row.get("profile_url")
+    if profile_url:
+        match = _fetch_optional(
+            conn,
+            """
+            SELECT candidate_id
+            FROM source_profiles
+            WHERE candidate_id = ?
+              AND platform = ?
+              AND platform_id IS NULL
+              AND profile_url = ?
+            ORDER BY id
+            LIMIT 1
+            """,
+            (local_candidate_id, platform, profile_url),
+        )
+    else:
+        match = _fetch_optional(
+            conn,
+            """
+            SELECT candidate_id
+            FROM source_profiles
+            WHERE candidate_id = ?
+              AND platform = ?
+              AND platform_id IS NULL
+              AND (profile_url IS NULL OR profile_url = '')
+            ORDER BY id
+            LIMIT 1
+            """,
+            (local_candidate_id, platform),
+        )
+    return int(match["candidate_id"]) if match is not None else None
 
 
 def _target_has_sync_id(

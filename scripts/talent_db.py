@@ -14,7 +14,9 @@ from scripts.talent_sync_models import canonical_json
 from scripts.talent_models import (
     Candidate,
     CandidateDetail,
+    CandidateFieldValue,
     CandidateFilter,
+    CandidateIdentityMatch,
     DeleteResult,
     IngestResult,
     MatchScore,
@@ -91,6 +93,8 @@ _SYNC_IMPORT_TABLES = (
     "candidates",
     "candidate_details",
     "source_profiles",
+    "candidate_identity_matches",
+    "candidate_field_values",
     "candidate_wechat_timelines",
     "score_events",
     "match_scores",
@@ -164,6 +168,39 @@ class TalentDB:
                 raw_profile TEXT,
                 fetched_at TEXT DEFAULT (datetime('now')),
                 UNIQUE(platform, platform_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS candidate_identity_matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id INTEGER REFERENCES candidates(id) ON DELETE SET NULL,
+                source_platform TEXT NOT NULL,
+                source_candidate_key TEXT NOT NULL,
+                target_platform TEXT NOT NULL,
+                target_platform_id TEXT,
+                target_profile_url TEXT,
+                query_text TEXT NOT NULL,
+                query_level TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0,
+                score_breakdown TEXT NOT NULL DEFAULT '{}',
+                match_status TEXT NOT NULL,
+                decision_reason TEXT,
+                confirmed_by TEXT,
+                confirmed_at TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS candidate_field_values (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id INTEGER NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+                field_name TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                source_profile_id INTEGER REFERENCES source_profiles(id) ON DELETE SET NULL,
+                field_value TEXT NOT NULL,
+                confidence REAL,
+                merge_decision TEXT,
+                decision_reason TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
             );
 
             CREATE TABLE IF NOT EXISTS candidate_wechat_timelines (
@@ -291,6 +328,22 @@ class TalentDB:
                 );
             CREATE INDEX IF NOT EXISTS idx_source_platform ON source_profiles(platform);
             CREATE INDEX IF NOT EXISTS idx_source_candidate ON source_profiles(candidate_id);
+            CREATE INDEX IF NOT EXISTS idx_identity_matches_candidate
+                ON candidate_identity_matches(candidate_id);
+            CREATE INDEX IF NOT EXISTS idx_identity_matches_source
+                ON candidate_identity_matches(source_platform, source_candidate_key);
+            CREATE INDEX IF NOT EXISTS idx_identity_matches_target
+                ON candidate_identity_matches(target_platform, target_platform_id);
+            CREATE INDEX IF NOT EXISTS idx_identity_matches_status
+                ON candidate_identity_matches(match_status);
+            CREATE INDEX IF NOT EXISTS idx_field_values_candidate
+                ON candidate_field_values(candidate_id);
+            CREATE INDEX IF NOT EXISTS idx_field_values_field
+                ON candidate_field_values(field_name);
+            CREATE INDEX IF NOT EXISTS idx_field_values_platform
+                ON candidate_field_values(platform);
+            CREATE INDEX IF NOT EXISTS idx_field_values_source_profile
+                ON candidate_field_values(source_profile_id);
             CREATE INDEX IF NOT EXISTS idx_wechat_timelines_candidate
                 ON candidate_wechat_timelines(candidate_id);
             CREATE INDEX IF NOT EXISTS idx_wechat_timelines_chat_name
@@ -339,6 +392,8 @@ class TalentDB:
         )
         self._ensure_columns("candidate_details", {"sync_id": "TEXT"})
         self._ensure_columns("source_profiles", {"sync_id": "TEXT"})
+        self._ensure_columns("candidate_identity_matches", {"sync_id": "TEXT"})
+        self._ensure_columns("candidate_field_values", {"sync_id": "TEXT"})
         self._ensure_columns("candidate_wechat_timelines", {"sync_id": "TEXT"})
         self._ensure_columns("score_events", {"sync_id": "TEXT"})
         self._ensure_columns("match_scores", {"sync_id": "TEXT"})
@@ -358,6 +413,10 @@ class TalentDB:
             CREATE INDEX IF NOT EXISTS idx_candidates_sync_id ON candidates(sync_id);
             CREATE INDEX IF NOT EXISTS idx_candidate_details_sync_id ON candidate_details(sync_id);
             CREATE INDEX IF NOT EXISTS idx_source_profiles_sync_id ON source_profiles(sync_id);
+            CREATE INDEX IF NOT EXISTS idx_candidate_identity_matches_sync_id
+                ON candidate_identity_matches(sync_id);
+            CREATE INDEX IF NOT EXISTS idx_candidate_field_values_sync_id
+                ON candidate_field_values(sync_id);
             CREATE INDEX IF NOT EXISTS idx_wechat_timelines_sync_id ON candidate_wechat_timelines(sync_id);
             CREATE INDEX IF NOT EXISTS idx_score_events_sync_id ON score_events(sync_id);
             CREATE INDEX IF NOT EXISTS idx_match_scores_sync_id ON match_scores(sync_id);
@@ -409,6 +468,8 @@ class TalentDB:
         entity_tables = (
             ("candidate_details", "candidate_id", "detail"),
             ("source_profiles", "id", "source_profile"),
+            ("candidate_identity_matches", "id", "identity_match"),
+            ("candidate_field_values", "id", "field_value"),
             ("candidate_wechat_timelines", "id", "wechat_timeline"),
             ("score_events", "id", "score_event"),
             ("match_scores", "id", "match_score"),
@@ -1064,6 +1125,156 @@ class TalentDB:
             for row in rows
         ]
 
+    def merge_candidate_source(
+        self,
+        candidate_id: int,
+        data: dict[str, Any],
+        platform: str,
+    ) -> None:
+        with self._conn:
+            self._merge_candidate(candidate_id, data, platform)
+            self._last_ingest_action = "merged"
+
+    def record_identity_match(self, data: dict[str, Any]) -> int:
+        candidate_id = data.get("candidate_id")
+        if candidate_id is not None and not self._candidate_exists(int(candidate_id)):
+            raise ValueError(f"Candidate does not exist: {candidate_id}")
+        _validate_non_empty_string(data.get("source_platform"), "source_platform")
+        _validate_non_empty_string(
+            data.get("source_candidate_key"),
+            "source_candidate_key",
+        )
+        _validate_non_empty_string(data.get("target_platform"), "target_platform")
+        _validate_non_empty_string(data.get("query_text"), "query_text")
+        _validate_non_empty_string(data.get("query_level"), "query_level")
+        _validate_non_empty_string(data.get("match_status"), "match_status")
+        _validate_optional_number(data.get("confidence"), "confidence")
+        score_breakdown = _score_breakdown_json(data.get("score_breakdown"))
+
+        with self._conn:
+            cursor = self._conn.execute(
+                """
+                INSERT INTO candidate_identity_matches (
+                    candidate_id, source_platform, source_candidate_key,
+                    target_platform, target_platform_id, target_profile_url,
+                    query_text, query_level, confidence, score_breakdown,
+                    match_status, decision_reason, confirmed_by, confirmed_at,
+                    sync_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(candidate_id) if candidate_id is not None else None,
+                    data["source_platform"],
+                    data["source_candidate_key"],
+                    data["target_platform"],
+                    data.get("target_platform_id"),
+                    data.get("target_profile_url"),
+                    data["query_text"],
+                    data["query_level"],
+                    data.get("confidence") if data.get("confidence") is not None else 0,
+                    score_breakdown,
+                    data["match_status"],
+                    data.get("decision_reason"),
+                    data.get("confirmed_by"),
+                    data.get("confirmed_at"),
+                    self._new_sync_id("identity_match"),
+                ),
+            )
+        return int(cursor.lastrowid)
+
+    def identity_matches(
+        self,
+        candidate_id: int | None = None,
+    ) -> list[CandidateIdentityMatch]:
+        if candidate_id is None:
+            rows = self._conn.execute(
+                """
+                SELECT *
+                FROM candidate_identity_matches
+                ORDER BY created_at ASC, id ASC
+                """
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """
+                SELECT *
+                FROM candidate_identity_matches
+                WHERE candidate_id = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (candidate_id,),
+            ).fetchall()
+        return [_row_to_identity_match(row) for row in rows]
+
+    def record_field_value(self, data: dict[str, Any]) -> int:
+        if "candidate_id" not in data or data.get("candidate_id") is None:
+            raise ValueError("candidate_id is required")
+        candidate_id = int(data["candidate_id"])
+        if not self._candidate_exists(candidate_id):
+            raise ValueError(f"Candidate does not exist: {candidate_id}")
+        _validate_non_empty_string(data.get("field_name"), "field_name")
+        _validate_non_empty_string(data.get("platform"), "platform")
+        if "field_value" not in data:
+            raise ValueError("field_value is required")
+        _validate_optional_number(data.get("confidence"), "confidence")
+        source_profile_id = _optional_int(
+            data.get("source_profile_id"),
+            "source_profile_id",
+        )
+        if source_profile_id is not None and not self._source_profile_id_exists(
+            source_profile_id
+        ):
+            raise ValueError(f"Source profile does not exist: {source_profile_id}")
+
+        with self._conn:
+            cursor = self._conn.execute(
+                """
+                INSERT INTO candidate_field_values (
+                    candidate_id, field_name, platform, source_profile_id,
+                    field_value, confidence, merge_decision, decision_reason,
+                    sync_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    candidate_id,
+                    data["field_name"],
+                    data["platform"],
+                    source_profile_id,
+                    _json_dumps_literal(data.get("field_value")),
+                    data.get("confidence"),
+                    data.get("merge_decision"),
+                    data.get("decision_reason"),
+                    self._new_sync_id("field_value"),
+                ),
+            )
+        return int(cursor.lastrowid)
+
+    def field_values(
+        self,
+        candidate_id: int | None = None,
+    ) -> list[CandidateFieldValue]:
+        if candidate_id is None:
+            rows = self._conn.execute(
+                """
+                SELECT *
+                FROM candidate_field_values
+                ORDER BY created_at ASC, id ASC
+                """
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """
+                SELECT *
+                FROM candidate_field_values
+                WHERE candidate_id = ?
+                ORDER BY created_at ASC, id ASC
+                """,
+                (candidate_id,),
+            ).fetchall()
+        return [_row_to_field_value(row) for row in rows]
+
     def add_wechat_timeline(
         self, candidate_id: int, data: dict[str, Any]
     ) -> WechatTimeline:
@@ -1388,6 +1599,7 @@ class TalentDB:
     ) -> dict[str, Any]:
         summary = _new_sync_import_summary(manifest, table_rows)
         candidate_id_map: dict[str, int] = {}
+        source_profile_id_map: dict[str, int] = {}
         candidate_actions = plan.get("_candidate_actions", {})
 
         with self._conn:
@@ -1445,6 +1657,18 @@ class TalentDB:
             self._import_sync_source_profiles(
                 table_rows.get("source_profiles", []),
                 candidate_id_map,
+                source_profile_id_map,
+                summary,
+            )
+            self._import_sync_identity_matches(
+                table_rows.get("candidate_identity_matches", []),
+                candidate_id_map,
+                summary,
+            )
+            self._import_sync_field_values(
+                table_rows.get("candidate_field_values", []),
+                candidate_id_map,
+                source_profile_id_map,
                 summary,
             )
             self._import_sync_wechat_timelines(
@@ -1773,6 +1997,7 @@ class TalentDB:
         self,
         rows: list[dict[str, Any]],
         candidate_id_map: dict[str, int],
+        source_profile_id_map: dict[str, int],
         summary: dict[str, Any],
     ) -> None:
         for row in rows:
@@ -1786,7 +2011,9 @@ class TalentDB:
                 if int(source_by_sync["candidate_id"]) != candidate_id:
                     summary["skipped"]["source_profiles"] += 1
                     continue
-                self._update_sync_source_profile(int(source_by_sync["id"]), row)
+                source_id = int(source_by_sync["id"])
+                self._update_sync_source_profile(source_id, row)
+                _map_sync_id(source_profile_id_map, row.get("sync_id"), source_id)
                 summary["merged"]["source_profiles"] += 1
                 continue
 
@@ -1795,19 +2022,22 @@ class TalentDB:
                 if int(existing_source["candidate_id"]) != candidate_id:
                     summary["skipped"]["source_profiles"] += 1
                     continue
-                self._update_sync_source_profile(int(existing_source["id"]), row)
+                source_id = int(existing_source["id"])
+                self._update_sync_source_profile(source_id, row)
+                _map_sync_id(source_profile_id_map, row.get("sync_id"), source_id)
                 summary["merged"]["source_profiles"] += 1
                 continue
 
-            self._insert_sync_source_profile(candidate_id, row)
+            source_id = self._insert_sync_source_profile(candidate_id, row)
+            _map_sync_id(source_profile_id_map, row.get("sync_id"), source_id)
             summary["created"]["source_profiles"] += 1
 
     def _insert_sync_source_profile(
         self,
         candidate_id: int,
         row: dict[str, Any],
-    ) -> None:
-        self._conn.execute(
+    ) -> int:
+        cursor = self._conn.execute(
             """
             INSERT INTO source_profiles (
                 candidate_id, platform, platform_id, profile_url,
@@ -1825,6 +2055,7 @@ class TalentDB:
                 row.get("sync_id"),
             ),
         )
+        return int(cursor.lastrowid)
 
     def _update_sync_source_profile(
         self,
@@ -1874,6 +2105,218 @@ class TalentDB:
             """,
             (source_id,),
         ).fetchone()
+
+    def _import_sync_identity_matches(
+        self,
+        rows: list[dict[str, Any]],
+        candidate_id_map: dict[str, int],
+        summary: dict[str, Any],
+    ) -> None:
+        for row in rows:
+            candidate_sync_id = str(row.get("candidate_sync_id") or "")
+            if candidate_sync_id:
+                candidate_id = candidate_id_map.get(candidate_sync_id)
+                if candidate_id is None:
+                    summary["skipped"]["candidate_identity_matches"] += 1
+                    continue
+            else:
+                candidate_id = None
+
+            match_by_sync = self._identity_match_by_sync_id(row.get("sync_id"))
+            if match_by_sync is not None:
+                self._update_sync_identity_match(int(match_by_sync["id"]), candidate_id, row)
+                summary["merged"]["candidate_identity_matches"] += 1
+                continue
+
+            self._insert_sync_identity_match(candidate_id, row)
+            summary["created"]["candidate_identity_matches"] += 1
+
+    def _insert_sync_identity_match(
+        self,
+        candidate_id: int | None,
+        row: dict[str, Any],
+    ) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO candidate_identity_matches (
+                candidate_id, source_platform, source_candidate_key,
+                target_platform, target_platform_id, target_profile_url,
+                query_text, query_level, confidence, score_breakdown,
+                match_status, decision_reason, confirmed_by, confirmed_at,
+                created_at, updated_at, sync_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                candidate_id,
+                row["source_platform"],
+                row["source_candidate_key"],
+                row["target_platform"],
+                row.get("target_platform_id"),
+                row.get("target_profile_url"),
+                row.get("query_text"),
+                row.get("query_level"),
+                row.get("confidence"),
+                _score_breakdown_json(row.get("score_breakdown")),
+                row["match_status"],
+                row.get("decision_reason"),
+                row.get("confirmed_by"),
+                row.get("confirmed_at"),
+                row.get("created_at"),
+                row.get("updated_at"),
+                row.get("sync_id"),
+            ),
+        )
+
+    def _update_sync_identity_match(
+        self,
+        match_id: int,
+        candidate_id: int | None,
+        row: dict[str, Any],
+    ) -> None:
+        self._conn.execute(
+            """
+            UPDATE candidate_identity_matches
+            SET candidate_id = COALESCE(?, candidate_id),
+                target_platform_id = COALESCE(?, target_platform_id),
+                target_profile_url = COALESCE(?, target_profile_url),
+                query_text = COALESCE(?, query_text),
+                query_level = COALESCE(?, query_level),
+                confidence = COALESCE(?, confidence),
+                score_breakdown = COALESCE(?, score_breakdown),
+                match_status = COALESCE(?, match_status),
+                decision_reason = COALESCE(?, decision_reason),
+                confirmed_by = COALESCE(?, confirmed_by),
+                confirmed_at = COALESCE(?, confirmed_at),
+                updated_at = COALESCE(?, updated_at),
+                sync_id = COALESCE(NULLIF(sync_id, ''), ?)
+            WHERE id = ?
+            """,
+            (
+                candidate_id,
+                row.get("target_platform_id"),
+                row.get("target_profile_url"),
+                row.get("query_text"),
+                row.get("query_level"),
+                row.get("confidence"),
+                _score_breakdown_json(row.get("score_breakdown")),
+                row.get("match_status"),
+                row.get("decision_reason"),
+                row.get("confirmed_by"),
+                row.get("confirmed_at"),
+                row.get("updated_at"),
+                row.get("sync_id"),
+                match_id,
+            ),
+        )
+
+    def _import_sync_field_values(
+        self,
+        rows: list[dict[str, Any]],
+        candidate_id_map: dict[str, int],
+        source_profile_id_map: dict[str, int],
+        summary: dict[str, Any],
+    ) -> None:
+        for row in rows:
+            candidate_id = candidate_id_map.get(str(row.get("candidate_sync_id") or ""))
+            if candidate_id is None:
+                summary["skipped"]["candidate_field_values"] += 1
+                continue
+
+            value_by_sync = self._field_value_by_sync_id(row.get("sync_id"))
+            source_profile_id = self._sync_field_value_source_profile_id(
+                candidate_id,
+                row,
+                source_profile_id_map,
+            )
+            if value_by_sync is not None:
+                self._update_sync_field_value(
+                    int(value_by_sync["id"]),
+                    candidate_id,
+                    source_profile_id,
+                    row,
+                )
+                summary["merged"]["candidate_field_values"] += 1
+                continue
+
+            self._insert_sync_field_value(candidate_id, source_profile_id, row)
+            summary["created"]["candidate_field_values"] += 1
+
+    def _insert_sync_field_value(
+        self,
+        candidate_id: int,
+        source_profile_id: int | None,
+        row: dict[str, Any],
+    ) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO candidate_field_values (
+                candidate_id, field_name, platform, source_profile_id,
+                field_value, confidence, merge_decision, decision_reason,
+                created_at, sync_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                candidate_id,
+                row["field_name"],
+                row["platform"],
+                source_profile_id,
+                _json_dumps_literal(row.get("field_value")),
+                row.get("confidence"),
+                row.get("merge_decision"),
+                row.get("decision_reason"),
+                row.get("created_at"),
+                row.get("sync_id"),
+            ),
+        )
+
+    def _update_sync_field_value(
+        self,
+        value_id: int,
+        candidate_id: int,
+        source_profile_id: int | None,
+        row: dict[str, Any],
+    ) -> None:
+        self._conn.execute(
+            """
+            UPDATE candidate_field_values
+            SET candidate_id = ?,
+                source_profile_id = ?,
+                field_value = ?,
+                confidence = COALESCE(?, confidence),
+                merge_decision = COALESCE(?, merge_decision),
+                decision_reason = COALESCE(?, decision_reason),
+                sync_id = COALESCE(NULLIF(sync_id, ''), ?)
+            WHERE id = ?
+            """,
+            (
+                candidate_id,
+                source_profile_id,
+                _json_dumps_literal(row.get("field_value")),
+                row.get("confidence"),
+                row.get("merge_decision"),
+                row.get("decision_reason"),
+                row.get("sync_id"),
+                value_id,
+            ),
+        )
+
+    def _sync_field_value_source_profile_id(
+        self,
+        candidate_id: int,
+        row: dict[str, Any],
+        source_profile_id_map: dict[str, int],
+    ) -> int | None:
+        source_profile_sync_id = str(row.get("source_profile_sync_id") or "")
+        if source_profile_sync_id:
+            mapped_id = source_profile_id_map.get(source_profile_sync_id)
+            if mapped_id is not None:
+                return mapped_id
+            source_row = self._source_profile_by_sync_id(source_profile_sync_id)
+            if source_row is not None and int(source_row["candidate_id"]) == candidate_id:
+                return int(source_row["id"])
+        return None
 
     def _import_sync_wechat_timelines(
         self,
@@ -2270,6 +2713,49 @@ class TalentDB:
             (sync_id,),
         ).fetchone()
 
+    def _source_profile_id_exists(self, source_profile_id: int) -> bool:
+        return self._source_profile_by_id(source_profile_id) is not None
+
+    def _source_profile_by_id(self, source_profile_id: int) -> sqlite3.Row | None:
+        row = self._conn.execute(
+            """
+            SELECT id, candidate_id, sync_id
+            FROM source_profiles
+            WHERE id = ?
+            LIMIT 1
+            """,
+            (source_profile_id,),
+        ).fetchone()
+        return row
+
+    def _identity_match_by_sync_id(self, sync_id: Any) -> sqlite3.Row | None:
+        if not sync_id:
+            return None
+        return self._conn.execute(
+            """
+            SELECT id, candidate_id
+            FROM candidate_identity_matches
+            WHERE sync_id = ?
+            ORDER BY id
+            LIMIT 1
+            """,
+            (sync_id,),
+        ).fetchone()
+
+    def _field_value_by_sync_id(self, sync_id: Any) -> sqlite3.Row | None:
+        if not sync_id:
+            return None
+        return self._conn.execute(
+            """
+            SELECT id, candidate_id
+            FROM candidate_field_values
+            WHERE sync_id = ?
+            ORDER BY id
+            LIMIT 1
+            """,
+            (sync_id,),
+        ).fetchone()
+
     def _source_profile_by_platform_key(
         self,
         platform: str,
@@ -2338,6 +2824,8 @@ class TalentDB:
             "candidates": self._export_candidates(),
             "candidate_details": self._export_candidate_details(),
             "source_profiles": self._export_source_profiles(),
+            "candidate_identity_matches": self._export_identity_matches(),
+            "candidate_field_values": self._export_field_values(),
             "candidate_wechat_timelines": self._export_wechat_timelines(),
             "score_events": self._export_score_events(),
             "match_scores": self._export_match_scores(),
@@ -2414,6 +2902,64 @@ class TalentDB:
         ).fetchall()
         return [
             _export_row(row, json_fields={"raw_profile": None})
+            for row in rows
+        ]
+
+    def _export_identity_matches(self) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT
+                candidate_identity_matches.sync_id,
+                candidates.sync_id AS candidate_sync_id,
+                candidate_identity_matches.source_platform,
+                candidate_identity_matches.source_candidate_key,
+                candidate_identity_matches.target_platform,
+                candidate_identity_matches.target_platform_id,
+                candidate_identity_matches.target_profile_url,
+                candidate_identity_matches.query_text,
+                candidate_identity_matches.query_level,
+                candidate_identity_matches.confidence,
+                candidate_identity_matches.score_breakdown,
+                candidate_identity_matches.match_status,
+                candidate_identity_matches.decision_reason,
+                candidate_identity_matches.confirmed_by,
+                candidate_identity_matches.confirmed_at,
+                candidate_identity_matches.created_at,
+                candidate_identity_matches.updated_at
+            FROM candidate_identity_matches
+            LEFT JOIN candidates ON candidates.id = candidate_identity_matches.candidate_id
+            ORDER BY candidate_identity_matches.sync_id
+            """
+        ).fetchall()
+        return [
+            _export_row(row, json_fields={"score_breakdown": None})
+            for row in rows
+        ]
+
+    def _export_field_values(self) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT
+                candidate_field_values.sync_id,
+                candidates.sync_id AS candidate_sync_id,
+                candidate_field_values.field_name,
+                candidate_field_values.platform,
+                candidate_field_values.source_profile_id,
+                source_profiles.sync_id AS source_profile_sync_id,
+                candidate_field_values.field_value,
+                candidate_field_values.confidence,
+                candidate_field_values.merge_decision,
+                candidate_field_values.decision_reason,
+                candidate_field_values.created_at
+            FROM candidate_field_values
+            JOIN candidates ON candidates.id = candidate_field_values.candidate_id
+            LEFT JOIN source_profiles
+              ON source_profiles.id = candidate_field_values.source_profile_id
+            ORDER BY candidate_field_values.sync_id
+            """
+        ).fetchall()
+        return [
+            _export_row(row, json_fields={"field_value": None})
             for row in rows
         ]
 
@@ -2720,6 +3266,18 @@ def _json_dumps(value: Any) -> str | None:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _json_dumps_literal(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _score_breakdown_json(value: Any) -> str:
+    if value is None:
+        return "{}"
+    if not isinstance(value, dict):
+        raise ValueError("score_breakdown must be a dict")
+    return _json_dumps(value) or "{}"
+
+
 def _empty_sync_import_counts() -> dict[str, int]:
     return {table: 0 for table in _SYNC_IMPORT_TABLES}
 
@@ -2811,6 +3369,12 @@ def _export_row(
     return data
 
 
+def _map_sync_id(mapping: dict[str, int], sync_id: Any, local_id: int) -> None:
+    sync_id_text = str(sync_id or "")
+    if sync_id_text:
+        mapping[sync_id_text] = local_id
+
+
 def _count_rows(conn: sqlite3.Connection, table: str, column: str, value: Any) -> int:
     row = conn.execute(
         f"SELECT COUNT(*) FROM {table} WHERE {column} = ?",
@@ -2837,6 +3401,61 @@ def _row_to_wechat_timeline(row: sqlite3.Row) -> WechatTimeline:
         markdown_path=row["markdown_path"],
         source_tool=row["source_tool"] or "wechat-cli",
         synced_at=row["synced_at"] or "",
+    )
+
+
+def _row_to_identity_match(row: sqlite3.Row) -> CandidateIdentityMatch:
+    return CandidateIdentityMatch(
+        id=int(row["id"]),
+        candidate_id=(
+            int(row["candidate_id"]) if row["candidate_id"] is not None else None
+        ),
+        source_platform=row["source_platform"],
+        source_candidate_key=row["source_candidate_key"],
+        target_platform=row["target_platform"],
+        target_platform_id=row["target_platform_id"],
+        target_profile_url=row["target_profile_url"],
+        query_text=row["query_text"],
+        query_level=row["query_level"],
+        confidence=(
+            float(row["confidence"]) if row["confidence"] is not None else None
+        ),
+        score_breakdown=_json_loads(
+            row["score_breakdown"],
+            None,
+            "candidate_identity_matches.score_breakdown",
+        ),
+        match_status=row["match_status"],
+        decision_reason=row["decision_reason"],
+        confirmed_by=row["confirmed_by"],
+        confirmed_at=row["confirmed_at"],
+        created_at=row["created_at"] or "",
+        updated_at=row["updated_at"] or "",
+    )
+
+
+def _row_to_field_value(row: sqlite3.Row) -> CandidateFieldValue:
+    return CandidateFieldValue(
+        id=int(row["id"]),
+        candidate_id=int(row["candidate_id"]),
+        field_name=row["field_name"],
+        platform=row["platform"],
+        source_profile_id=(
+            int(row["source_profile_id"])
+            if row["source_profile_id"] is not None
+            else None
+        ),
+        field_value=_json_loads(
+            row["field_value"],
+            None,
+            "candidate_field_values.field_value",
+        ),
+        confidence=(
+            float(row["confidence"]) if row["confidence"] is not None else None
+        ),
+        merge_decision=row["merge_decision"],
+        decision_reason=row["decision_reason"],
+        created_at=row["created_at"] or "",
     )
 
 
@@ -2961,6 +3580,30 @@ def _validate_score(score: Any) -> None:
         raise ValueError("score must be finite")
     if score < 0 or score > 100:
         raise ValueError("score must be between 0 and 100")
+
+
+def _validate_optional_number(value: Any, field_name: str) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field_name} must be a finite number")
+    if not math.isfinite(float(value)):
+        raise ValueError(f"{field_name} must be a finite number")
+
+
+def _optional_int(value: Any, field_name: str) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be an integer")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError as exc:
+            raise ValueError(f"{field_name} must be an integer") from exc
+    raise ValueError(f"{field_name} must be an integer")
 
 
 def _safe_fts_query(query: str) -> str:

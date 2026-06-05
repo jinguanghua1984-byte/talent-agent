@@ -11,6 +11,9 @@
 - `scripts/maimai_campaign_orchestrator.py`：脉脉 campaign 阶段编排入口。
 - `scripts/score_pipeline.py`：JD 驱动评分 pipeline 入口。
 - `scripts/boss_app_sourcing.py`：BOSS App 推荐列表寻访合同和状态初始化入口。
+- `scripts/boss_maimai_targets.py`：从 BOSS campaign 生成脉脉匹配 target；写 `structured/maimai-match-targets.jsonl` 和 `reports/maimai-match-summary.*`，不连接平台、不写 DB。
+- `scripts/cross_channel_import.py`：将 BOSS primary + Maimai supplement 写入 Campaign DB；只写指定 Campaign DB，不写 `data/talent.db`。
+- `scripts/campaign_to_delivery.py`：Campaign DB clean 后导出 bundle、dry-run/apply 主库并写交付 handoff；只有授权和 gate 成立时写 `data/talent.db`，不直接发布飞书。
 
 ## Library Modules
 
@@ -18,6 +21,7 @@
 - `scripts/talent_cloud_sync_common.py`、`scripts/talent_cloud_sync_providers.py`：云同步 provider 和通用能力。
 - `scripts/maimai_campaign_*.py`：通用脉脉 campaign 计划、评分、报告和反馈模块。
 - `scripts/jd_talent_delivery_*.py`：JD 推荐画像、评分卡、匹配和飞书发布模块。
+- `scripts/cross_channel_identity.py`：BOSS target 与脉脉搜索结果身份评分纯函数模块；不读写文件、不连接平台、不写 DB。
 
 ## Legacy Compatibility
 

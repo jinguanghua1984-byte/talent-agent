@@ -12,6 +12,7 @@ WORKFLOWS = [
     "jd-talent-delivery",
     "maimai-unattended-campaign",
     "boss-app-recommendation-sourcing",
+    "boss-maimai-cross-channel-delivery",
     "liepin-unattended-campaign",
 ]
 
@@ -19,6 +20,7 @@ CANONICAL_SKILL_WORKFLOWS = {
     "jd-talent-delivery": "jd-talent-delivery",
     "maimai-talent-search-campaign": "maimai-unattended-campaign",
     "boss-app-recommendation-sourcing": "boss-app-recommendation-sourcing",
+    "boss-maimai-cross-channel-delivery": "boss-maimai-cross-channel-delivery",
     "liepin-talent-search-campaign": "liepin-unattended-campaign",
 }
 
@@ -32,6 +34,7 @@ CLAUDE_ADAPTER_WORKFLOWS = {
     "jd-talent-delivery": "jd-talent-delivery",
     "maimai-talent-search-campaign": "maimai-unattended-campaign",
     "boss-app-recommendation-sourcing": "boss-app-recommendation-sourcing",
+    "boss-maimai-cross-channel-delivery": "boss-maimai-cross-channel-delivery",
     "liepin-talent-search-campaign": "liepin-unattended-campaign",
 }
 
@@ -265,6 +268,47 @@ def test_liepin_contracts_define_broad_recall_adaptive_planning_boundary():
     assert "jd-talent-delivery" in skill
     assert "jd-talent-delivery" in workflow
     assert "不写数据库" in workflow
+
+
+def test_boss_maimai_cross_channel_contracts_define_merge_and_sync_gates():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-maimai-cross-channel-delivery"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-maimai-cross-channel-delivery"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+    s3 = markdown_section(workflow, "S3 身份匹配判定")
+    s9 = markdown_section(workflow, "S9 主库 sync dry-run 与 apply")
+
+    for text in (skill, workflow):
+        assert "BOSS 为 primary" in text
+        assert "脉脉为 supplement" in text
+        assert "`structured/maimai-match-targets.jsonl`" in text
+        assert "`state/cross-channel-identity-ledger.jsonl`" in text
+        assert "`reports/main-db-sync-dry-run.json`" in text
+        assert "`data/talent.db`" in text
+        assert "一次总授权" in text
+        assert "Campaign DB clean" in text
+        assert "jd-talent-delivery" in text
+
+    assert "`name_company_title`" in s3
+    assert "`name_company_fallback`" in s3
+    assert ">=95" in s3
+    assert "不得自动绑定" in s3
+    assert "`pending_confirmation`" in s3
+
+    assert "`talent_sync.py export`" in s9
+    assert "`verify-bundle`" in s9
+    assert "`talent_sync.py import`" in s9
+    assert "`CONFIRM_SYNC_TEXT`" in s9
 
 
 def test_boss_app_sourcing_capability_exception_keeps_executor_narrow():
