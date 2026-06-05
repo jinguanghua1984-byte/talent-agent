@@ -38,9 +38,9 @@ Review：
 
 ## Recent Done
 
+- 2026-06-05：BOSS-Maimai cross-channel Task 5 候选导入已完成：新增 `scripts/cross_channel_import.py` 与 `tests/test_cross_channel_import.py`，实现 BOSS primary + Maimai supplement 写入 Campaign DB、identity/audit 记录、dry-run/apply report、blocked/errors CLI 非 0。验证：`tests/test_cross_channel_import.py tests/test_talent_db.py` 136 passed；`tests/test_cross_channel_identity.py tests/test_boss_maimai_targets.py tests/test_cross_channel_import.py` 31 passed；`git diff --check` 通过。完整记录见 `tasks/archive/2026-06.md`。
 - 2026-06-05：BOSS-Maimai cross-channel final code-quality review 边界修复已完成：缺 `current_title` 时 query plan 只保留不可 auto-bind fallback，`decide_match` 对缺职位高精度层级加人工确认门禁，并同步 canonical 文档与 plan 内嵌代码。验证：目标 pytest `23 passed`，`git diff --check` 通过。完整记录见 `tasks/archive/2026-06.md`。
 - 2026-06-05：BOSS-Maimai cross-channel spec re-review 两项 blocking 修复已完成：`education` 不再作为 `name_school_title_core` auto-bind 证据，`decide_match` 无结果/低分统一返回 `no_match`，并同步 canonical skill/workflow 与设计文档。验证：目标 pytest `20 passed`，`git diff --check` 通过。完整记录见 `tasks/archive/2026-06.md`。
-- 2026-06-05：BOSS-Maimai cross-channel code-quality review 三项修复已完成：缺关键证据的 query 不再生成可 auto-bind 退化查询，目标导出在无 `boss_payload` 时保留完整原行上下文，JSONL 非对象行改为报错。验证：目标 pytest `19 passed`，`git diff --check` 通过。完整记录见 `tasks/archive/2026-06.md`。
 
 ## Archive Index
 
