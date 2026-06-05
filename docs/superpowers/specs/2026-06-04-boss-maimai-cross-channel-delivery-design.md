@@ -144,6 +144,7 @@ query 顺序：
 自动绑定规则：
 
 - 只有 query level 属于前 4 级，且 identity score `>=95`，才允许 `auto_bound`。
+- 前 4 级 query 必须包含非空职位或有效职位核心词；缺职位时不得自动绑定，只能走不可自动绑定的 fallback 或人工确认。
 - 如果结果数过多、第一名与第二名差距小、或只靠 `姓名+公司` 命中，即使分数高也进入 `pending_confirmation`。
 - `70-94` 一律 `pending_confirmation`。
 - `<70` 或无搜索结果标记 `no_match`；出现明确排除证据时标记 `rejected`。

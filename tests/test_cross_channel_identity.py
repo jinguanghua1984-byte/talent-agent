@@ -148,6 +148,35 @@ def test_query_plan_does_not_treat_education_only_as_school_auto_bind_evidence()
     )
 
 
+def test_query_plan_keeps_only_non_auto_bind_fallback_when_current_title_is_missing() -> None:
+    plan = build_query_plan(
+        {
+            "target_id": "target-1",
+            "candidate_key": "boss-app:1",
+            "real_name": "李四",
+            "current_company": "腾讯",
+            "current_title": "",
+            "recent_companies": ["百度"],
+            "schools": ["浙江大学"],
+        }
+    )
+
+    assert [item.to_dict() for item in plan] == [
+        {
+            "level": "name_company_fallback",
+            "text": "李四 腾讯",
+            "allow_auto_bind": False,
+        },
+    ]
+    assert not any(item.allow_auto_bind for item in plan)
+    assert not any(item.level in {
+        "name_company_title",
+        "name_company_title_core",
+        "name_recent_company_title",
+        "name_school_title_core",
+    } for item in plan)
+
+
 def test_strong_high_precision_hit_auto_binds_with_high_score() -> None:
     target = _target()
     hit = MaimaiSearchHit(
@@ -222,6 +251,62 @@ def test_name_company_fallback_never_auto_binds() -> None:
     assert decision.match_status == "pending_confirmation"
     assert decision.confidence >= 95
     assert decision.decision_reason == "fallback_query_requires_confirmation"
+
+
+def test_missing_current_title_does_not_auto_bind_through_fallback_query() -> None:
+    target = BossMaimaiTarget(
+        target_id="target-1",
+        candidate_key="boss-app:1",
+        real_name="张三",
+        current_company="字节跳动",
+        current_title="",
+        city="北京",
+        education="硕士",
+        recent_companies=("腾讯",),
+        schools=("清华大学",),
+    )
+    hit = MaimaiSearchHit(
+        platform_id="maimai-1",
+        name="张三",
+        company="字节跳动",
+        title="AI 产品负责人",
+        city="北京",
+        education="硕士",
+        schools=("清华大学",),
+    )
+
+    decision = decide_match(target, [hit], "name_company_fallback", "张三 字节跳动")
+
+    assert decision.match_status == "pending_confirmation"
+    assert decision.decision_reason == "fallback_query_requires_confirmation"
+
+
+def test_missing_current_title_does_not_auto_bind_even_if_high_precision_level_is_used() -> None:
+    target = BossMaimaiTarget(
+        target_id="target-1",
+        candidate_key="boss-app:1",
+        real_name="张三",
+        current_company="字节跳动",
+        current_title="",
+        city="北京",
+        education="硕士",
+        schools=("清华大学",),
+    )
+    hit = MaimaiSearchHit(
+        platform_id="maimai-1",
+        name="张三",
+        company="字节跳动",
+        title="AI 产品负责人",
+        city="北京",
+        education="硕士",
+        schools=("清华大学",),
+    )
+
+    decision = decide_match(target, [hit], "name_company_title_core", "张三 字节跳动")
+
+    assert decision.confidence >= 95
+    assert decision.match_status == "pending_confirmation"
+    assert decision.decision_reason == "missing_title_requires_confirmation"
 
 
 def test_many_results_or_close_second_goes_pending() -> None:
