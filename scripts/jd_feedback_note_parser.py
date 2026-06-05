@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import re
 import sys
 from tempfile import TemporaryDirectory
@@ -12,6 +13,7 @@ from typing import Any
 from scripts.jd_delivery_feedback import (
     VALID_FEEDBACK_LABELS,
     VALID_FEEDBACK_STAGES,
+    VALID_GRADES,
     VALID_REASON_CODES,
     build_suggestions,
     compile_feedback_summary,
@@ -327,6 +329,10 @@ def _validate_unique_feedback_row(
     rank = _required_int(row, "rank")
     if rank in seen_ranks:
         raise ValueError(f"duplicate rank: {rank}")
+    grade = _required_text(row, "grade")
+    if grade not in VALID_GRADES:
+        raise ValueError(f"invalid original grade: {grade}")
+    _required_number(row, "score")
     seen_candidate_ids.add(candidate_id)
     seen_ranks.add(rank)
 
@@ -344,9 +350,12 @@ def _required_int(row: dict[str, str | None], field: str) -> int:
 
 def _parse_int(value: str, field: str) -> int:
     try:
-        return int(value)
+        number = int(value)
     except ValueError as exc:
         raise ValueError(f"outreach CSV {field} must be an integer") from exc
+    if number <= 0:
+        raise ValueError(f"outreach CSV {field} must be a positive integer")
+    return number
 
 
 def _required_number(row: dict[str, str | None], field: str) -> int | float:
@@ -355,6 +364,8 @@ def _required_number(row: dict[str, str | None], field: str) -> int | float:
         number = float(value)
     except ValueError as exc:
         raise ValueError(f"outreach CSV {field} must be a number") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"outreach CSV {field} must be a finite number")
     return int(number) if number.is_integer() else number
 
 
@@ -432,6 +443,7 @@ def _normalize_result(parsed: dict[str, Any], feedback_note: str) -> dict[str, A
     if (
         not isinstance(confidence, (int, float))
         or isinstance(confidence, bool)
+        or not math.isfinite(float(confidence))
         or confidence < 0
         or confidence > 1
     ):

@@ -360,6 +360,75 @@ def test_parse_feedback_csv_rejects_duplicate_rank_across_accepted_and_review_ro
     assert not (root / "feedback" / "parse-review-queue.json").exists()
 
 
+def test_parse_feedback_csv_rejects_invalid_review_rank_before_writing_outputs(
+    tmp_path: Path,
+) -> None:
+    root = _run_root(tmp_path)
+    (root / "reports" / "outreach-queue.csv").write_text(
+        (
+            "candidate_id,rank,grade,score,feedback_note\n"
+            "101,0,A,88,看起来相关，但证据不够。\n"
+        ),
+        encoding="utf-8-sig",
+    )
+    client = QueueClient([_response(feedback_label="待定", parse_confidence=0.52)])
+
+    with pytest.raises(ValueError, match="rank must be a positive integer"):
+        parse_feedback_csv(root, client=client, model="model-x")
+
+    assert client.calls == []
+    assert not (root / "feedback" / "delivery-feedback.json").exists()
+    assert not (root / "feedback" / "parse-review-queue.json").exists()
+    assert not (root / "feedback" / "feedback-summary.json").exists()
+    assert not (root / "feedback" / "calibration-suggestions.json").exists()
+
+
+def test_parse_feedback_csv_rejects_invalid_review_grade_before_writing_outputs(
+    tmp_path: Path,
+) -> None:
+    root = _run_root(tmp_path)
+    (root / "reports" / "outreach-queue.csv").write_text(
+        (
+            "candidate_id,rank,grade,score,feedback_note\n"
+            "101,1,Z,88,看起来相关，但证据不够。\n"
+        ),
+        encoding="utf-8-sig",
+    )
+    client = QueueClient([_response(feedback_label="待定", parse_confidence=0.52)])
+
+    with pytest.raises(ValueError, match="invalid original grade: Z"):
+        parse_feedback_csv(root, client=client, model="model-x")
+
+    assert client.calls == []
+    assert not (root / "feedback" / "delivery-feedback.json").exists()
+    assert not (root / "feedback" / "parse-review-queue.json").exists()
+    assert not (root / "feedback" / "feedback-summary.json").exists()
+    assert not (root / "feedback" / "calibration-suggestions.json").exists()
+
+
+def test_parse_feedback_csv_rejects_non_finite_score_before_writing_outputs(
+    tmp_path: Path,
+) -> None:
+    root = _run_root(tmp_path)
+    (root / "reports" / "outreach-queue.csv").write_text(
+        (
+            "candidate_id,rank,grade,score,feedback_note\n"
+            "101,1,A,nan,候选人方向准确，可以沟通。\n"
+        ),
+        encoding="utf-8-sig",
+    )
+    client = QueueClient([_response()])
+
+    with pytest.raises(ValueError, match="score must be a finite number"):
+        parse_feedback_csv(root, client=client, model="model-x")
+
+    assert client.calls == []
+    assert not (root / "feedback" / "delivery-feedback.json").exists()
+    assert not (root / "feedback" / "parse-review-queue.json").exists()
+    assert not (root / "feedback" / "feedback-summary.json").exists()
+    assert not (root / "feedback" / "calibration-suggestions.json").exists()
+
+
 def test_cli_parse_csv_uses_run_root(tmp_path: Path) -> None:
     root = _run_root(tmp_path)
     client = QueueClient([_response(), _response(parse_confidence=0.52)])

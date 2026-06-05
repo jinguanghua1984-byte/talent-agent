@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from collections import Counter
 from datetime import datetime
@@ -91,6 +92,10 @@ def load_feedback(path: str | Path) -> dict[str, Any]:
         original_score = item.get("original_score")
         if not isinstance(original_score, (int, float)) or isinstance(original_score, bool):
             raise ValueError(f"candidate_feedback item {index} original_score must be a number")
+        if not math.isfinite(float(original_score)):
+            raise ValueError(
+                f"candidate_feedback item {index} original_score must be a finite number"
+            )
         candidate_id = item.get("candidate_id")
         if not isinstance(candidate_id, str) or not candidate_id.strip():
             raise ValueError(f"candidate_feedback item {index} missing candidate_id")
@@ -102,6 +107,7 @@ def load_feedback(path: str | Path) -> dict[str, Any]:
             if (
                 not isinstance(parse_confidence, (int, float))
                 or isinstance(parse_confidence, bool)
+                or not math.isfinite(float(parse_confidence))
                 or parse_confidence < 0
                 or parse_confidence > 1
             ):
@@ -193,7 +199,10 @@ def compile_feedback_summary(feedback: dict[str, Any]) -> dict[str, Any]:
 def write_json(path: str | Path, data: dict[str, Any]) -> None:
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8-sig")
+    out.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False),
+        encoding="utf-8-sig",
+    )
 
 
 def build_suggestions(summary: dict[str, Any]) -> dict[str, Any]:

@@ -7,6 +7,7 @@ from scripts.jd_delivery_feedback import (
     compile_feedback_summary,
     load_feedback,
     main,
+    write_json,
 )
 
 
@@ -125,6 +126,26 @@ def test_load_feedback_rejects_missing_original_score(
         load_feedback(path)
 
 
+@pytest.mark.parametrize("original_score", [float("nan"), float("inf"), float("-inf")])
+def test_load_feedback_rejects_non_finite_original_score(
+    tmp_path: Path, original_score: float
+) -> None:
+    data = _feedback()
+    data["candidate_feedback"][0]["original_score"] = original_score
+    path = tmp_path / "delivery-feedback.json"
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="original_score must be a finite number"):
+        load_feedback(path)
+
+
+def test_write_json_rejects_non_standard_json_numbers(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Out of range float values"):
+        write_json(tmp_path / "bad.json", {"score": float("nan")})
+
+    assert not (tmp_path / "bad.json").exists()
+
+
 @pytest.mark.parametrize("field", ["candidate_id", "rank"])
 def test_load_feedback_rejects_duplicate_candidate_id_or_rank(
     tmp_path: Path, field: str
@@ -182,7 +203,10 @@ def test_cli_writes_summary_and_calibration_files(tmp_path: Path) -> None:
     assert "keyword_hit_but_wrong_duty" in suggestions["reason_distribution"]
 
 
-@pytest.mark.parametrize("parse_confidence", [-0.1, 1.1, "0.9"])
+@pytest.mark.parametrize(
+    "parse_confidence",
+    [-0.1, 1.1, "0.9", float("nan"), float("inf"), float("-inf")],
+)
 def test_load_feedback_rejects_invalid_parse_confidence(
     tmp_path: Path, parse_confidence: object
 ) -> None:
