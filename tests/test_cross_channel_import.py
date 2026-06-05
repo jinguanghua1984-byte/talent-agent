@@ -93,6 +93,9 @@ def test_import_bound_candidates_keeps_boss_primary_and_adds_maimai_source(
     result = cross_channel_import.import_bound_candidates(root, db_path, dry_run=False)
 
     assert result["created"] == 1
+    assert result["merged"] == 0
+    assert result["pending"] == 0
+    assert result["applied"] == 1
     assert result["blocked"] == []
     assert result["errors"] == []
     db = TalentDB(db_path)
@@ -141,6 +144,54 @@ def test_import_bound_candidates_keeps_boss_primary_and_adds_maimai_source(
     assert (root / "reports/cross-channel-import-result.json").exists()
 
 
+def test_import_bound_candidates_rolls_back_when_audit_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "campaign"
+    db_path = root / "talent.db"
+    _write_jsonl(root / BOUND_FILE, [_bound_row()])
+
+    def fail_field_audits(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("forced audit failure")
+
+    monkeypatch.setattr(cross_channel_import, "_record_field_audits", fail_field_audits)
+
+    with pytest.raises(RuntimeError, match="forced audit failure"):
+        cross_channel_import.import_bound_candidates(root, db_path, dry_run=False)
+
+    db = TalentDB(db_path)
+    try:
+        assert db.count() == 0
+        assert db.identity_matches() == []
+        assert db.field_values() == []
+    finally:
+        db.close()
+
+
+def test_import_bound_candidates_counts_existing_boss_source_as_merged(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "campaign"
+    db_path = root / "talent.db"
+    _write_jsonl(root / BOUND_FILE, [_bound_row()])
+
+    first = cross_channel_import.import_bound_candidates(root, db_path, dry_run=False)
+    second = cross_channel_import.import_bound_candidates(root, db_path, dry_run=False)
+
+    assert first["created"] == 1
+    assert first["applied"] == 1
+    assert second["created"] == 0
+    assert second["merged"] == 1
+    assert second["pending"] == 0
+    assert second["applied"] == 1
+    db = TalentDB(db_path)
+    try:
+        assert db.count() == 1
+    finally:
+        db.close()
+
+
 def test_import_bound_candidates_dry_run_does_not_create_db_rows(
     tmp_path: Path,
 ) -> None:
@@ -152,6 +203,7 @@ def test_import_bound_candidates_dry_run_does_not_create_db_rows(
 
     assert result["would_import"] == 1
     assert result["created"] == 0
+    assert result["applied"] == 0
     db = TalentDB(db_path)
     try:
         assert db.count() == 0
@@ -249,6 +301,35 @@ def test_import_bound_candidates_clean_gate_blocks_mixed_schema_errors(
         db.close()
 
 
+def test_import_bound_candidates_blocks_missing_maimai_source_identity(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "campaign"
+    db_path = root / "talent.db"
+    row = _bound_row()
+    row["decision"].pop("target_platform_id")
+    row["decision"].pop("target_profile_url")
+    row["maimai_hit"].pop("platform_id")
+    row["maimai_hit"].pop("profile_url")
+    _write_jsonl(root / BOUND_FILE, [row])
+
+    result = cross_channel_import.import_bound_candidates(root, db_path, dry_run=False)
+
+    assert result["created"] == 0
+    assert result["errors"] == [
+        {
+            "line": 1,
+            "candidate_key": "boss-app:1",
+            "errors": ["maimai platform_id or profile_url is required"],
+        }
+    ]
+    db = TalentDB(db_path)
+    try:
+        assert db.count() == 0
+    finally:
+        db.close()
+
+
 def test_import_bound_candidates_rejects_missing_bound_file(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="cross-channel-bound-candidates.jsonl"):
         cross_channel_import.import_bound_candidates(
@@ -318,6 +399,59 @@ def test_import_bound_candidates_audits_maimai_name_conflict_with_source_id(
     }
 
 
+def test_import_bound_candidates_preserves_existing_maimai_raw_profile_keys(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "campaign"
+    db_path = root / "talent.db"
+    row = _bound_row()
+    _write_jsonl(root / BOUND_FILE, [row])
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest(
+            cross_channel_import._boss_payload(row),
+            platform="boss_app",
+        )
+        db.merge_candidate_source(
+            candidate_id,
+            {
+                "name": "陶壮",
+                "platform_id": "mm-001",
+                "profile_url": (
+                    "https://maimai.cn/profile/detail?dstu=mm-001&trackable_token=tok"
+                ),
+                "raw_profile": {
+                    "existing_detail": {"headline": "old full profile"},
+                    "maimai_search_hit": {"old": True},
+                },
+            },
+            platform="maimai",
+        )
+    finally:
+        db.close()
+
+    cross_channel_import.import_bound_candidates(root, db_path, dry_run=False)
+
+    db = TalentDB(db_path)
+    try:
+        candidate = db.search().items[0]
+        maimai_source = next(
+            source
+            for source in db.get_sources(candidate.id)
+            if source.platform == "maimai"
+        )
+    finally:
+        db.close()
+
+    assert maimai_source.raw_profile is not None
+    assert maimai_source.raw_profile["existing_detail"] == {
+        "headline": "old full profile"
+    }
+    assert maimai_source.raw_profile["maimai_search_hit"] == {"old": True}
+    assert "cross_channel_identity_match" in maimai_source.raw_profile
+    assert "cross_channel_maimai_search_hit" in maimai_source.raw_profile
+
+
 def test_cross_channel_import_cli_returns_nonzero_for_blocked_without_writing(
     tmp_path: Path,
 ) -> None:
@@ -349,6 +483,74 @@ def test_cross_channel_import_cli_returns_nonzero_for_blocked_without_writing(
         assert db.count() == 0
     finally:
         db.close()
+
+
+def test_cross_channel_import_cli_returns_structured_error_for_missing_file(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "campaign"
+    db_path = root / "talent.db"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.cross_channel_import",
+            "import",
+            "--campaign-root",
+            str(root),
+            "--db",
+            str(db_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 1
+    assert "Traceback" not in completed.stderr
+    output = json.loads(completed.stdout)
+    assert output["schema"] == "cross_channel_import_result_v1"
+    assert output["errors"][0]["type"] == "FileNotFoundError"
+    assert "cross-channel-bound-candidates.jsonl" in output["errors"][0]["message"]
+    report = json.loads(
+        (root / "reports/cross-channel-import-result.json").read_text(encoding="utf-8")
+    )
+    assert report["errors"] == output["errors"]
+
+
+def test_cross_channel_import_cli_returns_structured_error_for_non_object_jsonl(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "campaign"
+    db_path = root / "talent.db"
+    path = root / BOUND_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[1, 2, 3]\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.cross_channel_import",
+            "import",
+            "--campaign-root",
+            str(root),
+            "--db",
+            str(db_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 1
+    assert "Traceback" not in completed.stderr
+    output = json.loads(completed.stdout)
+    assert output["schema"] == "cross_channel_import_result_v1"
+    assert output["errors"][0]["type"] == "ValueError"
+    assert "line 1" in output["errors"][0]["message"]
+    assert (root / "reports/cross-channel-import-result.json").exists()
 
 
 def test_load_bound_candidates_rejects_non_object_jsonl(tmp_path: Path) -> None:

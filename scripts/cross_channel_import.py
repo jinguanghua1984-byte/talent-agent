@@ -130,6 +130,14 @@ def _row_errors(bound: BoundRow) -> list[str]:
             isinstance(confidence, bool) or not isinstance(confidence, (int, float))
         ):
             errors.append("decision.confidence must be a number")
+        hit = _object(row, "maimai_hit") or {}
+        if decision.get("match_status") in CONFIRMED_STATUSES and not (
+            decision.get("target_platform_id")
+            or decision.get("target_profile_url")
+            or hit.get("platform_id")
+            or hit.get("profile_url")
+        ):
+            errors.append("maimai platform_id or profile_url is required")
 
     return errors
 
@@ -187,37 +195,71 @@ def _maimai_payload(row: dict[str, Any]) -> dict[str, Any]:
         "project_experience": hit.get("project_experience") or [],
         "platform_id": decision.get("target_platform_id") or hit.get("platform_id"),
         "profile_url": decision.get("target_profile_url") or hit.get("profile_url"),
-        "raw_profile": {
-            "maimai_search_hit": hit,
-            "cross_channel_identity_match": decision,
-        },
+        "raw_profile": _maimai_raw_profile({}, hit, decision),
     }
+
+
+def _maimai_raw_profile(
+    existing: dict[str, Any] | None,
+    hit: dict[str, Any],
+    decision: dict[str, Any],
+) -> dict[str, Any]:
+    raw_profile = dict(existing or {})
+    raw_profile["cross_channel_maimai_search_hit"] = hit
+    raw_profile["cross_channel_identity_match"] = decision
+    return raw_profile
+
+
+def _merge_existing_maimai_raw_profile(
+    db: TalentDB,
+    candidate_id: int,
+    maimai: dict[str, Any],
+) -> dict[str, Any]:
+    existing = _matching_maimai_source(db.get_sources(candidate_id), maimai)
+    if existing is None or not isinstance(existing.raw_profile, dict):
+        return maimai
+    merged = dict(maimai)
+    incoming_raw = maimai.get("raw_profile") if isinstance(maimai.get("raw_profile"), dict) else {}
+    merged["raw_profile"] = {**existing.raw_profile, **incoming_raw}
+    return merged
 
 
 def _record_identity_match(
     db: TalentDB,
     candidate_id: int,
     row: dict[str, Any],
-) -> None:
+) -> int:
     decision = dict(_object(row, "decision") or {})
-    db.record_identity_match(
-        {
-            "candidate_id": candidate_id,
-            "source_platform": decision["source_platform"],
-            "source_candidate_key": decision["source_candidate_key"],
-            "target_platform": decision["target_platform"],
-            "target_platform_id": decision.get("target_platform_id"),
-            "target_profile_url": decision.get("target_profile_url"),
-            "query_text": decision["query_text"],
-            "query_level": decision["query_level"],
-            "confidence": decision.get("confidence"),
-            "score_breakdown": decision.get("score_breakdown") or {},
-            "match_status": decision["match_status"],
-            "decision_reason": decision.get("decision_reason"),
-            "confirmed_by": decision.get("confirmed_by"),
-            "confirmed_at": decision.get("confirmed_at"),
-        }
+    cursor = db._conn.execute(
+        """
+        INSERT INTO candidate_identity_matches (
+            candidate_id, source_platform, source_candidate_key,
+            target_platform, target_platform_id, target_profile_url,
+            query_text, query_level, confidence, score_breakdown,
+            match_status, decision_reason, confirmed_by, confirmed_at,
+            sync_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            candidate_id,
+            decision["source_platform"],
+            decision["source_candidate_key"],
+            decision["target_platform"],
+            decision.get("target_platform_id"),
+            decision.get("target_profile_url"),
+            decision["query_text"],
+            decision["query_level"],
+            decision.get("confidence") if decision.get("confidence") is not None else 0,
+            json.dumps(decision.get("score_breakdown") or {}, ensure_ascii=False),
+            decision["match_status"],
+            decision.get("decision_reason"),
+            decision.get("confirmed_by"),
+            decision.get("confirmed_at"),
+            db._new_sync_id("identity_match"),
+        ),
     )
+    return int(cursor.lastrowid)
 
 
 def _matching_maimai_source(
@@ -233,7 +275,7 @@ def _matching_maimai_source(
     for source in maimai_sources:
         if profile_url and source.profile_url == profile_url:
             return source
-    return maimai_sources[-1] if maimai_sources else None
+    return None
 
 
 def _audit_decision(field: str, boss_value: Any, maimai_value: Any) -> str:
@@ -260,21 +302,52 @@ def _record_field_audits(
         decision = _audit_decision(field, boss_value, maimai_value)
         if decision == "ignored_empty":
             continue
-        db.record_field_value(
-            {
-                "candidate_id": candidate_id,
-                "field_name": field,
-                "platform": "maimai",
-                "source_profile_id": source_profile_id,
-                "field_value": {
-                    "boss_primary": boss_value,
-                    "maimai_value": maimai_value,
-                },
-                "confidence": 1.0,
-                "merge_decision": decision,
-                "decision_reason": "BOSS primary；脉脉仅补充缺失字段或来源证据",
-            }
+        _record_field_value(
+            db,
+            candidate_id=candidate_id,
+            field_name=field,
+            source_profile_id=source_profile_id,
+            field_value={
+                "boss_primary": boss_value,
+                "maimai_value": maimai_value,
+            },
+            merge_decision=decision,
+            decision_reason="BOSS primary；脉脉仅补充缺失字段或来源证据",
         )
+
+
+def _record_field_value(
+    db: TalentDB,
+    *,
+    candidate_id: int,
+    field_name: str,
+    source_profile_id: int | None,
+    field_value: dict[str, Any],
+    merge_decision: str,
+    decision_reason: str,
+) -> int:
+    cursor = db._conn.execute(
+        """
+        INSERT INTO candidate_field_values (
+            candidate_id, field_name, platform, source_profile_id,
+            field_value, confidence, merge_decision, decision_reason,
+            sync_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            candidate_id,
+            field_name,
+            "maimai",
+            source_profile_id,
+            json.dumps(field_value, ensure_ascii=False),
+            1.0,
+            merge_decision,
+            decision_reason,
+            db._new_sync_id("field_value"),
+        ),
+    )
+    return int(cursor.lastrowid)
 
 
 def _prepare_rows(rows: list[BoundRow]) -> tuple[list[BoundRow], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -317,6 +390,9 @@ def _empty_result(dry_run: bool, input_count: int) -> dict[str, Any]:
         "input_count": input_count,
         "would_import": 0,
         "created": 0,
+        "merged": 0,
+        "pending": 0,
+        "applied": 0,
         "blocked": [],
         "errors": [],
     }
@@ -346,15 +422,23 @@ def import_bound_candidates(
 
     db = TalentDB(db_path)
     try:
-        for bound in confirmed_rows:
-            row = bound.data
-            boss = _boss_payload(row)
-            maimai = _maimai_payload(row)
-            candidate_id = db.ingest(boss, platform="boss_app")
-            db.merge_candidate_source(candidate_id, maimai, platform="maimai")
-            _record_identity_match(db, candidate_id, row)
-            _record_field_audits(db, candidate_id, boss, maimai)
-            result["created"] += 1
+        with db._conn:
+            for bound in confirmed_rows:
+                row = bound.data
+                boss = _boss_payload(row)
+                maimai = _maimai_payload(row)
+                candidate_id, action = db._ingest_with_result(boss, "boss_app")
+                maimai = _merge_existing_maimai_raw_profile(db, candidate_id, maimai)
+                db._merge_candidate(candidate_id, maimai, "maimai")
+                _record_identity_match(db, candidate_id, row)
+                _record_field_audits(db, candidate_id, boss, maimai)
+                if action == "created":
+                    result["created"] += 1
+                elif action == "merged":
+                    result["merged"] += 1
+                elif action == "pending":
+                    result["pending"] += 1
+                result["applied"] += 1
     finally:
         db.close()
 
@@ -381,9 +465,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _preload_error_result(exc: Exception) -> dict[str, Any]:
+    return {
+        **_empty_result(dry_run=False, input_count=0),
+        "errors": [
+            {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+        ],
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    result = args.func(args)
+    try:
+        result = args.func(args)
+    except (FileNotFoundError, ValueError) as exc:
+        result = _preload_error_result(exc)
+        if getattr(args, "command", None) == "import":
+            report_path = Path(args.campaign_root) / REPORT_APPLY
+            _write_json(report_path, result)
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 1 if result.get("blocked") or result.get("errors") else 0
 

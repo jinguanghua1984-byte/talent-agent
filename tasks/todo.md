@@ -38,9 +38,9 @@ Review：
 
 ## Recent Done
 
+- 2026-06-05：BOSS-Maimai cross-channel Task 5 code-quality review 修复已完成：apply 写入改为 import-level transaction，新增 direct identity/field audit insert，修正 created/merged/pending/applied 计数、明确 Maimai source id/url gate、raw_profile 命名空间合并和 CLI preload 结构化错误。验证：`tests/test_cross_channel_import.py tests/test_talent_db.py` 146 passed；`tests/test_cross_channel_identity.py tests/test_boss_maimai_targets.py tests/test_cross_channel_import.py` 41 passed；`git diff --check` 通过。完整记录见 `tasks/archive/2026-06.md`。
 - 2026-06-05：BOSS-Maimai cross-channel Task 5 spec review 修复已完成：apply clean gate 遇 blocked/errors 零写库返回，identity schema/type 前置校验，name audit 记录 Maimai source_profile_id，并补 CLI 非 0 回归。验证：`tests/test_cross_channel_import.py tests/test_talent_db.py` 140 passed；`tests/test_cross_channel_identity.py tests/test_boss_maimai_targets.py tests/test_cross_channel_import.py` 35 passed；`git diff --check` 通过。完整记录见 `tasks/archive/2026-06.md`。
 - 2026-06-05：BOSS-Maimai cross-channel Task 5 候选导入已完成：新增 `scripts/cross_channel_import.py` 与 `tests/test_cross_channel_import.py`，实现 BOSS primary + Maimai supplement 写入 Campaign DB、identity/audit 记录、dry-run/apply report、blocked/errors CLI 非 0。验证：`tests/test_cross_channel_import.py tests/test_talent_db.py` 136 passed；`tests/test_cross_channel_identity.py tests/test_boss_maimai_targets.py tests/test_cross_channel_import.py` 31 passed；`git diff --check` 通过。完整记录见 `tasks/archive/2026-06.md`。
-- 2026-06-05：BOSS-Maimai cross-channel final code-quality review 边界修复已完成：缺 `current_title` 时 query plan 只保留不可 auto-bind fallback，`decide_match` 对缺职位高精度层级加人工确认门禁，并同步 canonical 文档与 plan 内嵌代码。验证：目标 pytest `23 passed`，`git diff --check` 通过。完整记录见 `tasks/archive/2026-06.md`。
 
 ## Archive Index
 
