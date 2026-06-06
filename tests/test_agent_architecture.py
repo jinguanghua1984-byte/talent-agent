@@ -231,6 +231,35 @@ def test_boss_app_sourcing_contracts_define_external_executor_handoff():
     assert "动作级确认" in s6b_text
 
 
+def test_boss_app_sourcing_contracts_lock_computer_use_browsing_boundary():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-app-recommendation-sourcing"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-app-recommendation-sourcing"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (skill, workflow):
+        assert "浏览、滚屏、进详情、返回列表、展开详情" in text
+        assert "全部使用 Computer Use" in text
+        assert "只有" in text
+        assert "立即沟通" in text
+        assert "外部执行器" in text
+        assert "不得使用 osascript" in text
+        assert "坐标点击" in text
+
+    assert "Computer Use 缺失" in workflow
+    assert "state/continuation-plan.json" in workflow
+
+
 def test_liepin_contracts_define_broad_recall_adaptive_planning_boundary():
     skill = (
         ROOT
@@ -294,10 +323,25 @@ def test_boss_maimai_cross_channel_contracts_define_merge_and_sync_gates():
         assert "`structured/maimai-match-targets.jsonl`" in text
         assert "`state/cross-channel-identity-ledger.jsonl`" in text
         assert "`reports/main-db-sync-dry-run.json`" in text
+        assert "`reports/boss-maimai-delivery-report.json`" in text
+        assert "`reports/boss-maimai-delivery-report.md`" in text
+        assert "`reports/boss-maimai-follow-up-queue.csv`" in text
+        assert "`reports/boss-maimai-follow-up-queue.md`" in text
+        assert "`reports/boss-maimai-delivery-quality-gates.json`" in text
+        assert "`feishu/boss-maimai-delivery-manifest.json`" in text
+        assert "`feishu/im-notification-message.txt`" in text
+        assert "`feishu/im-notification-results.json`" in text
+        assert "`state/boss-maimai-delivery-handoff.json`" in text
         assert "`data/talent.db`" in text
         assert "一次总授权" in text
         assert "Campaign DB clean" in text
-        assert "jd-talent-delivery" in text
+        assert "`JD需求协同`" in text
+        assert "`im +messages-send`" in text
+
+    assert "不默认交接 `jd-talent-delivery`" in skill
+    assert "`feishu/boss-maimai-delivery-manifest.json`" in skill
+    assert "旧 Top30 飞书包保持不动" in skill
+    assert "后续独立任务" in skill
 
     assert "`name_company_title`" in s3
     assert "`name_company_fallback`" in s3
@@ -309,6 +353,63 @@ def test_boss_maimai_cross_channel_contracts_define_merge_and_sync_gates():
     assert "`verify-bundle`" in s9
     assert "`talent_sync.py import`" in s9
     assert "`CONFIRM_SYNC_TEXT`" in s9
+
+
+def test_boss_maimai_cross_channel_s10_is_campaign_delivery_not_jd_default():
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-maimai-cross-channel-delivery"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+    heading = "S10 BOSS campaign delivery / 飞书交付"
+
+    assert f"### {heading}" in workflow
+    s10 = markdown_section(workflow, heading)
+    assert (
+        "scripts.boss_maimai_campaign_delivery build --campaign-root <campaign_root>"
+        in s10
+    )
+    assert "--main-db data/talent.db" in s10
+    assert (
+        "scripts.boss_maimai_campaign_delivery manifest --campaign-root "
+        "<campaign_root> --dry-run"
+    ) in s10
+    assert "feishu/boss-maimai-delivery-manifest.json" in s10
+    assert "feishu/im-notification-message.txt" in s10
+    assert "feishu/im-notification-results.json" in s10
+    assert "reports/boss-maimai-delivery-quality-gates.json" in s10
+    assert "follow_up_row_count == real_contact_count" in s10
+    assert "飞书发布和回读通过后" in s10
+    assert "im +chat-search --as user" in s10
+    assert "im +messages-send --as user" in s10
+    assert "JD需求协同" in s10
+    assert "旧 Top30 飞书包保持不动" in s10
+    assert "jd-talent-delivery" not in s10
+
+
+def test_boss_maimai_cross_channel_contract_mentions_alias_and_school_fallback_safety():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-maimai-cross-channel-delivery"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-maimai-cross-channel-delivery"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+    combined = skill + "\n" + workflow
+
+    assert "name_company_alias" in combined
+    assert "name_school_fallback" in combined
+    assert "不得自动绑定" in combined
+    assert "BOSS 为 primary" in combined
 
 
 def test_boss_app_sourcing_capability_exception_keeps_executor_narrow():

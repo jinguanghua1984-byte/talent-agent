@@ -15,11 +15,9 @@
 
 ## Recent Done
 
-- 2026-06-05：BOSS-Maimai cross-channel delivery 已合入主线：完成多渠道审计 schema/sync、BOSS target、Maimai identity scoring、Campaign DB import、主库 sync gate、JD handoff 和脉脉 URL 优先级；完整记录已归档到 `tasks/archive/2026-06.md`。
-- 2026-06-05：已用新版推荐人选反馈使用说明覆盖指定 Feishu Wiki 文档，原 Wiki 节点保持不变，docx revision 更新到 `5`；完整记录已归档到 `tasks/archive/2026-06.md`。
-- 2026-06-05：推荐人选反馈使用说明已按最新 `feedback_note` 解析实现更新，补充系统列、AI 解析、review queue 和安全边界；完整记录已归档到 `tasks/archive/2026-06.md`。
-- 2026-06-05：JD 推荐反馈自然语言解析已完成 review 收尾：review queue 行前置校验、非有限数字拒绝、标准 JSON 写出保护、全量测试通过；完整记录已归档到 `tasks/archive/2026-06.md`。
-- 2026-06-04：猎聘 adaptive 规划、single-wave live runner、adaptive raw 标准化、search import dry-run/apply、broad-recall summary、detail target 审计链已完成并验证；完整记录已归档到 `tasks/archive/2026-06.md`。
+- 2026-06-06：BOSS cross 飞书发布后 IM 通知逻辑已固化到 S10 workflow、skill、manifest 和 handoff，后续发布回读通过后必须同步通知 `JD需求协同`；完整记录已归档到 `tasks/archive/2026-06.md`。
+- 2026-06-06：新的 BOSS campaign 飞书交付包已补发 IM 通知到 `JD需求协同`，message_id=`om_x100b6d09facc28a4b2a932e8d9e6fe1`；完整记录已归档到 `tasks/archive/2026-06.md`。
+- 2026-06-06：新的 BOSS campaign 飞书交付包已发布到 `JD需求交付`：报告 Docx 和 5 行 follow-up Sheet 已回读验证；旧 Top30 飞书包保持不动；完整记录已归档到 `tasks/archive/2026-06.md`。
 
 ## Archive Index
 

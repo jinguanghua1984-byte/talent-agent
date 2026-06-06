@@ -191,12 +191,20 @@ def test_sync_main_blocks_unclean_campaign_without_writing_main(tmp_path: Path) 
     assert not main_db.exists()
 
 
-def test_sync_main_exports_bundle_applies_and_writes_handoff(tmp_path: Path) -> None:
+def test_sync_main_exports_bundle_applies_and_writes_campaign_delivery_handoff(
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "campaign"
     root.mkdir()
     campaign_db = root / "talent.db"
     main_db = tmp_path / "main.db"
     _clean_campaign_db(campaign_db)
+    legacy_handoff_path = root / "state/jd-delivery-handoff.json"
+    legacy_handoff_path.parent.mkdir(parents=True)
+    legacy_handoff_path.write_text(
+        json.dumps({"schema": "jd_delivery_handoff_v1"}),
+        encoding="utf-8",
+    )
 
     result = campaign_to_delivery.sync_main_db(
         root,
@@ -213,12 +221,26 @@ def test_sync_main_exports_bundle_applies_and_writes_handoff(tmp_path: Path) -> 
     assert (root / "sync/campaign-to-main.zip").exists()
     assert (root / "reports/main-db-sync-dry-run.json").exists()
     assert (root / "reports/main-db-sync-result.json").exists()
-    handoff = json.loads(
-        (root / "state/jd-delivery-handoff.json").read_text(encoding="utf-8")
-    )
+    handoff_path = root / "state/boss-maimai-delivery-handoff.json"
+    assert handoff_path.exists()
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    assert handoff["schema"] == "boss_maimai_campaign_delivery_handoff_v1"
+    assert handoff["delivery_kind"] == "boss_maimai_campaign_delivery"
+    assert handoff["delivery_script"] == "scripts/boss_maimai_campaign_delivery.py"
     assert handoff["main_db_path"] == str(main_db)
+    assert handoff["delivery_context"]["jd_input"] == "AI Infra JD"
     assert handoff["delivery_context"]["top_n"] == 30
+    assert handoff["legacy_jd_delivery_default"] is False
+    assert handoff["outputs"] == {
+        "report_json": "reports/boss-maimai-delivery-report.json",
+        "report_md": "reports/boss-maimai-delivery-report.md",
+        "follow_up_csv": "reports/boss-maimai-follow-up-queue.csv",
+        "follow_up_md": "reports/boss-maimai-follow-up-queue.md",
+        "quality_gates": "reports/boss-maimai-delivery-quality-gates.json",
+        "feishu_manifest": "feishu/boss-maimai-delivery-manifest.json",
+    }
     assert handoff["url_priority"][0] == "maimai"
+    assert not legacy_handoff_path.exists()
 
     db = TalentDB(main_db)
     try:

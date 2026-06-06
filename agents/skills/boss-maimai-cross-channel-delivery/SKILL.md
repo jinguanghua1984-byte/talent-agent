@@ -1,13 +1,13 @@
 ---
 name: boss-maimai-cross-channel-delivery
-description: "BOSS App 已筛优质人选补脉脉主页匹配、多渠道 Campaign DB 整合、主库同步和 JD/飞书交付。"
+description: "BOSS App 已筛优质人选补脉脉主页匹配、多渠道 Campaign DB 整合、主库同步和 BOSS campaign 交付；不默认交接 `jd-talent-delivery`。"
 ---
 
 # boss-maimai-cross-channel-delivery
 
 ## 目标
 
-把 BOSS App 已筛出的优质人选作为主线，补充脉脉主页和详情证据，形成可审计、可回滚、可同步的多渠道 Campaign DB，并在授权后同步到 `data/talent.db`，继续交接给 `jd-talent-delivery` 做 JD/飞书交付。
+把 BOSS App 已筛出的优质人选作为主线，补充脉脉主页和详情证据，形成可审计、可回滚、可同步的多渠道 Campaign DB，并在授权后同步到 `data/talent.db`。同步后生成本次 BOSS campaign 任务摘要、交付报告和后续跟进表，不默认交接 `jd-talent-delivery`。
 
 本合同的渠道优先级固定为：BOSS 为 primary，脉脉为 supplement。BOSS 的非空 `name/current_company/current_title/city/work_years/education` 不被脉脉覆盖；脉脉只补 `profile_url`、`platform_id`、BOSS 缺失字段、在线/求职状态和经历 union。字段冲突不直接覆盖，写入 `candidate_field_values`，由后续质量门禁或人工确认处理。
 
@@ -18,7 +18,7 @@ description: "BOSS App 已筛优质人选补脉脉主页匹配、多渠道 Campa
 - BOSS App 已经筛出一批优质候选人，需要补脉脉主页或脉脉详情。
 - 需要把 BOSS 与脉脉证据合并到同一个 campaign。
 - 需要在 Campaign DB clean 后，把多渠道结果同步到主人才库。
-- 需要继续生成 JD 推荐交付包并推送飞书。
+- 需要生成本次 BOSS campaign 交付包并推送新飞书交付。
 
 合同生成后自动交接到 `agents/workflows/boss-maimai-cross-channel-delivery/AGENT.md`。
 
@@ -49,7 +49,15 @@ description: "BOSS App 已筛优质人选补脉脉主页匹配、多渠道 Campa
 - `reports/campaign-db-quality-gates.json`：Campaign DB clean 结果。
 - `reports/main-db-sync-dry-run.json`：写入 `data/talent.db` 前的主库 dry-run。
 - `reports/main-db-sync-result.json`：用户一次总授权后的主库 apply 结果。
-- `state/jd-delivery-handoff.json`：交给 `jd-talent-delivery` 的输入摘要。
+- `reports/boss-maimai-delivery-report.json`：本次 BOSS campaign 交付报告结构化结果。
+- `reports/boss-maimai-delivery-report.md`：面向交付复盘的本次 BOSS campaign 交付报告。
+- `reports/boss-maimai-follow-up-queue.csv`：所有已沟通 BOSS 人选的后续跟进队列。
+- `reports/boss-maimai-follow-up-queue.md`：面向人工执行的后续跟进摘要。
+- `reports/boss-maimai-delivery-quality-gates.json`：本次 BOSS campaign 交付质量门禁。
+- `feishu/boss-maimai-delivery-manifest.json`：新飞书交付 manifest；旧 Top30 飞书包保持不动。
+- `feishu/im-notification-message.txt`：飞书发布回读通过后发送到 `JD需求协同` 的 IM 通知正文。
+- `feishu/im-notification-results.json`：`im +messages-send` 发送结果和消息回读证据。
+- `state/boss-maimai-delivery-handoff.json`：S10 BOSS campaign delivery 的输入摘要。
 
 ## Merge 边界
 
@@ -66,20 +74,27 @@ description: "BOSS App 已筛优质人选补脉脉主页匹配、多渠道 Campa
 
 1. `name_company_title`
 2. `name_company_title_core`
-3. `name_recent_company_title`
-4. `name_school_title_core`，仅在 BOSS 明确采集到 `schools` 字段时生成；纯 `education` 学历不得作为该层 auto-bind 证据
-5. `name_company_fallback`
+3. `name_company_alias`，公司 alias 召回层，不得自动绑定
+4. `name_company_alias_title_core`，公司 alias + title core 召回层，不得自动绑定
+5. `name_recent_company_title`
+6. `name_school_title_core`，仅在 BOSS 明确采集到 `schools` 字段时生成；纯 `education` 学历不得作为该层 auto-bind 证据
+7. `name_school_fallback`，姓名 + 学校召回层，不得自动绑定
+8. `name_company_fallback`
 
-前四个层级都必须有非空职位或有效职位核心词；缺职位时不得生成可自动绑定的高精度 query。只有前四个层级命中且综合分数 `>=95`，才允许写入 `auto_bound`。`name_company_fallback` 命中、候选过多、第二名分差过小、综合分 `70-94`、冲突或缺字段时，必须进入 `pending_confirmation`，不得自动绑定。无结果或低于 70 写入 `no_match`；出现明确排除证据时写入 `rejected`，并保留原因。
+公司 alias 和学校 fallback 只用于提高召回，不得直接 `auto_bound`；命中后必须进入 `pending_confirmation` 或后续详情强证据确认，BOSS 为 primary 的非空核心字段仍不得被脉脉覆盖。
+
+可自动绑定的高精度层级都必须有非空职位或有效职位核心词；缺职位时不得生成可自动绑定的高精度 query。只有高精度层级命中且综合分数 `>=95`，才允许写入 `auto_bound`。`name_company_fallback` 命中、候选过多、第二名分差过小、综合分 `70-94`、冲突或缺字段时，必须进入 `pending_confirmation`，不得自动绑定。无结果或低于 70 写入 `no_match`；出现明确排除证据时写入 `rejected`，并保留原因。
 
 ## 主库写入授权
 
 主库路径固定为 `data/talent.db`。本 Skill 不允许在 Campaign DB clean 之前写主库。
 
-进入主库前必须先生成 `reports/main-db-sync-dry-run.json`，并完成导出 bundle、bundle 校验和 dry-run 校验。只有当 Campaign DB clean、dry-run 无阻塞冲突、用户给出一次总授权后，workflow 才能把本 campaign 合并写入 `data/talent.db`，并继续飞书交付。
+进入主库前必须先生成 `reports/main-db-sync-dry-run.json`，并完成导出 bundle、bundle 校验和 dry-run 校验。只有当 Campaign DB clean、dry-run 无阻塞冲突、用户给出一次总授权后，workflow 才能把本 campaign 合并写入 `data/talent.db`，并进入本次 BOSS campaign 飞书交付。
 
 一次总授权只覆盖本 campaign、本次 dry-run 报告和本次交付目标；不得复用到其他 campaign 或之后变更过的数据集。
 
 ## 自动交接
 
-执行入口为 `agents/workflows/boss-maimai-cross-channel-delivery/AGENT.md`。workflow 完成 S9 主库 sync dry-run 与 apply 后，把交付摘要写入 `state/jd-delivery-handoff.json`，并交接给 `agents/workflows/jd-talent-delivery/AGENT.md` / `jd-talent-delivery` 继续生成 JD 推荐结果和飞书交付。
+执行入口为 `agents/workflows/boss-maimai-cross-channel-delivery/AGENT.md`。workflow 完成 S9 主库 sync dry-run 与 apply 后，把交付摘要写入 `state/boss-maimai-delivery-handoff.json`，并进入 S10 BOSS campaign delivery，生成 `reports/boss-maimai-delivery-report.json`、`reports/boss-maimai-delivery-report.md`、`reports/boss-maimai-follow-up-queue.csv`、`reports/boss-maimai-follow-up-queue.md`、`reports/boss-maimai-delivery-quality-gates.json`、`feishu/boss-maimai-delivery-manifest.json`、`feishu/im-notification-message.txt` 和 `feishu/im-notification-results.json`。
+
+S10 必须保证所有已沟通 BOSS 人选进入 follow-up，脉脉命中只影响 `preferred_channel`；旧 Top30 飞书包保持不动。飞书发布和回读通过后，必须用 `im +chat-search --as user` 搜索 `JD需求协同`，再用 `im +messages-send --as user` 同步发送完成通知，并把通知正文和发送/回读结果落盘。需要面向具体 JD 的推荐包时，应作为后续独立任务另行启动，不属于本 Skill 的默认自动交接。

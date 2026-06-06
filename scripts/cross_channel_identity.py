@@ -51,13 +51,17 @@ class QuerySpec:
     level: str
     text: str
     allow_auto_bind: bool
+    evidence_type: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "level": self.level,
             "text": self.text,
             "allow_auto_bind": self.allow_auto_bind,
         }
+        if self.evidence_type:
+            data["evidence_type"] = self.evidence_type
+        return data
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,8 @@ class BossMaimaiTarget:
     education: str = ""
     recent_companies: tuple[str, ...] = ()
     schools: tuple[str, ...] = ()
+    school_fallbacks: tuple[str, ...] = ()
+    company_aliases: tuple[str, ...] = ()
     boss_payload: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -84,6 +90,8 @@ class BossMaimaiTarget:
             "education": self.education,
             "recent_companies": list(self.recent_companies),
             "schools": list(self.schools),
+            "school_fallbacks": list(self.school_fallbacks),
+            "company_aliases": list(self.company_aliases),
             "boss_payload": dict(self.boss_payload),
         }
 
@@ -185,6 +193,8 @@ def _target_from_mapping(value: BossMaimaiTarget | Mapping[str, Any]) -> BossMai
         education=_clean_text(value.get("education")),
         recent_companies=_as_tuple(value.get("recent_companies")),
         schools=_as_tuple(value.get("schools")),
+        school_fallbacks=_as_tuple(value.get("school_fallbacks")),
+        company_aliases=_as_tuple(value.get("company_aliases")),
         boss_payload=dict(value.get("boss_payload") or {}),
     )
 
@@ -200,19 +210,92 @@ def _title_core(title: str) -> str:
     return core.strip() or _clean_text(title)
 
 
+COMPANY_SUFFIX_PATTERN = re.compile(r"[（(][^（）()]+[）)]$")
+HELMHOLTZ_COMPANY_ALIASES = {
+    "亥姆霍兹信息安全中心": ("海姆霍兹信息安全中心",),
+    "海姆霍兹信息安全中心": ("亥姆霍兹信息安全中心",),
+}
+
+
+def _dedupe_texts(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _clean_text(value)
+        if text and text not in seen:
+            seen.add(text)
+            result.append(text)
+    return tuple(result)
+
+
+def _strip_company_suffix(company: str) -> str:
+    return COMPANY_SUFFIX_PATTERN.sub("", _clean_text(company)).strip()
+
+
+def build_company_aliases(company: str) -> tuple[str, ...]:
+    text = _clean_text(company)
+    base = _strip_company_suffix(text)
+    values: list[str] = []
+    if base and base != text:
+        values.append(base)
+    for alias in HELMHOLTZ_COMPANY_ALIASES.get(base, ()):
+        values.append(alias)
+    return _dedupe_texts(values)
+
+
+def _target_company_aliases(item: BossMaimaiTarget) -> tuple[str, ...]:
+    return _dedupe_texts([
+        *item.company_aliases,
+        *build_company_aliases(item.current_company),
+    ])
+
+
+def _company_candidates(target: BossMaimaiTarget) -> tuple[str, ...]:
+    values = [
+        target.current_company,
+        *_target_company_aliases(target),
+    ]
+    for recent in target.recent_companies:
+        values.append(recent)
+        values.extend(build_company_aliases(recent))
+    return _dedupe_texts(values)
+
+
+def _canonical_company_candidates(target: BossMaimaiTarget) -> tuple[str, ...]:
+    return _dedupe_texts([
+        target.current_company,
+        *target.recent_companies,
+    ])
+
+
+def _target_school_fallbacks(target: BossMaimaiTarget) -> tuple[str, ...]:
+    return _dedupe_texts([
+        *target.schools,
+        *target.school_fallbacks,
+    ])
+
+
 def build_query_plan(target: BossMaimaiTarget | Mapping[str, Any]) -> list[QuerySpec]:
     item = _target_from_mapping(target)
     title_core = _title_core(item.current_title)
     recent_company = next((company for company in item.recent_companies if company), "")
     school = next((school for school in item.schools if school), "")
+    school_fallback = next((school for school in _target_school_fallbacks(item) if school), "")
+    company_aliases = _target_company_aliases(item)
     plan: list[QuerySpec] = []
     if title_core and item.current_company:
         plan.append(QuerySpec("name_company_title", _join_query(item.real_name, item.current_company, item.current_title), True))
         plan.append(QuerySpec("name_company_title_core", _join_query(item.real_name, item.current_company, title_core), True))
+    for alias in company_aliases:
+        plan.append(QuerySpec("name_company_alias", _join_query(item.real_name, alias), False, "company_alias"))
+        if title_core:
+            plan.append(QuerySpec("name_company_alias_title_core", _join_query(item.real_name, alias, title_core), False, "company_alias"))
     if title_core and recent_company:
         plan.append(QuerySpec("name_recent_company_title", _join_query(item.real_name, recent_company, title_core), True))
     if title_core and school:
         plan.append(QuerySpec("name_school_title_core", _join_query(item.real_name, school, title_core), True))
+    if school_fallback:
+        plan.append(QuerySpec("name_school_fallback", _join_query(item.real_name, school_fallback), False, "school"))
     plan.append(QuerySpec(FALLBACK_LEVEL, _join_query(item.real_name, item.current_company), False))
     return plan
 
@@ -230,19 +313,35 @@ def _contains_match(left: str, right: str) -> bool:
 
 def _company_score(target: BossMaimaiTarget, hit: MaimaiSearchHit) -> int:
     hit_companies = (hit.company, *hit.work_companies)
+    target_companies = _company_candidates(target)
     for company in hit_companies:
         if _norm(company) and _norm(company) == _norm(target.current_company):
             return COMPANY_WEIGHT
     for company in hit_companies:
-        if _contains_match(company, target.current_company):
-            return COMPANY_WEIGHT - 5
-    for recent in target.recent_companies:
-        for company in hit_companies:
-            if _norm(company) and _norm(company) == _norm(recent):
+        for target_company in target_companies:
+            if _norm(company) and _norm(company) == _norm(target_company):
+                return COMPANY_WEIGHT - 2
+    for company in hit_companies:
+        for target_company in target_companies:
+            if _contains_match(company, target_company):
                 return COMPANY_WEIGHT - 5
-            if _contains_match(company, recent):
-                return COMPANY_WEIGHT - 8
     return 0
+
+
+def _has_canonical_company_match(target: BossMaimaiTarget, hit: MaimaiSearchHit) -> bool:
+    hit_companies = (hit.company, *hit.work_companies)
+    target_companies = _canonical_company_candidates(target)
+    for company in hit_companies:
+        for target_company in target_companies:
+            if _norm(company) and _norm(company) == _norm(target_company):
+                return True
+            if _contains_match(company, target_company):
+                return True
+    return False
+
+
+def _uses_alias_only_company_evidence(target: BossMaimaiTarget, hit: MaimaiSearchHit) -> bool:
+    return _company_score(target, hit) > 0 and not _has_canonical_company_match(target, hit)
 
 
 def _title_score(target: BossMaimaiTarget, hit: MaimaiSearchHit) -> int:
@@ -258,7 +357,7 @@ def _title_score(target: BossMaimaiTarget, hit: MaimaiSearchHit) -> int:
 
 
 def _school_score(target: BossMaimaiTarget, hit: MaimaiSearchHit) -> int:
-    for target_school in target.schools:
+    for target_school in _target_school_fallbacks(target):
         for hit_school in hit.schools:
             if _norm(target_school) and _norm(target_school) == _norm(hit_school):
                 return SCHOOL_WEIGHT
@@ -408,6 +507,28 @@ def decide_match(
             best_score.breakdown,
             "pending_confirmation",
             "missing_title_requires_confirmation",
+        )
+    if query_level == "name_school_title_core" and not item.schools:
+        return _decision(
+            item,
+            best_hit,
+            query_level,
+            query_text,
+            best_score.total,
+            best_score.breakdown,
+            "pending_confirmation",
+            "inferred_school_requires_confirmation",
+        )
+    if query_level in HIGH_PRECISION_LEVELS and _uses_alias_only_company_evidence(item, best_hit):
+        return _decision(
+            item,
+            best_hit,
+            query_level,
+            query_text,
+            best_score.total,
+            best_score.breakdown,
+            "pending_confirmation",
+            "alias_company_requires_confirmation",
         )
     if query_level in HIGH_PRECISION_LEVELS and best_score.total >= AUTO_BIND_SCORE_THRESHOLD:
         return _decision(

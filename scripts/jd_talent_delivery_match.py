@@ -435,27 +435,43 @@ def _young_high_potential_policy(scorecard: dict[str, Any]) -> dict[str, int] | 
     return {"preferred": preferred, "soft_max": soft_max}
 
 
-def _seniority_score(work_years: int | None, weight: int, scorecard: dict[str, Any]) -> int:
+def _coerce_work_years(work_years: Any) -> int | None:
+    if isinstance(work_years, bool):
+        return None
+    if isinstance(work_years, int):
+        return work_years
+    if isinstance(work_years, float):
+        return int(work_years)
+    if isinstance(work_years, str):
+        match = re.search(r"\d+", work_years)
+        if match:
+            return int(match.group(0))
+    return None
+
+
+def _seniority_score(work_years: Any, weight: int, scorecard: dict[str, Any]) -> int:
     policy = _young_high_potential_policy(scorecard)
+    years = _coerce_work_years(work_years)
     if policy is None:
-        return weight if work_years and 2 <= work_years <= 12 else weight // 2
-    if work_years is None:
+        return weight if years and 2 <= years <= 12 else weight // 2
+    if years is None:
         return 0
-    if work_years <= policy["preferred"]:
+    if years <= policy["preferred"]:
         return weight
-    if work_years <= policy["soft_max"]:
+    if years <= policy["soft_max"]:
         return weight // 2
     return 0
 
 
 def _seniority_risk_flags(candidate: Candidate, scorecard: dict[str, Any]) -> list[str]:
     policy = _young_high_potential_policy(scorecard)
-    if policy is None or candidate.work_years is None:
+    years = _coerce_work_years(candidate.work_years)
+    if policy is None or years is None:
         return []
-    if candidate.work_years > policy["soft_max"]:
-        return [f"seniority_above_soft_max:{candidate.work_years}>{policy['soft_max']}"]
-    if candidate.work_years > policy["preferred"]:
-        return [f"seniority_above_preferred:{candidate.work_years}>{policy['preferred']}"]
+    if years > policy["soft_max"]:
+        return [f"seniority_above_soft_max:{years}>{policy['soft_max']}"]
+    if years > policy["preferred"]:
+        return [f"seniority_above_preferred:{years}>{policy['preferred']}"]
     return []
 
 

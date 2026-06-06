@@ -112,6 +112,55 @@ def test_export_selects_nested_contact_and_would_contact_candidate(tmp_path: Pat
     assert row["schools"] == ["浙江大学"]
 
 
+def test_export_extracts_school_from_boss_detail_text_and_adds_school_queries(tmp_path: Path) -> None:
+    root = _campaign_root(tmp_path)
+    _append_jsonl(
+        root / "structured/candidates.jsonl",
+        {
+            "candidate_key": "boss-app:school-text",
+            "real_name": "周超",
+            "real_name_status": "captured",
+            "current_company": "亥姆霍兹信息安全中心",
+            "current_title": "安全研究员",
+            "recommendation": "contact",
+            "detail_sections": {
+                "basic_info": "博士；伦敦大学学院；电子电气工程",
+                "education_experience": "博士；伦敦大学学院；电子电气工程",
+                "work_experience": [
+                    {
+                        "company": "亥姆霍兹信息安全中心",
+                        "title": "安全研究员",
+                        "description": "伦敦大学学院电子电气工程博士",
+                    }
+                ],
+            },
+            "boss_payload": {"encryptGeekId": "boss-school-text"},
+        },
+    )
+
+    export_targets(root)
+    row = json.loads((root / "structured/maimai-match-targets.jsonl").read_text(encoding="utf-8").strip())
+    query_plan = row["query_plan"]
+
+    assert row["schools"] == []
+    assert row["school_fallbacks"] == ["伦敦大学学院"]
+    assert row["company_aliases"] == ["海姆霍兹信息安全中心"]
+    assert row["boss_payload"] == {"encryptGeekId": "boss-school-text"}
+    assert not any(item["level"] == "name_school_title_core" for item in query_plan)
+    assert {
+        "level": "name_school_fallback",
+        "text": "周超 伦敦大学学院",
+        "allow_auto_bind": False,
+        "evidence_type": "school",
+    } in query_plan
+    assert any(
+        query["text"] == "周超 海姆霍兹信息安全中心"
+        and query["allow_auto_bind"] is False
+        and query.get("evidence_type") == "company_alias"
+        for query in query_plan
+    )
+
+
 def test_export_preserves_full_source_row_when_boss_payload_is_missing(tmp_path: Path) -> None:
     root = _campaign_root(tmp_path)
     _append_jsonl(

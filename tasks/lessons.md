@@ -1,5 +1,6 @@
 # Lessons
 
+- 2026-06-05：BOSS App 推荐列表寻访的 UI 浏览边界：浏览、滚屏、进详情、返回列表、展开详情等页面操作全部使用 Computer Use；只有在当前详情页已确认触达、`state/current-contact-intent.json` 与 `executor-policy.json` 均满足时，才使用外部执行器点击精确文案 `立即沟通`。不要用 osascript/坐标点击替代 Computer Use 做列表浏览或详情采集。
 - 2026-06-01：BOSS App 推荐列表里的「热搜牛人推荐 / 查看更多」模块有强营销属性，点击会进入热搜/搜索牛人列表而不是当前推荐详情，联系时可能触发搜索畅聊卡付费面板；定向寻访中应直接跳过此类模块，不进入、不点击、不用其作为触达来源。
 - 2026-05-31：写一次性 `sync_conflicts` 处理脚本前必须先查目标表 schema；`candidate_details` 的主键列是 `candidate_id`，不是通用 `id`。事务脚本应先做只读 drift 预检，任何 schema/校验错误都必须在提交前失败回滚。
 - 2026-05-31：设计 BOSS 推荐列表寻访时，不能默认按网页端/CDP/`platform-match` 推进；用户目标是用 Computer Use 操作本机 BOSS App。`platform-match` 最多参考候选人数据结构、评分和报告产物，真实执行链路应按 App UI 截图、点击、滚动、返回、展开和沟通按钮 dry-run 审计重新设计。
@@ -57,6 +58,7 @@
 - 2026-05-22：当通用 campaign 里出现 `AI Infra` 等首次样板任务痕迹时，不要只当作交付文案问题；优先沿脚本、模板、配置和报告生成链路追踪是否存在本应按 JD 动态生成却沿用样板数据的参数残留，并区分对搜索、评分、详情和交付各阶段的真实影响。
 - 2026-05-23：JD talent delivery 不能把 campaign `strategy.json` 或历史 `*rank*.json` 当作必须前置；标准路径必须能从 JD 生成的 `scorecard.json` 和只读 `data/talent.db` 独立完成匹配、精排、质量门禁和飞书交付，campaign artifact 只能作为可选参考或排障输入。
 - 2026-05-23：JD talent delivery 的飞书 IM 完成通知必须是 workflow 固定步骤，不是任务后人工补发；通知模板要落盘并包含任务执行结果、成果物清单、Wiki 目录链接和推荐报告摘要。外联 Sheet 不能再通过 `drive +import --type sheet` 导入 CSV，必须走 `sheets +create` + UTF-8 JSON `sheets +write`，把乱码预防放在发布机制里，而不是发布后靠校验修复。
+- 2026-06-06：BOSS-Maimai cross-channel delivery 的 S10 飞书交付也必须把 IM 完成通知作为固定步骤：飞书发布和回读通过后通知 `JD需求协同`，并落盘 `feishu/im-notification-message.txt` 与 `feishu/im-notification-results.json`；不能只发布 Docx/Sheet 后靠人工补发。
 - 2026-05-24：自适应扩页的回归测试不能把 page 3 预先写进 wave plan；必须让 `max_pages=probe_pages`，再验证 live gate 依据页质和 `unit_max_pages` 在执行中实际请求 page 3-N。
 - 2026-05-25：长时无人值守任务里的“中断后关机”是一次性运行指令，不是永久策略；用户后续要求取消时，必须先查杀/确认无 `Stop-Computer`、`shutdown.exe` 或延迟关机进程，再继续恢复任务，并把 `shutdown_instruction_active=false` 写回 campaign 状态。
 - 2026-05-25：用户要求同步 campaign DB 到主库时，必须优先按用户指定的 campaign 路径收窄范围；不能把 `data/campaigns/**/talent.db` 默认扩展为全部目录。若范围被用户更正，先停止残留全量任务，再只处理指定 DB。

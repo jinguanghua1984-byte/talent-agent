@@ -1,6 +1,7 @@
 from scripts.cross_channel_identity import (
     BossMaimaiTarget,
     MaimaiSearchHit,
+    build_company_aliases,
     build_query_plan,
     decide_match,
     score_hit,
@@ -29,17 +30,77 @@ def test_query_plan_orders_high_precision_before_fallback() -> None:
         "name_company_title_core",
         "name_recent_company_title",
         "name_school_title_core",
+        "name_school_fallback",
         "name_company_fallback",
     ]
     assert plan[0].text == "张三 字节跳动 高级 AI 产品负责人"
     assert plan[1].text == "张三 字节跳动 AI 产品负责人"
     assert plan[-1].text == "张三 字节跳动"
-    assert [item.allow_auto_bind for item in plan] == [True, True, True, True, False]
+    assert [item.allow_auto_bind for item in plan] == [True, True, True, True, False, False]
     assert plan[-1].to_dict() == {
         "level": "name_company_fallback",
         "text": "张三 字节跳动",
         "allow_auto_bind": False,
     }
+
+
+def test_build_company_aliases_normalizes_helmholtz_variants() -> None:
+    aliases = build_company_aliases("亥姆霍兹信息安全中心(德国)")
+
+    assert aliases == ("亥姆霍兹信息安全中心", "海姆霍兹信息安全中心")
+
+
+def test_query_plan_includes_non_auto_bind_company_alias_for_helmholtz() -> None:
+    target = BossMaimaiTarget(
+        target_id="boss-app-f2215ccc5789dae01223268d",
+        candidate_key="boss-app:f2215ccc5789dae01223268d",
+        real_name="周超",
+        current_company="亥姆霍兹信息安全中心",
+        current_title="大模型算法",
+        schools=("伦敦大学学院",),
+    )
+
+    plan = [item.to_dict() for item in build_query_plan(target)]
+
+    assert {
+        "level": "name_company_alias",
+        "text": "周超 海姆霍兹信息安全中心",
+        "allow_auto_bind": False,
+        "evidence_type": "company_alias",
+    } in plan
+    assert {
+        "level": "name_company_alias_title_core",
+        "text": "周超 海姆霍兹信息安全中心 大模型算法",
+        "allow_auto_bind": False,
+        "evidence_type": "company_alias",
+    } in plan
+    assert {
+        "level": "name_school_fallback",
+        "text": "周超 伦敦大学学院",
+        "allow_auto_bind": False,
+        "evidence_type": "school",
+    } in plan
+
+
+def test_query_plan_uses_inferred_school_only_for_fallback() -> None:
+    target = BossMaimaiTarget(
+        target_id="boss-app-f2215ccc5789dae01223268d",
+        candidate_key="boss-app:f2215ccc5789dae01223268d",
+        real_name="周超",
+        current_company="亥姆霍兹信息安全中心",
+        current_title="大模型算法",
+        school_fallbacks=("伦敦大学学院",),
+    )
+
+    plan = [item.to_dict() for item in build_query_plan(target)]
+
+    assert not any(item["level"] == "name_school_title_core" for item in plan)
+    assert {
+        "level": "name_school_fallback",
+        "text": "周超 伦敦大学学院",
+        "allow_auto_bind": False,
+        "evidence_type": "school",
+    } in plan
 
 
 def test_build_query_plan_accepts_mapping_dict() -> None:
@@ -113,6 +174,12 @@ def test_query_plan_skips_auto_bind_queries_when_current_company_is_missing() ->
             "allow_auto_bind": True,
         },
         {
+            "level": "name_school_fallback",
+            "text": "李四 浙江大学",
+            "allow_auto_bind": False,
+            "evidence_type": "school",
+        },
+        {
             "level": "name_company_fallback",
             "text": "李四",
             "allow_auto_bind": False,
@@ -162,6 +229,12 @@ def test_query_plan_keeps_only_non_auto_bind_fallback_when_current_title_is_miss
     )
 
     assert [item.to_dict() for item in plan] == [
+        {
+            "level": "name_school_fallback",
+            "text": "李四 浙江大学",
+            "allow_auto_bind": False,
+            "evidence_type": "school",
+        },
         {
             "level": "name_company_fallback",
             "text": "李四 腾讯",
@@ -251,6 +324,86 @@ def test_name_company_fallback_never_auto_binds() -> None:
     assert decision.match_status == "pending_confirmation"
     assert decision.confidence >= 95
     assert decision.decision_reason == "fallback_query_requires_confirmation"
+
+
+def test_alias_company_hit_scores_company_but_requires_confirmation() -> None:
+    target = BossMaimaiTarget(
+        target_id="boss-app-f2215ccc5789dae01223268d",
+        candidate_key="boss-app:f2215ccc5789dae01223268d",
+        real_name="周超",
+        current_company="亥姆霍兹信息安全中心",
+        current_title="大模型算法",
+        company_aliases=("海姆霍兹信息安全中心",),
+    )
+    hit = MaimaiSearchHit(
+        platform_id="239360802",
+        name="周超",
+        company="海姆霍兹信息安全中心",
+        title="博士后",
+        profile_url="https://maimai.cn/profile/detail?dstu=239360802",
+    )
+
+    decision = decide_match(target, [hit], "name_company_alias", "周超 海姆霍兹信息安全中心")
+
+    assert decision.confidence >= 70
+    assert decision.score_breakdown["company"] > 0
+    assert decision.match_status == "pending_confirmation"
+    assert decision.decision_reason == "score_requires_confirmation"
+
+
+def test_alias_company_hit_does_not_auto_bind_through_high_precision_query() -> None:
+    target = BossMaimaiTarget(
+        target_id="boss-app-f2215ccc5789dae01223268d",
+        candidate_key="boss-app:f2215ccc5789dae01223268d",
+        real_name="周超",
+        current_company="亥姆霍兹信息安全中心",
+        current_title="大模型算法",
+        city="北京",
+        education="博士",
+        schools=("伦敦大学学院",),
+        company_aliases=("海姆霍兹信息安全中心",),
+    )
+    hit = MaimaiSearchHit(
+        platform_id="239360802",
+        name="周超",
+        company="海姆霍兹信息安全中心",
+        title="大模型算法",
+        city="北京",
+        education="博士",
+        schools=("伦敦大学学院",),
+    )
+
+    decision = decide_match(target, [hit], "name_company_title_core", "周超 亥姆霍兹信息安全中心 大模型算法")
+
+    assert decision.confidence >= 95
+    assert decision.score_breakdown["company"] > 0
+    assert decision.match_status == "pending_confirmation"
+    assert decision.decision_reason == "alias_company_requires_confirmation"
+
+
+def test_school_fallback_hit_requires_confirmation() -> None:
+    target = BossMaimaiTarget(
+        target_id="boss-app-f2215ccc5789dae01223268d",
+        candidate_key="boss-app:f2215ccc5789dae01223268d",
+        real_name="周超",
+        current_company="亥姆霍兹信息安全中心",
+        current_title="大模型算法",
+        schools=("伦敦大学学院",),
+    )
+    hit = MaimaiSearchHit(
+        platform_id="239360802",
+        name="周超",
+        company="海姆霍兹信息安全中心",
+        title="大模型算法",
+        schools=("伦敦大学学院",),
+    )
+
+    decision = decide_match(target, [hit], "name_school_fallback", "周超 伦敦大学学院")
+
+    assert decision.confidence >= 70
+    assert decision.score_breakdown["school"] > 0
+    assert decision.match_status == "pending_confirmation"
+    assert decision.decision_reason == "score_requires_confirmation"
 
 
 def test_missing_current_title_does_not_auto_bind_through_fallback_query() -> None:

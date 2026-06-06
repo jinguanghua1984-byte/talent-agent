@@ -12,13 +12,14 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.cross_channel_identity import BossMaimaiTarget, build_query_plan
+from scripts.cross_channel_identity import BossMaimaiTarget, build_company_aliases, build_query_plan
 
 
 TARGET_SCHEMA = "boss_maimai_match_target_v1"
 CONTACT_RECOMMENDATIONS = {"contact", "would_contact"}
 BLOCKING_REAL_NAME_STATUSES = {"not_available_dry_run", "missing"}
 INTERNAL_PAYLOAD_KEYS = {"_source_index"}
+KNOWN_BOSS_SCHOOL_NAMES = ("伦敦大学学院",)
 
 
 def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
@@ -112,6 +113,26 @@ def _as_strings(value: Any) -> list[str]:
     return []
 
 
+def _extract_texts(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, dict):
+        texts: list[str] = []
+        for item in value.values():
+            texts += _extract_texts(item)
+        return texts
+    if isinstance(value, (list, tuple, set)):
+        texts = []
+        for item in value:
+            texts += _extract_texts(item)
+        return texts
+    text = str(value).strip()
+    return [text] if text else []
+
+
 def _dedupe(values: list[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
@@ -142,9 +163,40 @@ def _schools(row: dict[str, Any]) -> list[str]:
     detail = _detail_container(row, "detail")
     values = _as_strings(detail_sections.get("schools"))
     values += _as_strings(detail.get("schools"))
-    values += _as_strings(detail_sections.get("education_experience"))
-    values += _as_strings(detail.get("education_experience"))
     return _dedupe(values)
+
+
+def _school_fallbacks(row: dict[str, Any]) -> list[str]:
+    detail_sections = _detail_container(row, "detail_sections")
+    detail = _detail_container(row, "detail")
+    values: list[str] = []
+    values += _known_schools_from_text(
+        [
+            detail_sections.get("basic_info"),
+            detail_sections.get("work_experience"),
+            detail_sections.get("education_detail"),
+            detail_sections.get("education_experience"),
+            detail.get("basic_info"),
+            detail.get("work_experience"),
+            detail.get("education_detail"),
+            detail.get("education_experience"),
+        ]
+    )
+    return _dedupe(values)
+
+
+def _known_schools_from_text(values: list[Any]) -> list[str]:
+    found: list[str] = []
+    for value in values:
+        for text in _extract_texts(value):
+            for school in KNOWN_BOSS_SCHOOL_NAMES:
+                if school in text:
+                    found.append(school)
+    return found
+
+
+def _company_aliases(row: dict[str, Any]) -> list[str]:
+    return list(build_company_aliases(str(row.get("current_company") or "").strip()))
 
 
 def _clean_payload_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -174,6 +226,8 @@ def _target_from_candidate(row: dict[str, Any]) -> BossMaimaiTarget:
         education=str(row.get("education") or "").strip(),
         recent_companies=tuple(_recent_companies(row)),
         schools=tuple(_schools(row)),
+        school_fallbacks=tuple(_school_fallbacks(row)),
+        company_aliases=tuple(_company_aliases(row)),
         boss_payload=_boss_payload(row),
     )
 

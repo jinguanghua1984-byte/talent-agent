@@ -15,6 +15,10 @@ description: BOSS App 推荐列表寻访 canonical workflow，约束合同、本
 - 使用 `file.read`、`file.write`、`shell.run`、`computer.operate` 和 `human.confirm`。
 - 不使用 BOSS 网页端、CDP、浏览器扩展或 BOSS API。
 - Python 脚本只负责合同、状态、结构化和报告；App UI 操作由 `computer.operate` 执行。
+- 浏览、滚屏、进详情、返回列表、展开详情等 App 页面操作全部使用 Computer Use / `computer.operate`。
+- 只有当前详情页已确认触达、`state/current-contact-intent.json` 与 `executor-policy.json` 均满足时，才使用外部执行器点击精确文案 `立即沟通`。
+- 不得使用 osascript、坐标点击、截图脚本点击或其它本机自动化替代 Computer Use 做列表浏览、详情采集、滚屏、返回或筛选判断。
+- 如果运行时 Computer Use 缺失或不可调用，停止推进并写 `state/continuation-plan.json`；不得用 shell/UI 脚本继续浏览。
 
 ## 安全边界
 
@@ -41,6 +45,8 @@ description: BOSS App 推荐列表寻访 canonical workflow，约束合同、本
 - 可识别至少一个候选人卡片。
 
 失败时写 `state/continuation-plan.json` 并请求用户手动回到推荐列表。
+
+如果当前运行时不提供 Computer Use / `computer.operate`，本阶段必须写入 `state/continuation-plan.json`，状态为 `blocked_missing_computer_use`，并停止执行；不得用 osascript、坐标点击或其它 shell UI 自动化替代 S2-S5/S7。
 
 ### S2 列表卡片采集
 

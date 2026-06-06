@@ -1,4 +1,4 @@
-"""Campaign DB clean 后同步主库并生成 JD delivery handoff。"""
+"""Campaign DB clean 后同步主库并生成 campaign delivery handoff。"""
 
 from __future__ import annotations
 
@@ -21,7 +21,8 @@ REPORT_GATES = "reports/campaign-db-quality-gates.json"
 REPORT_SYNC_DRY_RUN = "reports/main-db-sync-dry-run.json"
 REPORT_SYNC_RESULT = "reports/main-db-sync-result.json"
 LEDGER_PATH = "state/main-db-sync-ledger.jsonl"
-HANDOFF_PATH = "state/jd-delivery-handoff.json"
+HANDOFF_PATH = "state/boss-maimai-delivery-handoff.json"
+LEGACY_JD_HANDOFF_PATH = "state/jd-delivery-handoff.json"
 BUNDLE_PATH = "sync/campaign-to-main.zip"
 CONFIRMED_IDENTITY_STATUSES = {"auto_bound", "confirmed_bound"}
 
@@ -149,15 +150,27 @@ def _write_handoff(
     delivery_context: dict[str, Any],
 ) -> dict[str, Any]:
     handoff = {
-        "schema": "jd_delivery_handoff_v1",
+        "schema": "boss_maimai_campaign_delivery_handoff_v1",
         "created_at": _now(),
         "main_db_path": str(main_db_path),
-        "delivery_skill": "jd-talent-delivery",
-        "delivery_workflow": "agents/workflows/jd-talent-delivery/AGENT.md",
+        "delivery_kind": "boss_maimai_campaign_delivery",
+        "delivery_script": "scripts/boss_maimai_campaign_delivery.py",
         "delivery_context": delivery_context,
+        "outputs": {
+            "report_json": "reports/boss-maimai-delivery-report.json",
+            "report_md": "reports/boss-maimai-delivery-report.md",
+            "follow_up_csv": "reports/boss-maimai-follow-up-queue.csv",
+            "follow_up_md": "reports/boss-maimai-follow-up-queue.md",
+            "quality_gates": "reports/boss-maimai-delivery-quality-gates.json",
+            "feishu_manifest": "feishu/boss-maimai-delivery-manifest.json",
+        },
+        "legacy_jd_delivery_default": False,
         "url_priority": ["maimai", "other_platforms"],
     }
     _write_json(root / HANDOFF_PATH, handoff)
+    legacy_handoff_path = root / LEGACY_JD_HANDOFF_PATH
+    if legacy_handoff_path.exists():
+        legacy_handoff_path.unlink()
     return handoff
 
 
@@ -253,7 +266,9 @@ def _delivery_context_from_args(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Campaign DB 到主库同步与交付 handoff")
+    parser = argparse.ArgumentParser(
+        description="Campaign DB 到主库同步与 campaign 交付 handoff"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     validate = subparsers.add_parser("validate-campaign")
