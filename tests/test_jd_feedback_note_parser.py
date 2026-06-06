@@ -58,6 +58,22 @@ def _response(**overrides) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
+def _batch_response(items: list[dict]) -> str:
+    payload = {"items": []}
+    for index, overrides in enumerate(items):
+        data = {
+            "index": index,
+            "feedback_label": "认可",
+            "feedback_stage": "匹配",
+            "reason_codes": ["strong_candidate_ranked_low"],
+            "hunter_note": "候选人方向准确，可以沟通。",
+            "parse_confidence": 0.91,
+        }
+        data.update(overrides)
+        payload["items"].append(data)
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def _run_root(tmp_path: Path) -> Path:
     root = tmp_path / "run"
     (root / "profile").mkdir(parents=True)
@@ -131,11 +147,34 @@ def test_extract_json_object_accepts_common_llm_wrappers(text: str) -> None:
     assert result["parse_confidence"] == 0.91
 
 
-def test_parse_feedback_note_returns_valid_high_confidence_result() -> None:
+def test_parse_feedback_note_uses_rule_for_clear_rejection_without_llm() -> None:
+    client = FakeClient(RuntimeError("should not call llm"))
+
+    result = parse_feedback_note(
+        "不合适，年限不符。", client=client, model="model-x"
+    )
+
+    assert client.calls == []
+    assert result == {
+        "feedback_label": "不认可",
+        "feedback_stage": "匹配",
+        "reason_codes": ["seniority_mismatch"],
+        "hunter_note": "不合适，年限不符。",
+        "feedback_note": "不合适，年限不符。",
+        "parse_source": "rule",
+        "parse_confidence": 0.95,
+        "review_required": False,
+        "review_reasons": [],
+    }
+
+
+def test_parse_feedback_note_returns_valid_high_confidence_llm_result() -> None:
     client = FakeClient(_response())
 
     result = parse_feedback_note(
-        "候选人方向准确，可以沟通。", client=client, model="model-x"
+        "候选人有相关平台经验，但需要综合判断客户是否接受当前方向。",
+        client=client,
+        model="model-x",
     )
 
     assert client.calls
@@ -144,7 +183,7 @@ def test_parse_feedback_note_returns_valid_high_confidence_result() -> None:
         "feedback_stage": "匹配",
         "reason_codes": ["strong_candidate_ranked_low"],
         "hunter_note": "候选人方向准确，可以沟通。",
-        "feedback_note": "候选人方向准确，可以沟通。",
+        "feedback_note": "候选人有相关平台经验，但需要综合判断客户是否接受当前方向。",
         "parse_source": "llm",
         "parse_confidence": 0.91,
         "review_required": False,
@@ -246,6 +285,71 @@ def test_parse_feedback_csv_writes_delivery_feedback_and_review_queue(
         (root / "feedback" / "feedback-summary.json").read_text(encoding="utf-8-sig")
     )
     assert summary["metrics"]["accepted_at_10"] == 1
+
+
+def test_parse_feedback_csv_uses_rules_and_batches_unresolved_notes(
+    tmp_path: Path,
+) -> None:
+    root = _run_root(tmp_path)
+    (root / "reports" / "outreach-queue.csv").write_text(
+        (
+            "candidate_id,rank,grade,score,feedback_note\n"
+            "101,1,A,88,认可，可以推进沟通。\n"
+            "102,2,A,84,候选人有相关平台经验，但需要确认是否偏算法研究而不是工程落地。\n"
+            "103,3,B,76,整体相关，不过证据偏浅，需要确认是否只是关键词命中。\n"
+        ),
+        encoding="utf-8-sig",
+    )
+    client = QueueClient(
+        [
+            _batch_response(
+                [
+                    {
+                        "feedback_label": "待定",
+                        "reason_codes": ["wrong_role_type"],
+                        "hunter_note": "可能偏算法研究，需要确认工程落地经验。",
+                        "parse_confidence": 0.74,
+                    },
+                    {
+                        "feedback_label": "待定",
+                        "reason_codes": ["evidence_too_shallow"],
+                        "hunter_note": "证据偏浅，需要人工确认。",
+                        "parse_confidence": 0.52,
+                    },
+                ]
+            )
+        ]
+    )
+
+    result = parse_feedback_csv(root, client=client, model="model-x")
+
+    assert result["parsed_count"] == 3
+    assert result["accepted_count"] == 2
+    assert result["review_count"] == 1
+    assert len(client.calls) == 1
+    prompt = client.calls[0]["messages"][0]["content"]
+    assert "候选人有相关平台经验" in prompt
+    assert "整体相关，不过证据偏浅" in prompt
+    assert "认可，可以推进沟通" not in prompt
+    assert client.calls[0]["max_tokens"] == 2048
+
+    delivery = json.loads(
+        (root / "feedback" / "delivery-feedback.json").read_text(encoding="utf-8-sig")
+    )
+    items_by_id = {
+        item["candidate_id"]: item for item in delivery["candidate_feedback"]
+    }
+    assert items_by_id["101"]["parse_source"] == "rule"
+    assert items_by_id["101"]["feedback_label"] == "认可"
+    assert items_by_id["102"]["parse_source"] == "llm_batch"
+    assert items_by_id["102"]["reason_codes"] == ["wrong_role_type"]
+
+    review = json.loads(
+        (root / "feedback" / "parse-review-queue.json").read_text(encoding="utf-8-sig")
+    )
+    assert review["items"][0]["candidate_id"] == "103"
+    assert review["items"][0]["parse_source"] == "llm_batch"
+    assert review["items"][0]["review_reasons"] == ["low_confidence"]
 
 
 def test_parse_feedback_csv_dry_run_does_not_write_outputs(tmp_path: Path) -> None:

@@ -117,6 +117,8 @@ def test_skill_documents_feedback_followup_contract() -> None:
         "猎头反馈",
         "feedback_note",
         "jd_feedback_note_parser",
+        "规则优先",
+        "批量",
         "parse-review-queue.json",
         "delivery-feedback.json",
         "只生成校准建议",

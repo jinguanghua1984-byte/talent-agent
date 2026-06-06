@@ -14,6 +14,9 @@
 - `scripts/boss_maimai_targets.py`：从 BOSS campaign 生成脉脉匹配 target；写 `structured/maimai-match-targets.jsonl` 和 `reports/maimai-match-summary.*`，不连接平台、不写 DB。
 - `scripts/cross_channel_import.py`：将 BOSS primary + Maimai supplement 写入 Campaign DB；只写指定 Campaign DB，不写 `data/talent.db`。
 - `scripts/campaign_to_delivery.py`：Campaign DB clean 后导出 bundle、dry-run/apply 主库并写交付 handoff；只有授权和 gate 成立时写 `data/talent.db`，不直接发布飞书。
+- `scripts/campaign_status.py`：统一 campaign 只读状态摘要入口；读取 `state/`、`reports/`、`structured/` 和 raw 计数，输出 JSON/Markdown，不写 campaign artifact、不连接平台、不写 DB。
+- `scripts/campaign_orchestrator.py`：统一 campaign 只读 next-action 入口；基于 `campaign_status` 摘要输出 safe commands、forbidden commands 和授权门禁，不执行命令、不触发平台、主库或飞书动作。
+- `scripts/llm_usage.py`：provider-neutral LLM usage ledger、成本估算、workflow/stage 模型路由和 token dry-run 入口；只写 `data/token-tracker/llm-usage-YYYY-MM.jsonl`，不发起模型调用。
 
 ## Library Modules
 
@@ -21,6 +24,7 @@
 - `scripts/talent_cloud_sync_common.py`、`scripts/talent_cloud_sync_providers.py`：云同步 provider 和通用能力。
 - `scripts/maimai_campaign_*.py`：通用脉脉 campaign 计划、评分、报告和反馈模块。
 - `scripts/jd_talent_delivery_*.py`：JD 推荐画像、评分卡、匹配和飞书发布模块。
+- `scripts/llm_client.py`：Anthropic / OpenAI-compatible LLM provider 客户端；可选接入 `scripts/llm_usage.py` 记录 API usage。
 - `scripts/cross_channel_identity.py`：BOSS target 与脉脉搜索结果身份评分纯函数模块；不读写文件、不连接平台、不写 DB。
 
 ## Legacy Compatibility

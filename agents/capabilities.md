@@ -2,6 +2,8 @@
 
 本项目的工作流只描述通用能力，不绑定具体 agent 运行时。
 
+多运行时协作必须先遵守 `docs/dev/agent-collaboration-gates.md`。同一轮代码修改只指定一个主执行者；Claude Code、Codex 和确定性脚本共享 `tasks/`、campaign state/reports、`LLMUsageLedger` 等共享事实源，不能把任一工具的聊天上下文当作事实源。
+
 | 通用能力 | 语义 | Claude Code 映射 | Codex 映射 |
 | --- | --- | --- | --- |
 | `file.read` | 读取项目内文本文件 | Read | shell / filesystem |

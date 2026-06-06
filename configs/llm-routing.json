@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "provider": "anthropic",
+    "tool_surface": "claude_api",
+    "agent_runtime": "script",
+    "model": "claude-sonnet-4-6",
+    "max_tokens": 4096,
+    "streaming": false,
+    "batch_eligible": false,
+    "structured_output": "json_schema",
+    "usage_parser": "anthropic_messages"
+  },
+  "workflows": {
+    "jd-talent-delivery": {
+      "defaults": {
+        "provider": "anthropic",
+        "tool_surface": "claude_api",
+        "agent_runtime": "script",
+        "model": "claude-sonnet-4-6",
+        "usage_parser": "anthropic_messages"
+      },
+      "stages": {
+        "role-profile": {
+          "max_tokens": 8000,
+          "streaming": true
+        },
+        "scorecard": {
+          "max_tokens": 8000,
+          "streaming": true
+        },
+        "detailed-rank": {
+          "max_tokens": 16000,
+          "streaming": true,
+          "batch_eligible": false
+        }
+      }
+    },
+    "jd-feedback": {
+      "defaults": {
+        "provider": "anthropic",
+        "tool_surface": "claude_api",
+        "agent_runtime": "script",
+        "model": "claude-haiku-4-5",
+        "max_tokens": 512,
+        "structured_output": "json_schema",
+        "usage_parser": "anthropic_messages"
+      },
+      "stages": {
+        "parse-low-confidence-batch": {
+          "batch_eligible": true,
+          "streaming": false
+        }
+      }
+    },
+    "codex-cli": {
+      "defaults": {
+        "provider": "openai-compatible",
+        "tool_surface": "codex_cli",
+        "agent_runtime": "codex",
+        "model": "codex-cli",
+        "max_tokens": 4096,
+        "streaming": false,
+        "batch_eligible": false,
+        "structured_output": "none",
+        "usage_parser": "transcript_estimate"
+      },
+      "stages": {
+        "session-estimate": {
+          "usage_parser": "transcript_estimate"
+        }
+      }
+    }
+  },
+  "prices_per_million_tokens": {
+    "anthropic": {
+      "claude-opus-4-8": {
+        "input": 5.0,
+        "output": 25.0
+      },
+      "claude-opus-4-7": {
+        "input": 5.0,
+        "output": 25.0
+      },
+      "claude-opus-4-6": {
+        "input": 5.0,
+        "output": 25.0
+      },
+      "claude-sonnet-4-6": {
+        "input": 3.0,
+        "output": 15.0
+      },
+      "claude-haiku-4-5": {
+        "input": 1.0,
+        "output": 5.0
+      }
+    },
+    "openai-compatible": {
+      "deepseek-chat": {
+        "input": 0.27,
+        "output": 1.1
+      },
+      "codex-cli": {
+        "input": 0.0,
+        "output": 0.0
+      }
+    },
+    "openai": {}
+  }
+}

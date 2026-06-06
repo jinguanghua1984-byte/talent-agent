@@ -28,6 +28,8 @@ LOW_CONFIDENCE_THRESHOLD = 0.7
 FEEDBACK_SCHEMA = "jd_delivery_feedback_v1"
 REVIEW_QUEUE_SCHEMA = "jd_delivery_feedback_parse_review_queue_v1"
 REQUIRED_CSV_COLUMNS = {"candidate_id", "rank", "score", "grade", "feedback_note"}
+BATCH_PARSE_SIZE = 50
+BATCH_PARSE_MAX_TOKENS = 2048
 
 
 def build_feedback_prompt(feedback_note: str) -> str:
@@ -58,6 +60,45 @@ def build_feedback_prompt(feedback_note: str) -> str:
 """
 
 
+def build_feedback_batch_prompt(feedback_notes: list[str]) -> str:
+    labels = "、".join(sorted(VALID_FEEDBACK_LABELS))
+    stages = "、".join(sorted(VALID_FEEDBACK_STAGES))
+    reason_codes = "\n".join(f"- {code}" for code in sorted(VALID_REASON_CODES))
+    notes_json = json.dumps(
+        [{"index": index, "feedback_note": note} for index, note in enumerate(feedback_notes)],
+        ensure_ascii=False,
+        indent=2,
+    )
+    return f"""你是 JD 推荐反馈批量解析助手。请把业务人员填写的多条自然语言反馈解析成严格 JSON。
+
+字段含义：
+- index：必须原样返回输入中的 index。
+- feedback_label：总体判断，只能是 {labels}。
+- feedback_stage：问题或判断所属阶段，只能是 {stages}。
+- reason_codes：原因码数组，只能从下列代码中选择；没有明确原因时返回空数组。
+{reason_codes}
+- hunter_note：保留给人工复盘的一句中文说明，应忠实概括原反馈。
+- parse_confidence：0 到 1 的数字，表示你对解析结果的置信度。
+
+只返回 JSON 对象，不要返回 Markdown 或解释文字。JSON 形状：
+{{
+  "items": [
+    {{
+      "index": 0,
+      "feedback_label": "认可|待定|不认可",
+      "feedback_stage": "画像|评分卡|匹配|报告|候选人状态",
+      "reason_codes": ["reason_code"],
+      "hunter_note": "中文备注",
+      "parse_confidence": 0.0
+    }}
+  ]
+}}
+
+原始反馈列表：
+{notes_json}
+"""
+
+
 def extract_json_object(text: str) -> dict[str, Any]:
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
     if fenced:
@@ -83,22 +124,96 @@ def parse_feedback_note(
     provider: str | None = None,
     model: str | None = None,
 ) -> dict[str, Any]:
+    rule_result = parse_feedback_note_by_rule(feedback_note)
+    if rule_result is not None:
+        return rule_result
+
+    return _parse_feedback_note_with_llm(
+        feedback_note,
+        client=client,
+        provider=provider,
+        model=model,
+    )
+
+
+def parse_feedback_note_by_rule(feedback_note: str) -> dict[str, Any] | None:
+    note = feedback_note.strip()
+    if not note:
+        return None
+
+    if _contains_any(note, ["年限不符", "年限不匹配", "经验年限不符", "经验不符"]):
+        return _rule_result(
+            note,
+            feedback_label="不认可",
+            feedback_stage="匹配",
+            reason_codes=["seniority_mismatch"],
+        )
+    if _contains_any(note, ["方向不符", "方向不匹配", "角色不符", "岗位不符"]):
+        return _rule_result(
+            note,
+            feedback_label="不认可",
+            feedback_stage="匹配",
+            reason_codes=["wrong_role_type"],
+        )
+    if "不合适" in note and not _contains_any(note, ["可能", "不确定", "需要确认"]):
+        return _rule_result(
+            note,
+            feedback_label="不认可",
+            feedback_stage="匹配",
+            reason_codes=[],
+        )
+    if _contains_any(note, ["已联系", "已沟通", "已经联系", "已经沟通"]):
+        return _rule_result(
+            note,
+            feedback_label="待定",
+            feedback_stage="候选人状态",
+            reason_codes=[],
+            parse_confidence=0.9,
+        )
+    if _contains_any(note, ["暂缓", "先放一放", "暂不推进"]):
+        return _rule_result(
+            note,
+            feedback_label="待定",
+            feedback_stage="候选人状态",
+            reason_codes=[],
+            parse_confidence=0.9,
+        )
+    if (
+        _contains_any(note, ["认可", "可以推进", "建议推进", "优先联系", "建议优先联系"])
+        and not _contains_any(note, ["不认可", "不合适", "暂缓", "需要确认"])
+    ):
+        return _rule_result(
+            note,
+            feedback_label="认可",
+            feedback_stage="匹配",
+            reason_codes=[],
+        )
+    return None
+
+
+def parse_feedback_notes_batch(
+    feedback_notes: list[str],
+    *,
+    client: Any | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> list[dict[str, Any]]:
+    if not feedback_notes:
+        return []
+
     resolved_client = client or create_llm_client(provider=provider, model=model)
     resolved_model = model or _client_model(resolved_client) or DEFAULT_MODEL
-    messages = [{"role": "user", "content": build_feedback_prompt(feedback_note)}]
-
-    try:
-        response = call_llm_with_retry(
-            resolved_client,
-            resolved_model,
-            messages,
-            max_tokens=1024,
+    results: list[dict[str, Any]] = []
+    for start in range(0, len(feedback_notes), BATCH_PARSE_SIZE):
+        batch = feedback_notes[start : start + BATCH_PARSE_SIZE]
+        results.extend(
+            _parse_feedback_notes_batch_chunk(
+                batch,
+                resolved_client=resolved_client,
+                resolved_model=resolved_model,
+            )
         )
-        parsed = extract_json_object(response)
-    except Exception:
-        return _fallback_result(feedback_note)
-
-    return _normalize_result(parsed, feedback_note)
+    return results
 
 
 def parse_feedback_csv(
@@ -132,14 +247,14 @@ def parse_feedback_csv(
             _validate_unique_feedback_row(row, seen_candidate_ids, seen_ranks)
             rows_to_parse.append(row)
 
-    for row in rows_to_parse:
-        note = (row.get("feedback_note") or "").strip()
-        parsed = parse_feedback_note(
-            note,
-            client=client,
-            provider=provider,
-            model=model,
-        )
+    parsed_results = _parse_rows_rule_first_then_batch(
+        rows_to_parse,
+        client=client,
+        provider=provider,
+        model=model,
+    )
+
+    for row, parsed in zip(rows_to_parse, parsed_results, strict=True):
         item = _candidate_item(row, parsed)
         if parsed["review_required"]:
             review_items.append(
@@ -244,6 +359,138 @@ def _loads_object(text: str) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("LLM JSON response must be an object")
     return data
+
+
+def _parse_feedback_note_with_llm(
+    feedback_note: str,
+    *,
+    client: Any | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    resolved_client = client or create_llm_client(provider=provider, model=model)
+    resolved_model = model or _client_model(resolved_client) or DEFAULT_MODEL
+    messages = [{"role": "user", "content": build_feedback_prompt(feedback_note)}]
+
+    try:
+        response = call_llm_with_retry(
+            resolved_client,
+            resolved_model,
+            messages,
+            max_tokens=1024,
+        )
+        parsed = extract_json_object(response)
+    except Exception:
+        return _fallback_result(feedback_note)
+
+    return _normalize_result(parsed, feedback_note)
+
+
+def _parse_feedback_notes_batch_chunk(
+    feedback_notes: list[str],
+    *,
+    resolved_client: Any,
+    resolved_model: str,
+) -> list[dict[str, Any]]:
+    messages = [{"role": "user", "content": build_feedback_batch_prompt(feedback_notes)}]
+    try:
+        response = call_llm_with_retry(
+            resolved_client,
+            resolved_model,
+            messages,
+            max_tokens=BATCH_PARSE_MAX_TOKENS,
+        )
+        parsed = extract_json_object(response)
+        items = parsed.get("items")
+        if not isinstance(items, list):
+            if feedback_notes:
+                first = _normalize_result(parsed, feedback_notes[0])
+                return [
+                    first,
+                    *[
+                        _parse_feedback_note_with_llm(
+                            note,
+                            client=resolved_client,
+                            model=resolved_model,
+                        )
+                        for note in feedback_notes[1:]
+                    ],
+                ]
+            return []
+    except Exception:
+        return [_fallback_result(note, parse_source="llm_batch") for note in feedback_notes]
+
+    by_index = {
+        item.get("index"): item
+        for item in items
+        if isinstance(item, dict) and isinstance(item.get("index"), int)
+    }
+    return [
+        _normalize_result(
+            by_index[index],
+            note,
+            parse_source="llm_batch",
+        )
+        if index in by_index
+        else _fallback_result(note, parse_source="llm_batch")
+        for index, note in enumerate(feedback_notes)
+    ]
+
+
+def _parse_rows_rule_first_then_batch(
+    rows: list[dict[str, str | None]],
+    *,
+    client: Any | None,
+    provider: str | None,
+    model: str | None,
+) -> list[dict[str, Any]]:
+    parsed_results: list[dict[str, Any] | None] = []
+    unresolved_notes: list[str] = []
+    unresolved_indexes: list[int] = []
+    for index, row in enumerate(rows):
+        note = (row.get("feedback_note") or "").strip()
+        rule_result = parse_feedback_note_by_rule(note)
+        parsed_results.append(rule_result)
+        if rule_result is None:
+            unresolved_indexes.append(index)
+            unresolved_notes.append(note)
+
+    if unresolved_notes:
+        batch_results = parse_feedback_notes_batch(
+            unresolved_notes,
+            client=client,
+            provider=provider,
+            model=model,
+        )
+        for index, parsed in zip(unresolved_indexes, batch_results, strict=True):
+            parsed_results[index] = parsed
+
+    return [parsed for parsed in parsed_results if parsed is not None]
+
+
+def _contains_any(text: str, needles: list[str]) -> bool:
+    return any(needle in text for needle in needles)
+
+
+def _rule_result(
+    feedback_note: str,
+    *,
+    feedback_label: str,
+    feedback_stage: str,
+    reason_codes: list[str],
+    parse_confidence: float = 0.95,
+) -> dict[str, Any]:
+    return {
+        "feedback_label": feedback_label,
+        "feedback_stage": feedback_stage,
+        "reason_codes": reason_codes,
+        "hunter_note": feedback_note,
+        "feedback_note": feedback_note,
+        "parse_source": "rule",
+        "parse_confidence": parse_confidence,
+        "review_required": False,
+        "review_reasons": [],
+    }
 
 
 def _validate_csv_columns(fieldnames: list[str] | None) -> None:
@@ -400,21 +647,26 @@ def _client_model(client: Any) -> str | None:
     return model if isinstance(model, str) and model else None
 
 
-def _fallback_result(feedback_note: str) -> dict[str, Any]:
+def _fallback_result(feedback_note: str, *, parse_source: str = "llm") -> dict[str, Any]:
     return {
         "feedback_label": "待定",
         "feedback_stage": "匹配",
         "reason_codes": [],
         "hunter_note": feedback_note,
         "feedback_note": feedback_note,
-        "parse_source": "llm",
+        "parse_source": parse_source,
         "parse_confidence": 0.0,
         "review_required": True,
         "review_reasons": ["llm_error"],
     }
 
 
-def _normalize_result(parsed: dict[str, Any], feedback_note: str) -> dict[str, Any]:
+def _normalize_result(
+    parsed: dict[str, Any],
+    feedback_note: str,
+    *,
+    parse_source: str = "llm",
+) -> dict[str, Any]:
     review_reasons: list[str] = []
 
     label = parsed.get("feedback_label")
@@ -467,7 +719,7 @@ def _normalize_result(parsed: dict[str, Any], feedback_note: str) -> dict[str, A
         "reason_codes": reason_codes,
         "hunter_note": hunter_note,
         "feedback_note": feedback_note,
-        "parse_source": "llm",
+        "parse_source": parse_source,
         "parse_confidence": confidence,
         "review_required": bool(review_reasons),
         "review_reasons": review_reasons,

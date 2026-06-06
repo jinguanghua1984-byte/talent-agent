@@ -124,6 +124,85 @@ def test_capabilities_include_local_app_operations():
     assert "本地 App" in text
 
 
+def test_agent_collaboration_gates_document_defines_tool_boundaries():
+    path = ROOT / "docs" / "dev" / "agent-collaboration-gates.md"
+    text = path.read_text(encoding="utf-8")
+
+    for marker in [
+        "# Claude Code + Codex 协作门禁",
+        "## 默认分工",
+        "## 启动前主执行者门禁",
+        "## 写入隔离",
+        "## 共享事实源",
+        "## 外部副作用门禁",
+        "## 合并前记录",
+    ]:
+        assert marker in text
+
+    assert "同一轮代码修改只指定一个工具负责最终落地" in text
+    assert "Claude Code" in text
+    assert "长上下文项目理解" in text
+    assert "跨目录规划" in text
+    assert "安全门禁" in text
+    assert "最终合并前审查" in text
+    assert "Codex" in text
+    assert "局部脚本实现" in text
+    assert "单文件/少文件" in text
+    assert "测试失败修复" in text
+    assert "确定性脚本" in text
+    assert "状态摘要" in text
+    assert "schema 校验" in text
+    assert "成本 dry-run" in text
+
+
+def test_agent_collaboration_gates_require_isolation_artifacts_and_merge_evidence():
+    text = (ROOT / "docs" / "dev" / "agent-collaboration-gates.md").read_text(
+        encoding="utf-8"
+    )
+
+    for required in [
+        "branch / worktree",
+        "不得让两个 agent 同时改同一目录",
+        "同一 migration",
+        "同一 workflow 文档",
+        "同一 DB 写入脚本",
+        "`tasks/todo.md`",
+        "`tasks/archive/`",
+        "campaign `state` / `ledger` / `reports`",
+        "`data/talent.db`",
+        "dry-run/apply 报告",
+        "`LLMUsageLedger`",
+        "campaign_status summarize",
+        "next-action",
+        "目标",
+        "已改文件",
+        "剩余风险",
+        "验证命令",
+        "禁止事项",
+        "下一步合法命令",
+    ]:
+        assert required in text
+
+    assert "主库同步" in text
+    assert "Campaign DB apply" in text
+    assert "飞书发布" in text
+    assert "外部平台沟通" in text
+    assert "只认项目脚本和人工授权" in text
+    assert "哪个工具改了哪些文件" in text
+    assert "是否有未解决风险" in text
+
+
+def test_readme_and_capabilities_point_to_collaboration_gates():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    capabilities = (ROOT / "agents" / "capabilities.md").read_text(encoding="utf-8")
+
+    assert "docs/dev/agent-collaboration-gates.md" in readme
+    assert "Claude Code + Codex 协作门禁" in readme
+    assert "docs/dev/agent-collaboration-gates.md" in capabilities
+    assert "主执行者" in capabilities
+    assert "共享事实源" in capabilities
+
+
 def test_boss_app_sourcing_contracts_define_contact_audit_gates():
     skill = (
         ROOT

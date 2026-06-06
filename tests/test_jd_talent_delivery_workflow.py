@@ -127,6 +127,8 @@ def test_workflow_documents_feedback_collection_contract() -> None:
         "feedback/feedback-summary.json",
         "feedback/calibration-suggestions.json",
         "python -m scripts.jd_feedback_note_parser parse-csv --run-root <run_root>",
+        "规则优先",
+        "批量",
         "不得写入 data/talent.db",
         "accepted_at_30",
         "bad_at_10",

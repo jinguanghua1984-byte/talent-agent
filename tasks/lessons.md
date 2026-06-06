@@ -1,5 +1,6 @@
 # Lessons
 
+- 2026-06-06：BOSS 触达后从沟通页回采真实姓名时，顶部姓名存在 OCR/视觉误识别风险；一旦用户纠正，必须立即把 `state/executor-result.json`、`raw/communication-pages.jsonl`、`raw/executor-contact-attempts.jsonl`、`structured/candidates.jsonl` 等下游匹配字段统一修正，并重跑 executor validation，避免 BOSS->脉脉匹配沿用错误实名。
 - 2026-06-05：BOSS App 推荐列表寻访的 UI 浏览边界：浏览、滚屏、进详情、返回列表、展开详情等页面操作全部使用 Computer Use；只有在当前详情页已确认触达、`state/current-contact-intent.json` 与 `executor-policy.json` 均满足时，才使用外部执行器点击精确文案 `立即沟通`。不要用 osascript/坐标点击替代 Computer Use 做列表浏览或详情采集。
 - 2026-06-01：BOSS App 推荐列表里的「热搜牛人推荐 / 查看更多」模块有强营销属性，点击会进入热搜/搜索牛人列表而不是当前推荐详情，联系时可能触发搜索畅聊卡付费面板；定向寻访中应直接跳过此类模块，不进入、不点击、不用其作为触达来源。
 - 2026-05-31：写一次性 `sync_conflicts` 处理脚本前必须先查目标表 schema；`candidate_details` 的主键列是 `candidate_id`，不是通用 `id`。事务脚本应先做只读 drift 预检，任何 schema/校验错误都必须在提交前失败回滚。

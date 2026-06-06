@@ -28,6 +28,7 @@
 - agents/workflows/ — 运行时中立的 agent 工作流定义
 - agents/skills/ — 运行时中立的业务入口合同，定义语义触发、默认值和 workflow 交接
 - agents/capabilities.md — 通用能力契约和运行时工具映射
+- docs/dev/agent-collaboration-gates.md — Claude Code + Codex 协作门禁，定义主执行者、写入隔离、共享事实源和合并前验证
 - .claude/skills/ — Claude Code 兼容适配器
 - scripts/ — 可执行 Python 代码和 CLI
 - rules/ — 评分、公司别名、平台匹配规则
