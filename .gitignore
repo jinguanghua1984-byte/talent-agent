@@ -52,6 +52,7 @@ data/campaigns/
 
 # WeChat personal exports
 data/wechat/
+wechat/
 
 # Boss 搜索原始结果（含敏感个人信息）
 data/boss-search/
