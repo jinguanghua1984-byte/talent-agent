@@ -491,6 +491,36 @@ def test_boss_maimai_cross_channel_contract_mentions_alias_and_school_fallback_s
     assert "BOSS 为 primary" in combined
 
 
+def test_boss_maimai_cross_channel_reuses_maimai_cdp_unattended_contract():
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-maimai-cross-channel-delivery"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    for token in [
+        "agents/workflows/maimai-unattended-campaign/AGENT.md",
+        "auto_bootstrap_browser_after_plan_confirmation=true",
+        "不再提示负责人手动启动浏览器",
+        "data/session/maimai-cdp-profile",
+        "extensions/maimai-scraper",
+        "--remote-debugging-port=9888",
+        "http://127.0.0.1:9888",
+        "只等待登录/验证码/人才银行页健康条件",
+        "raw/maimai-match-search/<target_id>/query-*.json",
+        "state/continuation-plan.json",
+        "state/import-ledger.jsonl",
+        "blocked_notification_failed",
+    ]:
+        assert token in workflow
+
+    assert "不得提示负责人手动启动浏览器" in workflow
+    assert "不得要求 Campaign DB clean dry-run 后再次人工确认" in workflow
+    assert "主库写入不包含在无人值守授权内" in workflow
+
+
 def test_boss_app_sourcing_capability_exception_keeps_executor_narrow():
     capabilities = (ROOT / "agents" / "capabilities.md").read_text(encoding="utf-8")
     workflow = (
