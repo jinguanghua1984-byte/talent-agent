@@ -52,6 +52,38 @@ class QueueClient:
         return self.responses.pop(0)
 
 
+class StructuredClient:
+    def __init__(self, response: dict | Exception):
+        self.response = response
+        self.structured_calls: list[dict] = []
+        self.complete_calls: list[dict] = []
+
+    def complete_structured(self, messages, model, max_tokens, *, schema, **kwargs):
+        self.structured_calls.append(
+            {
+                "messages": messages,
+                "model": model,
+                "max_tokens": max_tokens,
+                "schema": schema,
+                "kwargs": kwargs,
+            }
+        )
+        if isinstance(self.response, Exception):
+            raise self.response
+        return self.response
+
+    def complete(self, messages, model, max_tokens, **kwargs):
+        self.complete_calls.append(
+            {
+                "messages": messages,
+                "model": model,
+                "max_tokens": max_tokens,
+                "kwargs": kwargs,
+            }
+        )
+        return _response()
+
+
 def _response(**overrides) -> str:
     data = {
         "feedback_label": "认可",
@@ -218,6 +250,39 @@ def test_parse_feedback_note_passes_single_route_metadata() -> None:
     assert client.calls[0]["kwargs"]["batch_discount_applied"] is False
 
 
+def test_parse_feedback_note_uses_structured_output_when_available() -> None:
+    client = StructuredClient(
+        {
+            "feedback_label": "认可",
+            "feedback_stage": "匹配",
+            "reason_codes": ["strong_candidate_ranked_low"],
+            "hunter_note": "候选人方向准确，可以沟通。",
+            "parse_confidence": 0.91,
+        }
+    )
+
+    result = parse_feedback_note("需要综合判断。", client=client, model="model-x")
+
+    assert client.complete_calls == []
+    assert len(client.structured_calls) == 1
+    call = client.structured_calls[0]
+    assert call["model"] == "model-x"
+    assert call["max_tokens"] == 512
+    assert call["kwargs"]["workflow"] == "jd-feedback"
+    assert call["kwargs"]["stage"] == "parse-single-note"
+    assert call["kwargs"]["batch_discount_applied"] is False
+    assert call["schema"].name == "jd_feedback_note_parse"
+    assert set(call["schema"].schema["properties"]) >= {
+        "feedback_label",
+        "feedback_stage",
+        "reason_codes",
+        "hunter_note",
+        "parse_confidence",
+    }
+    assert result["parse_source"] == "llm_structured"
+    assert result["feedback_label"] == "认可"
+
+
 def test_parse_feedback_notes_batch_passes_batch_route_metadata() -> None:
     client = QueueClient(
         [
@@ -241,6 +306,64 @@ def test_parse_feedback_notes_batch_passes_batch_route_metadata() -> None:
     assert client.calls[0]["kwargs"]["workflow"] == "jd-feedback"
     assert client.calls[0]["kwargs"]["stage"] == "parse-low-confidence-batch"
     assert client.calls[0]["kwargs"]["batch_discount_applied"] is False
+
+
+def test_parse_feedback_notes_batch_uses_structured_output_when_available() -> None:
+    client = StructuredClient(
+        {
+            "items": [
+                {
+                    "index": 0,
+                    "feedback_label": "待定",
+                    "feedback_stage": "匹配",
+                    "reason_codes": ["wrong_role_type"],
+                    "hunter_note": "可能偏算法研究，需要确认工程落地经验。",
+                    "parse_confidence": 0.74,
+                },
+                {
+                    "index": 1,
+                    "feedback_label": "待定",
+                    "feedback_stage": "匹配",
+                    "reason_codes": ["evidence_too_shallow"],
+                    "hunter_note": "证据偏浅，需要人工确认。",
+                    "parse_confidence": 0.52,
+                },
+            ]
+        }
+    )
+
+    results = parse_feedback_notes_batch(
+        [
+            "候选人有相关平台经验，但需要确认是否偏算法研究而不是工程落地。",
+            "整体相关，不过证据偏浅，需要确认是否只是关键词命中。",
+        ],
+        client=client,
+        model="model-x",
+    )
+
+    assert client.complete_calls == []
+    assert len(client.structured_calls) == 1
+    call = client.structured_calls[0]
+    assert call["model"] == "model-x"
+    assert call["max_tokens"] == 2048
+    assert call["kwargs"]["workflow"] == "jd-feedback"
+    assert call["kwargs"]["stage"] == "parse-low-confidence-batch"
+    assert call["schema"].name == "jd_feedback_note_batch_parse"
+    assert "items" in call["schema"].schema["properties"]
+    assert results[0]["parse_source"] == "llm_batch_structured"
+    assert results[0]["reason_codes"] == ["wrong_role_type"]
+    assert results[1]["review_required"] is True
+
+
+def test_parse_feedback_note_falls_back_when_structured_output_fails() -> None:
+    client = StructuredClient(RuntimeError("structured down"))
+
+    result = parse_feedback_note("需要综合判断。", client=client, model="model-x")
+
+    assert len(client.structured_calls) == 1
+    assert len(client.complete_calls) == 1
+    assert result["parse_source"] == "llm"
+    assert result["feedback_label"] == "认可"
 
 
 def test_parse_feedback_note_downgrades_invalid_fields_to_review_queue() -> None:

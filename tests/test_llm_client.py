@@ -5,7 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts.llm_client import LLMSettings, OpenAICompatibleClient, create_llm_client
+from scripts.llm_client import (
+    LLMSettings,
+    OpenAICompatibleClient,
+    StructuredOutputSchema,
+    create_llm_client,
+)
 from scripts.llm_usage import LLMUsageLedger
 from scripts.pipeline_utils import call_llm_with_retry
 
@@ -170,6 +175,53 @@ def test_anthropic_client_records_api_usage_when_ledger_is_provided(tmp_path):
     assert rows[0]["cost_formula"] == "anthropic_messages_v1"
 
 
+def test_anthropic_client_complete_structured_sends_json_schema(tmp_path):
+    seen: dict = {}
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            seen.update(kwargs)
+            return SimpleNamespace(
+                id="msg_structured",
+                stop_reason="end_turn",
+                content=[SimpleNamespace(text=json.dumps({"label": "ok"}))],
+                usage=SimpleNamespace(input_tokens=12, output_tokens=3),
+            )
+
+    client = object.__new__(__import__("scripts.llm_client").llm_client.AnthropicMessagesClient)
+    client.settings = LLMSettings(provider="anthropic", model="claude-haiku-4-5", api_key="key")
+    client._client = SimpleNamespace(messages=FakeMessages())
+    schema = StructuredOutputSchema(
+        name="demo_schema",
+        schema={
+            "type": "object",
+            "properties": {"label": {"type": "string"}},
+            "required": ["label"],
+            "additionalProperties": False,
+        },
+    )
+
+    result = client.complete_structured(
+        [{"role": "user", "content": "return json"}],
+        model="claude-haiku-4-5",
+        max_tokens=128,
+        schema=schema,
+        workflow="jd-feedback",
+        stage="parse-single-note",
+        ledger=LLMUsageLedger(tmp_path),
+    )
+
+    assert result == {"label": "ok"}
+    assert seen["output_format"] == {
+        "type": "json_schema",
+        "name": "demo_schema",
+        "schema": schema.schema,
+    }
+    row = json.loads(next((tmp_path / "llm-usage-2026-06.jsonl").open(encoding="utf-8")))
+    assert row["request_id"] == "msg_structured"
+    assert row["input_tokens"] == 12
+
+
 def test_openai_compatible_client_records_api_usage_without_anthropic_cache_fields(
     tmp_path,
     monkeypatch,
@@ -219,3 +271,74 @@ def test_openai_compatible_client_records_api_usage_without_anthropic_cache_fiel
     assert row["request_id"] == "chatcmpl_1"
     assert row["stop_reason"] == "stop"
     assert row["cost_formula"] == "openai_compatible_chat_v1"
+
+
+def test_openai_compatible_client_complete_structured_sends_response_format(
+    tmp_path,
+    monkeypatch,
+):
+    seen: dict = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def read(self):
+            return json.dumps({
+                "id": "chatcmpl_structured",
+                "choices": [
+                    {
+                        "message": {"content": json.dumps({"label": "ok"})},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {"prompt_tokens": 20, "completion_tokens": 4},
+            }).encode("utf-8")
+
+    def fake_urlopen(req, timeout):
+        seen["payload"] = json.loads(req.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr("scripts.llm_client.request.urlopen", fake_urlopen)
+    settings = LLMSettings(
+        provider="openai-compatible",
+        model="deepseek-chat",
+        api_key="key",
+        base_url="https://api.example.com/v1",
+    )
+    client = OpenAICompatibleClient(settings)
+    schema = StructuredOutputSchema(
+        name="demo_schema",
+        schema={
+            "type": "object",
+            "properties": {"label": {"type": "string"}},
+            "required": ["label"],
+            "additionalProperties": False,
+        },
+    )
+
+    result = client.complete_structured(
+        [{"role": "user", "content": "return json"}],
+        model="deepseek-chat",
+        max_tokens=128,
+        schema=schema,
+        workflow="jd-feedback",
+        stage="parse-single-note",
+        ledger=LLMUsageLedger(tmp_path),
+    )
+
+    assert result == {"label": "ok"}
+    assert seen["payload"]["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "demo_schema",
+            "schema": schema.schema,
+            "strict": True,
+        },
+    }
+    row = json.loads((tmp_path / "llm-usage-2026-06.jsonl").read_text(encoding="utf-8"))
+    assert row["request_id"] == "chatcmpl_structured"
+    assert row["input_tokens"] == 20

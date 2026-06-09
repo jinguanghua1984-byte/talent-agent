@@ -20,6 +20,7 @@ from scripts.jd_delivery_feedback import (
     load_feedback,
     write_json,
 )
+from scripts.llm_client import StructuredOutputSchema
 from scripts.pipeline_utils import call_llm_with_retry, create_llm_client
 from scripts.llm_usage import (
     LLMUsageLedger,
@@ -37,6 +38,56 @@ FEEDBACK_SCHEMA = "jd_delivery_feedback_v1"
 REVIEW_QUEUE_SCHEMA = "jd_delivery_feedback_parse_review_queue_v1"
 REQUIRED_CSV_COLUMNS = {"candidate_id", "rank", "score", "grade", "feedback_note"}
 BATCH_PARSE_SIZE = 50
+
+
+def feedback_note_structured_schema() -> StructuredOutputSchema:
+    return StructuredOutputSchema(
+        name="jd_feedback_note_parse",
+        schema={
+            "type": "object",
+            "properties": {
+                "feedback_label": {"type": "string", "enum": sorted(VALID_FEEDBACK_LABELS)},
+                "feedback_stage": {"type": "string", "enum": sorted(VALID_FEEDBACK_STAGES)},
+                "reason_codes": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": sorted(VALID_REASON_CODES)},
+                },
+                "hunter_note": {"type": "string"},
+                "parse_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            },
+            "required": [
+                "feedback_label",
+                "feedback_stage",
+                "reason_codes",
+                "hunter_note",
+                "parse_confidence",
+            ],
+            "additionalProperties": False,
+        },
+    )
+
+
+def feedback_note_batch_structured_schema() -> StructuredOutputSchema:
+    item_schema = dict(feedback_note_structured_schema().schema)
+    item_schema["properties"] = {
+        "index": {"type": "integer", "minimum": 0},
+        **item_schema["properties"],
+    }
+    item_schema["required"] = ["index", *item_schema["required"]]
+    return StructuredOutputSchema(
+        name="jd_feedback_note_batch_parse",
+        schema={
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": item_schema,
+                }
+            },
+            "required": ["items"],
+            "additionalProperties": False,
+        },
+    )
 
 
 def build_feedback_prompt(feedback_note: str) -> str:
@@ -686,6 +737,23 @@ def _parse_feedback_note_with_llm(
     resolved_client = client or create_llm_client(provider=resolved_provider, model=resolved_model)
     messages = [{"role": "user", "content": build_feedback_prompt(feedback_note)}]
 
+    structured = _try_complete_structured(
+        resolved_client,
+        messages,
+        model=resolved_model,
+        max_tokens=route.max_tokens,
+        schema=feedback_note_structured_schema(),
+        workflow=route.workflow,
+        stage=route.stage,
+        batch_discount_applied=False,
+    )
+    if structured is not None:
+        return _normalize_result(
+            structured,
+            feedback_note,
+            parse_source="llm_structured",
+        )
+
     try:
         response = call_llm_with_retry(
             resolved_client,
@@ -711,6 +779,36 @@ def _parse_feedback_notes_batch_chunk(
     route: LLMRoute,
 ) -> list[dict[str, Any]]:
     messages = [{"role": "user", "content": build_feedback_batch_prompt(feedback_notes)}]
+    structured = _try_complete_structured(
+        resolved_client,
+        messages,
+        model=resolved_model,
+        max_tokens=route.max_tokens,
+        schema=feedback_note_batch_structured_schema(),
+        workflow=route.workflow,
+        stage=route.stage,
+        batch_discount_applied=False,
+    )
+    if structured is not None:
+        items = structured.get("items")
+        if not isinstance(items, list):
+            return [_fallback_result(note, parse_source="llm_batch_structured") for note in feedback_notes]
+        by_index = {
+            item.get("index"): item
+            for item in items
+            if isinstance(item, dict) and isinstance(item.get("index"), int)
+        }
+        return [
+            _normalize_result(
+                by_index[index],
+                note,
+                parse_source="llm_batch_structured",
+            )
+            if index in by_index
+            else _fallback_result(note, parse_source="llm_batch_structured")
+            for index, note in enumerate(feedback_notes)
+        ]
+
     try:
         response = call_llm_with_retry(
             resolved_client,
@@ -787,6 +885,35 @@ def _parse_rows_rule_first_then_batch(
             parsed_results[index] = parsed
 
     return [parsed for parsed in parsed_results if parsed is not None]
+
+
+def _try_complete_structured(
+    client: Any,
+    messages: list[dict[str, Any]],
+    *,
+    model: str,
+    max_tokens: int,
+    schema: StructuredOutputSchema,
+    workflow: str,
+    stage: str,
+    batch_discount_applied: bool,
+) -> dict[str, Any] | None:
+    complete_structured = getattr(client, "complete_structured", None)
+    if complete_structured is None:
+        return None
+    try:
+        result = complete_structured(
+            messages,
+            model=model,
+            max_tokens=max_tokens,
+            schema=schema,
+            workflow=workflow,
+            stage=stage,
+            batch_discount_applied=batch_discount_applied,
+        )
+    except Exception:
+        return None
+    return result if isinstance(result, dict) else None
 
 
 def _contains_any(text: str, needles: list[str]) -> bool:

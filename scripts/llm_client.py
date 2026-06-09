@@ -50,6 +50,12 @@ class LLMSettings:
         )
 
 
+@dataclass(frozen=True)
+class StructuredOutputSchema:
+    name: str
+    schema: dict[str, Any]
+
+
 class AnthropicMessagesClient:
     """Anthropic messages API 适配器。"""
 
@@ -103,6 +109,54 @@ class AnthropicMessagesClient:
             batch_discount_applied=batch_discount_applied,
         )
         return response.content[0].text
+
+    def complete_structured(
+        self,
+        messages: list[dict],
+        model: str,
+        max_tokens: int,
+        *,
+        schema: StructuredOutputSchema,
+        workflow: str | None = None,
+        stage: str | None = None,
+        ledger: Any | None = None,
+        artifact_root: str | None = None,
+        input_artifact_hash: str | None = None,
+        session_id: str | None = None,
+        local_cache_hit: bool = False,
+        batch_discount_applied: bool = False,
+    ) -> dict[str, Any]:
+        resolved_model = model or self.settings.model
+        response = self._client.messages.create(
+            model=resolved_model,
+            max_tokens=max_tokens,
+            messages=messages,
+            output_format={
+                "type": "json_schema",
+                "name": schema.name,
+                "schema": schema.schema,
+            },
+        )
+        _record_usage_if_requested(
+            ledger=ledger,
+            provider="anthropic",
+            tool_surface="claude_api",
+            agent_runtime="script",
+            workflow=workflow,
+            stage=stage,
+            model=resolved_model,
+            max_tokens=max_tokens,
+            messages=messages,
+            usage=getattr(response, "usage", None),
+            request_id=getattr(response, "id", None),
+            session_id=session_id,
+            stop_reason=getattr(response, "stop_reason", None),
+            artifact_root=artifact_root,
+            input_artifact_hash=input_artifact_hash,
+            local_cache_hit=local_cache_hit,
+            batch_discount_applied=batch_discount_applied,
+        )
+        return _loads_structured_response_text(response.content[0].text)
 
 
 class OpenAICompatibleClient:
@@ -167,6 +221,70 @@ class OpenAICompatibleClient:
             batch_discount_applied=batch_discount_applied,
         )
         return choice["message"]["content"]
+
+    def complete_structured(
+        self,
+        messages: list[dict],
+        model: str,
+        max_tokens: int,
+        *,
+        schema: StructuredOutputSchema,
+        workflow: str | None = None,
+        stage: str | None = None,
+        ledger: Any | None = None,
+        artifact_root: str | None = None,
+        input_artifact_hash: str | None = None,
+        session_id: str | None = None,
+        local_cache_hit: bool = False,
+        batch_discount_applied: bool = False,
+    ) -> dict[str, Any]:
+        resolved_model = model or self.settings.model
+        payload = json.dumps({
+            "model": resolved_model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema.name,
+                    "schema": schema.schema,
+                    "strict": True,
+                },
+            },
+        }).encode("utf-8")
+        url = self.settings.base_url.rstrip("/") + "/chat/completions"
+        req = request.Request(
+            url,
+            data=payload,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self.settings.api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        with request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        choice = data["choices"][0]
+        _record_usage_if_requested(
+            ledger=ledger,
+            provider=self.settings.provider,
+            tool_surface="openai_api",
+            agent_runtime="script",
+            workflow=workflow,
+            stage=stage,
+            model=resolved_model,
+            max_tokens=max_tokens,
+            messages=messages,
+            usage=data.get("usage"),
+            request_id=data.get("id"),
+            session_id=session_id,
+            stop_reason=choice.get("finish_reason"),
+            artifact_root=artifact_root,
+            input_artifact_hash=input_artifact_hash,
+            local_cache_hit=local_cache_hit,
+            batch_discount_applied=batch_discount_applied,
+        )
+        return _loads_structured_response_text(choice["message"]["content"])
 
 
 def create_llm_client(
@@ -238,3 +356,10 @@ def _ledger_from_env() -> Any | None:
     if output_dir:
         return LLMUsageLedger(Path(output_dir))
     return LLMUsageLedger()
+
+
+def _loads_structured_response_text(text: str) -> dict[str, Any]:
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise ValueError("structured output response must be a JSON object")
+    return payload
