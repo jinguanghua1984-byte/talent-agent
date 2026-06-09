@@ -11,6 +11,7 @@ from scripts.campaign_status import summarize_campaign
 
 NEXT_ACTION_SCHEMA = "campaign_next_action_v1"
 CONFIRM_SYNC_TEXT = "确认同步人才库"
+CONFIRM_CAMPAIGN_DB_TEXT = "确认写入 Campaign DB"
 
 
 def next_action(campaign_root: str | Path) -> dict[str, Any]:
@@ -22,6 +23,12 @@ def next_action(campaign_root: str | Path) -> dict[str, Any]:
         if isinstance(summary.get("dry_run_apply_status"), dict)
         else {}
     )
+    artifact_status = (
+        summary.get("artifact_status")
+        if isinstance(summary.get("artifact_status"), dict)
+        else {}
+    )
+    derived_stage = str(summary.get("derived_stage") or "")
     forbidden = _forbidden_commands()
 
     if blocked_by == "paid_search_chat_card":
@@ -35,6 +42,26 @@ def next_action(campaign_root: str | Path) -> dict[str, Any]:
             required_confirm_text="",
         )
 
+    if derived_stage == "standardize-needed":
+        return _action(
+            summary,
+            next_stage="standardize",
+            blocked_by="missing_structured_candidates",
+            requires_user_authorization=False,
+            safe_commands=[
+                [
+                    ".venv/bin/python",
+                    "-m",
+                    "scripts.campaign_status",
+                    "summarize",
+                    "--campaign-root",
+                    str(campaign_root),
+                ]
+            ],
+            forbidden_commands=forbidden,
+            required_confirm_text="",
+        )
+
     if _has_main_db_dry_run(dry_run_apply_status):
         return _action(
             summary,
@@ -44,6 +71,51 @@ def next_action(campaign_root: str | Path) -> dict[str, Any]:
             safe_commands=[],
             forbidden_commands=forbidden,
             required_confirm_text=CONFIRM_SYNC_TEXT,
+        )
+
+    if _has_campaign_db_dry_run(dry_run_apply_status):
+        return _action(
+            summary,
+            next_stage="campaign-db-apply-authorization",
+            blocked_by="requires_user_confirm",
+            requires_user_authorization=True,
+            safe_commands=[],
+            forbidden_commands=forbidden,
+            required_confirm_text=CONFIRM_CAMPAIGN_DB_TEXT,
+        )
+
+    if _has_feishu_publish_pending(dry_run_apply_status, artifact_status):
+        return _action(
+            summary,
+            next_stage="feishu-publish-preflight",
+            blocked_by="requires_feishu_publish",
+            requires_user_authorization=False,
+            safe_commands=[
+                ["lark-cli", "doctor"],
+                ["lark-cli", "auth", "status"],
+            ],
+            forbidden_commands=forbidden,
+            required_confirm_text="",
+        )
+
+    if _has_feishu_im_pending(dry_run_apply_status, artifact_status):
+        return _action(
+            summary,
+            next_stage="feishu-im-notification",
+            blocked_by="requires_im_notification",
+            requires_user_authorization=False,
+            safe_commands=[
+                [
+                    ".venv/bin/python",
+                    "-m",
+                    "scripts.campaign_orchestrator",
+                    "next-action",
+                    "--campaign-root",
+                    str(campaign_root),
+                ]
+            ],
+            forbidden_commands=forbidden,
+            required_confirm_text="",
         )
 
     if int(counts.get("maimai_target_count") or 0) > 0:
@@ -115,6 +187,9 @@ def _action(
             "counts": summary.get("counts") or {},
             "continuation_plan": summary.get("continuation_plan") or {},
             "dry_run_apply_status": summary.get("dry_run_apply_status") or {},
+            "artifact_status": summary.get("artifact_status") or {},
+            "missing_artifacts": summary.get("missing_artifacts") or [],
+            "derived_stage": summary.get("derived_stage") or "",
         },
     }
     if required_confirm_text:
@@ -126,6 +201,33 @@ def _has_main_db_dry_run(dry_run_apply_status: dict[str, Any]) -> bool:
     return (
         dry_run_apply_status.get("main_db_sync_dry_run_status") == "present"
         and dry_run_apply_status.get("main_db_sync_result_status") != "present"
+    )
+
+
+def _has_campaign_db_dry_run(dry_run_apply_status: dict[str, Any]) -> bool:
+    return (
+        dry_run_apply_status.get("campaign_db_sync_dry_run_status") == "present"
+        and dry_run_apply_status.get("campaign_db_sync_result_status") != "present"
+    )
+
+
+def _has_feishu_publish_pending(
+    dry_run_apply_status: dict[str, Any],
+    artifact_status: dict[str, Any],
+) -> bool:
+    return (
+        dry_run_apply_status.get("feishu_dry_run_status") == "passed"
+        and artifact_status.get("feishu_publish_results") != "present"
+    )
+
+
+def _has_feishu_im_pending(
+    dry_run_apply_status: dict[str, Any],
+    artifact_status: dict[str, Any],
+) -> bool:
+    return (
+        artifact_status.get("feishu_publish_results") == "present"
+        and dry_run_apply_status.get("im_notification_status") not in {"sent", "ok", "passed", "present"}
     )
 
 
