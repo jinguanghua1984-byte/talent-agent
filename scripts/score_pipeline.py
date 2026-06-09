@@ -30,7 +30,13 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 from scripts.jd_analyzer import load_jd_from_file, load_or_analyze
 from scripts.coarse_screener import screen_candidates
-from scripts.llm_ranker import RankScore, rank_candidates, calibration_round
+from scripts.llm_ranker import (
+    DEFAULT_CANDIDATE_EVIDENCE_MAX_CHARS,
+    DEFAULT_RANK_LIMIT,
+    RankScore,
+    calibration_round,
+    rank_candidates,
+)
 from scripts.report_generator import generate_report, save_report
 from scripts.data_converter import batch_convert
 from scripts.pipeline_utils import (
@@ -135,6 +141,8 @@ def run_pipeline(
     model: str | None = DEFAULT_MODEL,
     cache_dir: Path | None = None,
     force: bool = False,
+    rank_limit: int | None = DEFAULT_RANK_LIMIT,
+    candidate_evidence_max_chars: int | None = DEFAULT_CANDIDATE_EVIDENCE_MAX_CHARS,
 ) -> dict[str, Any]:
     """执行完整的评分 pipeline: JD 分析 → 粗筛 → LLM 精排 → 校准 → 报告。"""
     start_time = time.time()
@@ -173,9 +181,17 @@ def run_pipeline(
         return {"jd_id": jd_id, "analysis": analysis, "coarse": [], "ranked": [], "report": ""}
 
     # --- Step 3: LLM 精排 ---
-    print(f"\n[3/4] LLM 精排 ({len(coarse_results)} 人, 每批 {batch_size} 人)...", file=sys.stderr)
-    coarse_ids = {s.candidate_id for s in coarse_results}
-    coarse_candidates = [c for c in candidates if c.get("id", "") in coarse_ids]
+    budget_label = "unlimited" if rank_limit is None else f"Top {rank_limit}"
+    print(
+        f"\n[3/4] LLM 精排 ({len(coarse_results)} 人, 每批 {batch_size} 人, 预算 {budget_label})...",
+        file=sys.stderr,
+    )
+    candidates_by_id = {c.get("id", ""): c for c in candidates}
+    coarse_candidates = [
+        candidates_by_id[score.candidate_id]
+        for score in coarse_results
+        if score.candidate_id in candidates_by_id
+    ]
     candidates_map = {c.get("id", ""): c for c in candidates}
 
     ranked = rank_candidates(
@@ -184,6 +200,8 @@ def run_pipeline(
         keywords=analysis.core_skills,
         model=resolved_model,
         cache_dir=cache_dir,
+        rank_limit=rank_limit,
+        candidate_evidence_max_chars=candidate_evidence_max_chars,
     )
 
     # --- Step 4: 校准轮 ---
@@ -191,7 +209,9 @@ def run_pipeline(
         print(f"\n[4/4] 校准轮 (Top {min(len(ranked), 15)} 人)...", file=sys.stderr)
         ranked = calibration_round(
             client, jd_text, ranked, candidates_map,
-            batch_size=batch_size, model=resolved_model,
+            batch_size=batch_size,
+            model=resolved_model,
+            candidate_evidence_max_chars=candidate_evidence_max_chars,
         )
 
     elapsed = time.time() - start_time
@@ -244,6 +264,8 @@ def cmd_run(args: argparse.Namespace) -> None:
         provider=args.provider,
         model=args.model,
         force=args.force,
+        rank_limit=args.rank_limit,
+        candidate_evidence_max_chars=args.candidate_evidence_max_chars,
     )
 
     report_path = save_report(result["report"], args.jd_id)
@@ -303,6 +325,8 @@ def cmd_resume(args: argparse.Namespace) -> None:
         provider=args.provider,
         model=args.model,
         force=False,
+        rank_limit=args.rank_limit,
+        candidate_evidence_max_chars=args.candidate_evidence_max_chars,
     )
 
     report_path = save_report(result["report"], args.jd_id)
@@ -429,6 +453,12 @@ def main() -> None:
     run_parser.add_argument("--coarse-limit", type=int, default=DEFAULT_COARSE_LIMIT)
     run_parser.add_argument("--final-top", type=int, default=DEFAULT_FINAL_TOP)
     run_parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    run_parser.add_argument("--rank-limit", type=int, default=DEFAULT_RANK_LIMIT)
+    run_parser.add_argument(
+        "--candidate-evidence-max-chars",
+        type=int,
+        default=DEFAULT_CANDIDATE_EVIDENCE_MAX_CHARS,
+    )
     run_parser.add_argument("--provider", default=DEFAULT_PROVIDER)
     run_parser.add_argument("--model", default=DEFAULT_MODEL)
     run_parser.add_argument("--force", action="store_true")
@@ -440,6 +470,12 @@ def main() -> None:
     resume_parser.add_argument("--coarse-limit", type=int, default=DEFAULT_COARSE_LIMIT)
     resume_parser.add_argument("--final-top", type=int, default=DEFAULT_FINAL_TOP)
     resume_parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
+    resume_parser.add_argument("--rank-limit", type=int, default=DEFAULT_RANK_LIMIT)
+    resume_parser.add_argument(
+        "--candidate-evidence-max-chars",
+        type=int,
+        default=DEFAULT_CANDIDATE_EVIDENCE_MAX_CHARS,
+    )
     resume_parser.add_argument("--provider", default=DEFAULT_PROVIDER)
     resume_parser.add_argument("--model", default=DEFAULT_MODEL)
 

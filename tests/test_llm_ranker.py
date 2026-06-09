@@ -65,6 +65,36 @@ class TestBuildRankPrompt:
         prompt = build_rank_prompt(SAMPLE_JD_TEXT, [long_candidate])
         assert len(prompt) < 10000
 
+    def test_applies_per_candidate_evidence_budget(self):
+        long_candidate = {
+            "id": "c-budget",
+            "name": "预算候选人",
+            "skill_tags": ["Agent", "RAG", "大模型平台"],
+            "current_title": "AI产品负责人",
+            "current_company": "某AI公司",
+            "work_experience": [
+                {
+                    "company": "某AI公司",
+                    "title": "AI产品负责人",
+                    "description": "Agent平台核心证据 " * 80,
+                },
+            ],
+            "_desc_raw": "候选人补充描述 " * 100,
+        }
+
+        prompt = build_rank_prompt(
+            SAMPLE_JD_TEXT,
+            [long_candidate],
+            keywords=["Agent"],
+            evidence_max_chars=240,
+        )
+
+        candidate_block = prompt.split("## 候选人列表", 1)[1]
+        assert "AI产品经理" in prompt
+        assert "ID: c-budget" in candidate_block
+        assert len(candidate_block) <= 280
+        assert "..." in candidate_block
+
 
 class TestParseRankResponse:
     def test_valid_json(self):
@@ -133,6 +163,44 @@ class TestRankSingleBatch:
         assert llm_call.call_args.kwargs["workflow"] == "jd-talent-delivery"
         assert llm_call.call_args.kwargs["stage"] == "detailed-rank"
         assert llm_call.call_args.kwargs["max_tokens"] == 16000
+
+
+class TestRankCandidates:
+    def test_limits_new_llm_candidates_before_batching(self, mocker):
+        sent_batches: list[list[str]] = []
+
+        def fake_rank_single_batch(client, jd_text, batch, **kwargs):
+            sent_batches.append([candidate["id"] for candidate in batch])
+            return [
+                RankScore(
+                    candidate_id=candidate["id"],
+                    total_score=100 - index,
+                    dimensions={},
+                    reason="ranked",
+                    gap="",
+                )
+                for index, candidate in enumerate(batch)
+            ]
+
+        mocker.patch(
+            "scripts.llm_ranker.rank_single_batch",
+            side_effect=fake_rank_single_batch,
+        )
+        candidates = [
+            {"id": f"c{index}", "name": f"候选人{index}", "skill_tags": ["Agent"]}
+            for index in range(5)
+        ]
+
+        results = rank_candidates(
+            mocker.MagicMock(),
+            SAMPLE_JD_TEXT,
+            candidates,
+            batch_size=2,
+            rank_limit=3,
+        )
+
+        assert sent_batches == [["c0", "c1"], ["c2"]]
+        assert {result.candidate_id for result in results} == {"c0", "c1", "c2"}
 
 
 class TestCalibrationRound:
