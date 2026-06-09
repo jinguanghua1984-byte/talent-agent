@@ -122,6 +122,9 @@ def test_capabilities_include_local_app_operations():
     text = (ROOT / "agents" / "capabilities.md").read_text(encoding="utf-8")
     assert "`computer.operate`" in text
     assert "本地 App" in text
+    assert "任务级授权边界" in text
+    assert "agents/policies/feishu-publish-gates.md" in text
+    assert "dry-run 与回读通过后的发布/通知链路不再逐动作 `human.confirm`" in text
 
 
 def test_agent_collaboration_gates_document_defines_tool_boundaries():
@@ -458,6 +461,17 @@ def test_boss_maimai_cross_channel_s10_is_campaign_delivery_not_jd_default():
     assert "feishu/boss-maimai-delivery-manifest.json" in s10
     assert "feishu/im-notification-message.txt" in s10
     assert "feishu/im-notification-results.json" in s10
+    assert "JD需求交付" in s10
+    assert "drive +import --type docx" in s10
+    assert "sheets +create" in s10
+    assert "sheets +append" in s10
+    assert "readback_expectations" in s10
+    assert "BOSS寻访交付报告" in s10
+    assert "BOSS跟进表" in s10
+    assert "Wiki/Doc/Sheet" in s10
+    assert "无法挂到目标知识库" in s10
+    assert "无法回读" in s10
+    assert "S10 停止" in s10
     assert "reports/boss-maimai-delivery-quality-gates.json" in s10
     assert "follow_up_row_count == real_contact_count" in s10
     assert "飞书发布和回读通过后" in s10
@@ -503,7 +517,7 @@ def test_boss_maimai_cross_channel_reuses_maimai_cdp_unattended_contract():
     for token in [
         "agents/workflows/maimai-unattended-campaign/AGENT.md",
         "auto_bootstrap_browser_after_plan_confirmation=true",
-        "不再提示负责人手动启动浏览器",
+        "确认后不得提示负责人手动启动浏览器",
         "data/session/maimai-cdp-profile",
         "extensions/maimai-scraper",
         "--remote-debugging-port=9888",
@@ -516,7 +530,6 @@ def test_boss_maimai_cross_channel_reuses_maimai_cdp_unattended_contract():
     ]:
         assert token in workflow
 
-    assert "不得提示负责人手动启动浏览器" in workflow
     assert "不得要求 Campaign DB clean dry-run 后再次人工确认" in workflow
     assert "主库写入不包含在无人值守授权内" in workflow
 
@@ -606,3 +619,131 @@ def test_liepin_contracts_define_detail_smoke_boundary():
     assert "后续 live detail 扩大执行必须另起确认点" in workflow
     assert "Full detail live execution recovery" in workflow
     assert "全部 target 已经是 terminal job 时不得连接 CDP" in workflow
+
+
+POLICY_CONTRACTS = {
+    "platform-automation-safety": [
+        "Computer Use",
+        "外部执行器",
+        "不得使用 osascript",
+        "坐标点击",
+        "CDP",
+        "登录",
+        "验证码",
+        "安全页",
+        "state/continuation-plan.json",
+    ],
+    "main-db-sync-gates": [
+        "Campaign DB",
+        "`data/talent.db`",
+        "`talent_sync.py export`",
+        "`verify-bundle`",
+        "`talent_sync.py import`",
+        "`CONFIRM_SYNC_TEXT`",
+        "确认同步人才库",
+        "一次总授权",
+        "不得自动执行主库同步",
+    ],
+    "feishu-publish-gates": [
+        "lark-cli",
+        "dry-run",
+        "回读",
+        "`JD需求交付`",
+        "`JD需求协同`",
+        "`im +chat-search`",
+        "`im +messages-send`",
+        "`feishu/im-notification-results.json`",
+        "blocked_notification_failed",
+    ],
+    "campaign-recovery": [
+        "`reports/interruption-*.json`",
+        "`state/continuation-plan.json`",
+        "`state/events.jsonl`",
+        "`state/request-ledger.jsonl`",
+        "磁盘事实",
+        "campaign_status summarize",
+        "next-action",
+        "不得盲信内存上下文",
+    ],
+}
+
+
+def test_shared_policy_files_define_reusable_contracts():
+    for name, required_tokens in POLICY_CONTRACTS.items():
+        path = ROOT / "agents" / "policies" / f"{name}.md"
+        assert path.exists(), f"missing shared policy: {path}"
+        text = path.read_text(encoding="utf-8")
+        assert text.startswith("# ")
+        for token in required_tokens:
+            assert token in text, f"{path} missing policy token: {token}"
+
+
+WORKFLOW_POLICY_REFERENCES = {
+    "boss-maimai-cross-channel-delivery": [
+        "agents/policies/platform-automation-safety.md",
+        "agents/policies/main-db-sync-gates.md",
+        "agents/policies/feishu-publish-gates.md",
+        "agents/policies/campaign-recovery.md",
+    ],
+    "jd-talent-delivery": [
+        "agents/policies/main-db-sync-gates.md",
+        "agents/policies/feishu-publish-gates.md",
+        "agents/policies/campaign-recovery.md",
+    ],
+    "liepin-unattended-campaign": [
+        "agents/policies/platform-automation-safety.md",
+        "agents/policies/main-db-sync-gates.md",
+        "agents/policies/campaign-recovery.md",
+    ],
+    "maimai-unattended-campaign": [
+        "agents/policies/platform-automation-safety.md",
+        "agents/policies/main-db-sync-gates.md",
+        "agents/policies/feishu-publish-gates.md",
+        "agents/policies/campaign-recovery.md",
+    ],
+}
+
+
+def test_workflows_reference_shared_policies_for_reused_gates():
+    for workflow_name, required_refs in WORKFLOW_POLICY_REFERENCES.items():
+        workflow = (
+            ROOT / "agents" / "workflows" / workflow_name / "AGENT.md"
+        ).read_text(encoding="utf-8")
+        for ref in required_refs:
+            assert ref in workflow, f"{workflow_name} missing shared reference {ref}"
+
+
+WORKFLOW_LINE_BUDGETS = {
+    "boss-maimai-cross-channel-delivery": 190,
+    "jd-talent-delivery": 215,
+    "liepin-unattended-campaign": 265,
+    "public-search": 260,
+}
+
+
+def test_compressed_workflows_stay_within_line_budgets():
+    for workflow_name, max_lines in WORKFLOW_LINE_BUDGETS.items():
+        path = ROOT / "agents" / "workflows" / workflow_name / "AGENT.md"
+        lines = path.read_text(encoding="utf-8").splitlines()
+        assert len(lines) <= max_lines, f"{workflow_name} has {len(lines)} lines"
+
+
+def test_public_search_commands_reference_preserves_execution_contract():
+    workflow = (
+        ROOT / "agents" / "workflows" / "public-search" / "AGENT.md"
+    ).read_text(encoding="utf-8")
+    commands = (
+        ROOT / "agents" / "workflows" / "public-search" / "commands.md"
+    ).read_text(encoding="utf-8")
+
+    assert "agents/workflows/public-search/commands.md" in workflow
+    for token in [
+        "Token Tracker",
+        "scripts/public_search/token_tracker.py",
+        "data/token-tracker/tokens.jsonl",
+        "搜索反馈",
+        "迭代循环",
+        "策略沉淀",
+        "放弃记录",
+    ]:
+        assert token in commands
