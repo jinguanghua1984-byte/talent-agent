@@ -9,6 +9,7 @@ from scripts.jd_feedback_note_parser import (
     main,
     parse_feedback_csv,
     parse_feedback_note,
+    parse_feedback_notes_batch,
 )
 
 
@@ -17,12 +18,13 @@ class FakeClient:
         self.response = response
         self.calls: list[dict] = []
 
-    def complete(self, messages, model, max_tokens):
+    def complete(self, messages, model, max_tokens, **kwargs):
         self.calls.append(
             {
                 "messages": messages,
                 "model": model,
                 "max_tokens": max_tokens,
+                "kwargs": kwargs,
             }
         )
         if isinstance(self.response, Exception):
@@ -35,12 +37,13 @@ class QueueClient:
         self.responses = responses
         self.calls: list[dict] = []
 
-    def complete(self, messages, model, max_tokens):
+    def complete(self, messages, model, max_tokens, **kwargs):
         self.calls.append(
             {
                 "messages": messages,
                 "model": model,
                 "max_tokens": max_tokens,
+                "kwargs": kwargs,
             }
         )
         return self.responses.pop(0)
@@ -189,6 +192,44 @@ def test_parse_feedback_note_returns_valid_high_confidence_llm_result() -> None:
         "review_required": False,
         "review_reasons": [],
     }
+
+
+def test_parse_feedback_note_passes_single_route_metadata() -> None:
+    client = FakeClient(_response())
+
+    parse_feedback_note("需要综合判断。", client=client, model="model-x")
+
+    assert len(client.calls) == 1
+    assert client.calls[0]["model"] == "model-x"
+    assert client.calls[0]["max_tokens"] == 512
+    assert client.calls[0]["kwargs"]["workflow"] == "jd-feedback"
+    assert client.calls[0]["kwargs"]["stage"] == "parse-single-note"
+    assert client.calls[0]["kwargs"]["batch_discount_applied"] is False
+
+
+def test_parse_feedback_notes_batch_passes_batch_route_metadata() -> None:
+    client = QueueClient(
+        [
+            _batch_response(
+                [
+                    {
+                        "feedback_label": "待定",
+                        "reason_codes": ["evidence_too_shallow"],
+                        "parse_confidence": 0.72,
+                    }
+                ]
+            )
+        ]
+    )
+
+    parse_feedback_notes_batch(["需要确认证据深度。"], client=client, model="model-x")
+
+    assert len(client.calls) == 1
+    assert client.calls[0]["model"] == "model-x"
+    assert client.calls[0]["max_tokens"] == 2048
+    assert client.calls[0]["kwargs"]["workflow"] == "jd-feedback"
+    assert client.calls[0]["kwargs"]["stage"] == "parse-low-confidence-batch"
+    assert client.calls[0]["kwargs"]["batch_discount_applied"] is False
 
 
 def test_parse_feedback_note_downgrades_invalid_fields_to_review_queue() -> None:

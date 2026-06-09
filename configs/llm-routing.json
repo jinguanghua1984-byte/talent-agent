@@ -33,6 +33,11 @@
           "max_tokens": 16000,
           "streaming": true,
           "batch_eligible": false
+        },
+        "calibration-rank": {
+          "max_tokens": 16000,
+          "streaming": true,
+          "batch_eligible": false
         }
       }
     },
@@ -47,7 +52,13 @@
         "usage_parser": "anthropic_messages"
       },
       "stages": {
+        "parse-single-note": {
+          "max_tokens": 512,
+          "batch_eligible": false,
+          "streaming": false
+        },
         "parse-low-confidence-batch": {
+          "max_tokens": 2048,
           "batch_eligible": true,
           "streaming": false
         }

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re as _re
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,10 +16,9 @@ from scripts.pipeline_utils import (
     truncate_text_by_relevance,
     write_cache,
 )
+from scripts.llm_usage import resolve_llm_route
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_MODEL = os.environ.get("LLM_MODEL", "intelligence")
 
 RANK_PROMPT_TEMPLATE = """你是一位资深猎头，专注 AI/大模型方向的人才评估。
 
@@ -196,12 +194,21 @@ def rank_single_batch(
     jd_text: str,
     candidates: list[dict],
     keywords: list[str] | None = None,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
 ) -> list[RankScore]:
+    route = resolve_llm_route("jd-talent-delivery", "detailed-rank")
+    resolved_model = model or route.model
     expected_ids = [c.get("id", "") for c in candidates]
     prompt = build_rank_prompt(jd_text, candidates, keywords)
     messages = [{"role": "user", "content": prompt}]
-    response_text = call_llm_with_retry(client, model, messages, max_tokens=4096)
+    response_text = call_llm_with_retry(
+        client,
+        resolved_model,
+        messages,
+        max_tokens=route.max_tokens,
+        workflow=route.workflow,
+        stage=route.stage,
+    )
     return parse_rank_response(response_text, expected_ids)
 
 
@@ -211,7 +218,7 @@ def load_or_rank(
     jd_text: str,
     cache_dir: Path,
     client: Any | None = None,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     keywords: list[str] | None = None,
     force: bool = False,
 ) -> RankScore | None:
@@ -230,7 +237,8 @@ def load_or_rank(
 
     if client is None:
         from scripts.pipeline_utils import create_llm_client
-        client = create_llm_client()
+        route = resolve_llm_route("jd-talent-delivery", "detailed-rank")
+        client = create_llm_client(provider=route.provider, model=model or route.model)
 
     results = rank_single_batch(client, jd_text, [candidate], keywords=keywords, model=model)
 
@@ -254,7 +262,7 @@ def rank_candidates(
     candidates: list[dict],
     batch_size: int = 10,
     keywords: list[str] | None = None,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     cache_dir: Path | None = None,
 ) -> list[RankScore]:
     all_results: list[RankScore] = []
@@ -321,8 +329,10 @@ def calibration_round(
     candidates_map: dict[str, dict],
     batch_size: int = 10,
     top_per_batch: int = 3,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
 ) -> list[RankScore]:
+    route = resolve_llm_route("jd-talent-delivery", "calibration-rank")
+    resolved_model = model or route.model
     config = load_scoring_config()
     cal_config = config.get("calibration", {})
     top_n = cal_config.get("top_per_batch", top_per_batch)
@@ -362,7 +372,14 @@ def calibration_round(
     messages = [{"role": "user", "content": prompt}]
 
     try:
-        response_text = call_llm_with_retry(client, model, messages, max_tokens=4096)
+        response_text = call_llm_with_retry(
+            client,
+            resolved_model,
+            messages,
+            max_tokens=route.max_tokens,
+            workflow=route.workflow,
+            stage=route.stage,
+        )
         expected_ids = [c.get("id", "") for c in cal_dicts]
         cal_results = parse_rank_response(response_text, expected_ids)
 

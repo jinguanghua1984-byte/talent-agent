@@ -99,3 +99,41 @@ def test_run_pipeline_passes_provider_to_client(mocker):
 
     create_client.assert_called_once_with(provider="openai-compatible", model="deepseek-chat")
     assert result["ranked"] == []
+
+
+def test_run_pipeline_uses_route_model_when_model_is_not_explicit(mocker):
+    from scripts.score_pipeline import run_pipeline
+    from scripts.jd_analyzer import JDAnalysis
+
+    fake_client = mocker.MagicMock()
+    create_client = mocker.patch(
+        "scripts.score_pipeline.create_llm_client", return_value=fake_client
+    )
+    load_analysis = mocker.patch(
+        "scripts.score_pipeline.load_or_analyze",
+        return_value=JDAnalysis(
+            core_skills=["AI"],
+            supplement_skills=[],
+            position_type="AI产品经理",
+            experience_range=(3, 10),
+            education_requirement="本科",
+            industry_preference=[],
+            exclusion_criteria=[],
+            raw_jd="jd",
+            jd_hash="hash",
+        ),
+    )
+    mocker.patch("scripts.score_pipeline.screen_candidates", return_value=[])
+
+    result = run_pipeline(
+        jd_id="jd-test",
+        jd_text="jd",
+        candidates=[],
+        provider=None,
+        model=None,
+    )
+
+    create_client.assert_called_once_with(provider="anthropic", model="claude-sonnet-4-6")
+    load_analysis.assert_called_once()
+    assert load_analysis.call_args.kwargs["model"] == "claude-sonnet-4-6"
+    assert result["ranked"] == []

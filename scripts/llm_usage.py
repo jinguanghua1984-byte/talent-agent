@@ -85,6 +85,99 @@ class LLMUsageLedger:
         return path
 
 
+def summarize_usage(
+    month: str,
+    *,
+    ledger_dir: str | Path = DEFAULT_LEDGER_DIR,
+) -> dict[str, Any]:
+    """按 workflow/stage/provider/model 聚合月度 LLM usage。"""
+    path = Path(ledger_dir) / f"llm-usage-{month}.jsonl"
+    totals = {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "estimated_cost_usd": 0.0,
+    }
+    groups: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+
+    if not path.exists():
+        return {
+            "month": month,
+            "ledger_path": str(path),
+            "totals": totals,
+            "groups": [],
+        }
+
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        key = (
+            str(row.get("workflow", "")),
+            str(row.get("stage", "")),
+            str(row.get("provider", "")),
+            str(row.get("model", "")),
+        )
+        group = groups.setdefault(
+            key,
+            {
+                "workflow": key[0],
+                "stage": key[1],
+                "provider": key[2],
+                "model": key[3],
+                "calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_creation_input_tokens": 0,
+                "estimated_cost_usd": 0.0,
+                "usage_sources": {},
+            },
+        )
+        input_tokens = int(row.get("input_tokens") or 0)
+        output_tokens = int(row.get("output_tokens") or 0)
+        cache_read = int(row.get("cache_read_input_tokens") or 0)
+        cache_creation = int(row.get("cache_creation_input_tokens") or 0)
+        estimated_cost = float(row.get("estimated_cost_usd") or 0.0)
+        usage_source = str(row.get("usage_source") or "unknown")
+
+        for target in (totals, group):
+            target["calls"] += 1
+            target["input_tokens"] += input_tokens
+            target["output_tokens"] += output_tokens
+            target["cache_read_input_tokens"] += cache_read
+            target["cache_creation_input_tokens"] += cache_creation
+            target["estimated_cost_usd"] = round(
+                target["estimated_cost_usd"] + estimated_cost,
+                10,
+            )
+        group["usage_sources"][usage_source] = group["usage_sources"].get(usage_source, 0) + 1
+
+    output_groups = []
+    for group in groups.values():
+        group = dict(group)
+        group["usage_sources"] = dict(sorted(group["usage_sources"].items()))
+        output_groups.append(group)
+
+    output_groups.sort(
+        key=lambda item: (
+            -float(item["estimated_cost_usd"]),
+            item["workflow"],
+            item["stage"],
+            item["provider"],
+            item["model"],
+        )
+    )
+    return {
+        "month": month,
+        "ledger_path": str(path),
+        "totals": totals,
+        "groups": output_groups,
+    }
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -306,7 +399,19 @@ def main(argv: list[str] | None = None) -> int:
     count_parser.add_argument("--stage", required=True)
     count_parser.add_argument("--messages", required=True, help="messages JSON 文件路径")
 
+    report_parser = subparsers.add_parser("report", help="聚合月度 LLM usage JSONL")
+    report_parser.add_argument("--month", required=True, help="月份，格式 YYYY-MM")
+    report_parser.add_argument("--ledger-dir", default=str(DEFAULT_LEDGER_DIR))
+
     args = parser.parse_args(argv)
+    if args.command == "report":
+        print(json.dumps(
+            summarize_usage(args.month, ledger_dir=args.ledger_dir),
+            ensure_ascii=False,
+            indent=2,
+        ))
+        return 0
+
     route = resolve_llm_route(args.workflow, args.stage)
     if args.command == "route":
         print(json.dumps(asdict(route), ensure_ascii=False, indent=2))

@@ -21,15 +21,14 @@ from scripts.jd_delivery_feedback import (
     write_json,
 )
 from scripts.pipeline_utils import call_llm_with_retry, create_llm_client
+from scripts.llm_usage import LLMRoute, resolve_llm_route
 
 
-DEFAULT_MODEL = "intelligence"
 LOW_CONFIDENCE_THRESHOLD = 0.7
 FEEDBACK_SCHEMA = "jd_delivery_feedback_v1"
 REVIEW_QUEUE_SCHEMA = "jd_delivery_feedback_parse_review_queue_v1"
 REQUIRED_CSV_COLUMNS = {"candidate_id", "rank", "score", "grade", "feedback_note"}
 BATCH_PARSE_SIZE = 50
-BATCH_PARSE_MAX_TOKENS = 2048
 
 
 def build_feedback_prompt(feedback_note: str) -> str:
@@ -201,8 +200,10 @@ def parse_feedback_notes_batch(
     if not feedback_notes:
         return []
 
-    resolved_client = client or create_llm_client(provider=provider, model=model)
-    resolved_model = model or _client_model(resolved_client) or DEFAULT_MODEL
+    route = resolve_llm_route("jd-feedback", "parse-low-confidence-batch")
+    resolved_provider = provider or route.provider
+    resolved_model = model or _client_model(client) or route.model
+    resolved_client = client or create_llm_client(provider=resolved_provider, model=resolved_model)
     results: list[dict[str, Any]] = []
     for start in range(0, len(feedback_notes), BATCH_PARSE_SIZE):
         batch = feedback_notes[start : start + BATCH_PARSE_SIZE]
@@ -211,6 +212,7 @@ def parse_feedback_notes_batch(
                 batch,
                 resolved_client=resolved_client,
                 resolved_model=resolved_model,
+                route=route,
             )
         )
     return results
@@ -368,8 +370,10 @@ def _parse_feedback_note_with_llm(
     provider: str | None = None,
     model: str | None = None,
 ) -> dict[str, Any]:
-    resolved_client = client or create_llm_client(provider=provider, model=model)
-    resolved_model = model or _client_model(resolved_client) or DEFAULT_MODEL
+    route = resolve_llm_route("jd-feedback", "parse-single-note")
+    resolved_provider = provider or route.provider
+    resolved_model = model or _client_model(client) or route.model
+    resolved_client = client or create_llm_client(provider=resolved_provider, model=resolved_model)
     messages = [{"role": "user", "content": build_feedback_prompt(feedback_note)}]
 
     try:
@@ -377,7 +381,10 @@ def _parse_feedback_note_with_llm(
             resolved_client,
             resolved_model,
             messages,
-            max_tokens=1024,
+            max_tokens=route.max_tokens,
+            workflow=route.workflow,
+            stage=route.stage,
+            batch_discount_applied=False,
         )
         parsed = extract_json_object(response)
     except Exception:
@@ -391,6 +398,7 @@ def _parse_feedback_notes_batch_chunk(
     *,
     resolved_client: Any,
     resolved_model: str,
+    route: LLMRoute,
 ) -> list[dict[str, Any]]:
     messages = [{"role": "user", "content": build_feedback_batch_prompt(feedback_notes)}]
     try:
@@ -398,7 +406,10 @@ def _parse_feedback_notes_batch_chunk(
             resolved_client,
             resolved_model,
             messages,
-            max_tokens=BATCH_PARSE_MAX_TOKENS,
+            max_tokens=route.max_tokens,
+            workflow=route.workflow,
+            stage=route.stage,
+            batch_discount_applied=False,
         )
         parsed = extract_json_object(response)
         items = parsed.get("items")

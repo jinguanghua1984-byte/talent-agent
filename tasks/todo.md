@@ -14,9 +14,9 @@
 
 ## Recent Done
 
+- 2026-06-09：LLM usage coverage 已接入当前 PR；`call_llm_with_retry` 可透传 usage metadata，JD feedback/JD analyzer/LLM ranker/score pipeline 使用 `configs/llm-routing.json` 显式 route，并新增 `scripts.llm_usage report` 月度聚合；聚焦测试 `75 passed`，全量测试 `1392 passed, 1 warning`，完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-09：成本治理 workflow 压缩与 shared policies 已完成；新增 `agents/policies/`，压缩 BOSS-Maimai/JD/Liepin/public-search workflow，并拆出 `agents/workflows/public-search/commands.md`；架构测试 `24 passed`，全量测试 `1384 passed, 1 warning`，完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-09：已将 `/Users/eric/Downloads/maimai-detail-capture-2026-06-08.json` 的 304 条脉脉详情写入主人才库；dry-run/apply 均为 matched 304、unmatched 0、failed_jobs 0、blockers 0，apply written 304；写库前备份 `data/backups/talent-20260609-012233-before-maimai-detail-capture-import.db`，报告位于 `data/output/maimai-detail-import-20260609-detail-capture-apply.md`；DB integrity/外键和 145 个聚焦测试通过，完整记录已归档到 `tasks/archive/2026-06.md`。
-- 2026-06-09：已将 `/Users/eric/Downloads/maimai-pager-contacts-2026-06-08.json` 的 304 条脉脉 pager contacts 导入主人才库；dry-run/apply 均为新建 126、合并 178、待确认 0、失败 0；写库前备份 `data/backups/talent-20260609-010411-before-maimai-pager-contacts-import.db`，报告位于 `data/output/talent-import-20260609-maimai-pager-contacts-apply.md`；DB integrity/外键和 138 个聚焦测试通过，完整记录已归档到 `tasks/archive/2026-06.md`。
 
 ## Archive Index
 

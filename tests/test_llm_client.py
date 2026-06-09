@@ -67,6 +67,56 @@ def test_call_llm_with_retry_supports_generic_complete_client():
     assert result == "ok"
 
 
+def test_call_llm_with_retry_forwards_usage_metadata_to_complete_client():
+    ledger = object()
+
+    class FakeClient:
+        def __init__(self):
+            self.call: dict | None = None
+
+        def complete(self, messages, model, max_tokens, **kwargs):
+            self.call = {
+                "messages": messages,
+                "model": model,
+                "max_tokens": max_tokens,
+                "kwargs": kwargs,
+            }
+            return "ok"
+
+    client = FakeClient()
+
+    result = call_llm_with_retry(
+        client,
+        "model-x",
+        [{"role": "user", "content": "hi"}],
+        max_tokens=123,
+        workflow="jd-feedback",
+        stage="parse-low-confidence-batch",
+        ledger=ledger,
+        artifact_root="data/output/run",
+        input_artifact_hash="hash",
+        session_id="session-1",
+        batch_discount_applied=True,
+    )
+
+    assert result == "ok"
+    assert client.call == {
+        "messages": [{"role": "user", "content": "hi"}],
+        "model": "model-x",
+        "max_tokens": 123,
+        "kwargs": {
+            "workflow": "jd-feedback",
+            "stage": "parse-low-confidence-batch",
+            "ledger": ledger,
+            "artifact_root": "data/output/run",
+            "input_artifact_hash": "hash",
+            "session_id": "session-1",
+            "local_cache_hit": False,
+            "batch_discount_applied": True,
+        },
+    }
+
+
 def test_anthropic_client_records_api_usage_when_ledger_is_provided(tmp_path):
     class FakeMessages:
         def create(self, **kwargs):

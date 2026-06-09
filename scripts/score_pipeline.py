@@ -42,6 +42,7 @@ from scripts.pipeline_utils import (
     read_cache,
     validate_jd_id,
 )
+from scripts.llm_usage import resolve_llm_route
 
 logger = logging.getLogger(__name__)
 
@@ -130,8 +131,8 @@ def run_pipeline(
     coarse_limit: int = DEFAULT_COARSE_LIMIT,
     final_top: int = DEFAULT_FINAL_TOP,
     batch_size: int = DEFAULT_BATCH_SIZE,
-    provider: str = DEFAULT_PROVIDER,
-    model: str = DEFAULT_MODEL,
+    provider: str | None = DEFAULT_PROVIDER,
+    model: str | None = DEFAULT_MODEL,
     cache_dir: Path | None = None,
     force: bool = False,
 ) -> dict[str, Any]:
@@ -142,13 +143,16 @@ def run_pipeline(
     if cache_dir is None:
         cache_dir = ensure_cache_dir(jd_id)
 
-    client = create_llm_client(provider=provider, model=model)
+    route = resolve_llm_route("jd-talent-delivery", "role-profile")
+    resolved_provider = provider or route.provider
+    resolved_model = model or route.model
+    client = create_llm_client(provider=resolved_provider, model=resolved_model)
 
     # --- Step 1: JD 分析 ---
     print("\n[1/4] JD 分析...", file=sys.stderr)
     analysis = load_or_analyze(
         jd_text, jd_hash, cache_dir,
-        client=client, model=model,
+        client=client, model=resolved_model,
     )
     if analysis is None:
         raise RuntimeError("JD 分析失败，请检查 JD 内容或 LLM 配置")
@@ -178,7 +182,7 @@ def run_pipeline(
         client, jd_text, coarse_candidates,
         batch_size=batch_size,
         keywords=analysis.core_skills,
-        model=model,
+        model=resolved_model,
         cache_dir=cache_dir,
     )
 
@@ -187,7 +191,7 @@ def run_pipeline(
         print(f"\n[4/4] 校准轮 (Top {min(len(ranked), 15)} 人)...", file=sys.stderr)
         ranked = calibration_round(
             client, jd_text, ranked, candidates_map,
-            batch_size=batch_size, model=model,
+            batch_size=batch_size, model=resolved_model,
         )
 
     elapsed = time.time() - start_time

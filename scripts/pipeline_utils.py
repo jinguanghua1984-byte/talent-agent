@@ -141,6 +141,15 @@ def call_llm_with_retry(
     max_tokens: int = 4096,
     max_retries: int = 3,
     retry_delay: float = 2.0,
+    *,
+    workflow: str | None = None,
+    stage: str | None = None,
+    ledger: Any | None = None,
+    artifact_root: str | None = None,
+    input_artifact_hash: str | None = None,
+    session_id: str | None = None,
+    local_cache_hit: bool = False,
+    batch_discount_applied: bool = False,
 ) -> str:
     """带重试和错误处理的 LLM 调用。"""
     last_error: Exception | None = None
@@ -154,7 +163,33 @@ def call_llm_with_retry(
                 )
                 return response.content[0].text
 
-            return client.complete(messages, model=model, max_tokens=max_tokens)
+            usage_kwargs = {}
+            if (
+                workflow is not None
+                or stage is not None
+                or ledger is not None
+                or artifact_root is not None
+                or input_artifact_hash is not None
+                or session_id is not None
+                or local_cache_hit
+                or batch_discount_applied
+            ):
+                usage_kwargs = {
+                    "workflow": workflow,
+                    "stage": stage,
+                    "ledger": ledger,
+                    "artifact_root": artifact_root,
+                    "input_artifact_hash": input_artifact_hash,
+                    "session_id": session_id,
+                    "local_cache_hit": local_cache_hit,
+                    "batch_discount_applied": batch_discount_applied,
+                }
+            return client.complete(
+                messages,
+                model=model,
+                max_tokens=max_tokens,
+                **usage_kwargs,
+            )
         except Exception as e:
             error_str = str(e).lower()
             last_error = e

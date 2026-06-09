@@ -110,6 +110,30 @@ class TestRankSingleBatch:
         assert len(results) == 1
         assert results[0].candidate_id == "c1"
 
+    def test_ranks_batch_passes_route_metadata(self, mocker):
+        response_data = [
+            {
+                "candidate_id": "c1",
+                "total_score": 85,
+                "维度分": {},
+                "排序理由": "AI产品经验丰富",
+                "差距分析": "",
+            },
+        ]
+        llm_call = mocker.patch(
+            "scripts.llm_ranker.call_llm_with_retry",
+            return_value=json.dumps(response_data),
+        )
+
+        results = rank_single_batch(
+            mocker.MagicMock(), SAMPLE_JD_TEXT, SAMPLE_CANDIDATES, model="model-x"
+        )
+
+        assert len(results) == 1
+        assert llm_call.call_args.kwargs["workflow"] == "jd-talent-delivery"
+        assert llm_call.call_args.kwargs["stage"] == "detailed-rank"
+        assert llm_call.call_args.kwargs["max_tokens"] == 16000
+
 
 class TestCalibrationRound:
     def test_calibrates_top_candidates(self, mocker):
@@ -146,6 +170,46 @@ class TestCalibrationRound:
         assert len(results) == 3
         assert results[0].candidate_id == "c1"
         assert results[0].total_score == 90
+
+    def test_calibration_passes_route_metadata(self, mocker):
+        calibration_response = json.dumps([
+            {"candidate_id": "c1", "total_score": 90, "维度分": {}, "排序理由": "", "差距分析": ""},
+            {"candidate_id": "c2", "total_score": 82, "维度分": {}, "排序理由": "", "差距分析": ""},
+            {"candidate_id": "c3", "total_score": 70, "维度分": {}, "排序理由": "", "差距分析": ""},
+        ])
+        llm_call = mocker.patch(
+            "scripts.llm_ranker.call_llm_with_retry",
+            return_value=calibration_response,
+        )
+        ranked = [
+            RankScore(candidate_id="c1", total_score=85, dimensions={}, reason="r1", gap="g1"),
+            RankScore(candidate_id="c2", total_score=80, dimensions={}, reason="r2", gap="g2"),
+            RankScore(candidate_id="c3", total_score=75, dimensions={}, reason="r3", gap="g3"),
+        ]
+        extra_candidate = {
+            "id": "c3",
+            "name": "王五",
+            "skill_tags": ["AI"],
+            "current_title": "产品经理",
+            "current_company": "腾讯",
+            "work_experience": [],
+            "education": "硕士",
+            "work_years": 6,
+        }
+        candidates_map = {
+            "c1": SAMPLE_CANDIDATES[0],
+            "c2": SAMPLE_CANDIDATES[1],
+            "c3": extra_candidate,
+        }
+
+        results = calibration_round(
+            mocker.MagicMock(), SAMPLE_JD_TEXT, ranked, candidates_map, model="model-x"
+        )
+
+        assert len(results) == 3
+        assert llm_call.call_args.kwargs["workflow"] == "jd-talent-delivery"
+        assert llm_call.call_args.kwargs["stage"] == "calibration-rank"
+        assert llm_call.call_args.kwargs["max_tokens"] == 16000
 
 
 class TestLoadOrRank:
