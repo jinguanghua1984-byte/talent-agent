@@ -14,6 +14,7 @@
 
 ## Recent Done
 
+- 2026-06-09：JD feedback provider batch jobs 已接入当前 PR；新增 `prepare-batch` 生成 batch manifest/requests/rule-results，新增 `apply-batch` 应用 provider output 并把 batch job id/custom id/output artifact/usage 写入 `LLMUsageLedger`；聚焦测试 `45 passed`，全量测试 `1400 passed, 1 warning`，完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-09：LLM ranker hard budget 已接入当前 PR；默认新增 LLM 精排调用限制为 Top 60，每人 evidence block 默认限制 1200 chars，`score_pipeline run/resume` 新增 `--rank-limit` 和 `--candidate-evidence-max-chars`，并修正按粗筛得分顺序进入 ranker；聚焦测试 `24 passed`，相关测试 `78 passed`，全量测试 `1395 passed, 1 warning`，完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-09：LLM usage coverage 已接入当前 PR；`call_llm_with_retry` 可透传 usage metadata，JD feedback/JD analyzer/LLM ranker/score pipeline 使用 `configs/llm-routing.json` 显式 route，并新增 `scripts.llm_usage report` 月度聚合；聚焦测试 `75 passed`，全量测试 `1392 passed, 1 warning`，完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-09：成本治理 workflow 压缩与 shared policies 已完成；新增 `agents/policies/`，压缩 BOSS-Maimai/JD/Liepin/public-search workflow，并拆出 `agents/workflows/public-search/commands.md`；架构测试 `24 passed`，全量测试 `1384 passed, 1 warning`，完整记录已归档到 `tasks/archive/2026-06.md`。

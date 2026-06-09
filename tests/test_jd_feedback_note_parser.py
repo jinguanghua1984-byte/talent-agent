@@ -4,13 +4,16 @@ from pathlib import Path
 import pytest
 
 from scripts.jd_feedback_note_parser import (
+    apply_feedback_batch_job,
     build_feedback_prompt,
     extract_json_object,
     main,
+    prepare_feedback_batch_job,
     parse_feedback_csv,
     parse_feedback_note,
     parse_feedback_notes_batch,
 )
+from scripts.llm_usage import LLMUsageLedger
 
 
 class FakeClient:
@@ -117,6 +120,14 @@ def _run_root(tmp_path: Path) -> Path:
         encoding="utf-8-sig",
     )
     return root
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
 
 
 def test_build_feedback_prompt_includes_field_meanings_and_note() -> None:
@@ -393,6 +404,179 @@ def test_parse_feedback_csv_uses_rules_and_batches_unresolved_notes(
     assert review["items"][0]["review_reasons"] == ["low_confidence"]
 
 
+def test_prepare_feedback_batch_job_writes_manifest_requests_and_rule_results(
+    tmp_path: Path,
+) -> None:
+    root = _run_root(tmp_path)
+    (root / "reports" / "outreach-queue.csv").write_text(
+        (
+            "candidate_id,rank,grade,score,feedback_note\n"
+            "101,1,A,88,认可，可以推进沟通。\n"
+            "102,2,A,84,候选人有相关平台经验，但需要确认是否偏算法研究而不是工程落地。\n"
+            "103,3,B,76,整体相关，不过证据偏浅，需要确认是否只是关键词命中。\n"
+        ),
+        encoding="utf-8-sig",
+    )
+
+    result = prepare_feedback_batch_job(root, job_id="job-1")
+
+    job_dir = root / "feedback" / "batch-jobs" / "job-1"
+    assert result == {
+        "run_root": str(root),
+        "job_dir": str(job_dir),
+        "manifest_path": str(job_dir / "batch-job-manifest.json"),
+        "request_jsonl": str(job_dir / "requests.jsonl"),
+        "rule_results_path": str(job_dir / "rule-results.json"),
+        "expected_output_jsonl": str(job_dir / "provider-output.jsonl"),
+        "batch_job_id": "job-1",
+        "request_count": 1,
+        "unresolved_count": 2,
+        "rule_parsed_count": 1,
+        "dry_run": False,
+    }
+    manifest = json.loads(
+        (job_dir / "batch-job-manifest.json").read_text(encoding="utf-8-sig")
+    )
+    assert manifest["schema"] == "jd_feedback_batch_job_v1"
+    assert manifest["batch_job_id"] == "job-1"
+    assert manifest["provider"] == "anthropic"
+    assert manifest["model"] == "claude-haiku-4-5"
+    assert manifest["workflow"] == "jd-feedback"
+    assert manifest["stage"] == "parse-low-confidence-batch"
+    assert manifest["max_tokens"] == 2048
+    assert manifest["request_count"] == 1
+    assert manifest["unresolved_count"] == 2
+    assert manifest["rule_parsed_count"] == 1
+    assert len(manifest["source_csv_hash"]) == 64
+    assert manifest["expected_output_jsonl"] == str(job_dir / "provider-output.jsonl")
+    assert manifest["requests"][0]["custom_id"] == "jd-feedback:job-1:chunk-000001"
+    assert manifest["requests"][0]["item_count"] == 2
+    assert len(manifest["requests"][0]["prompt_hash"]) == 64
+
+    requests = _read_jsonl(job_dir / "requests.jsonl")
+    assert len(requests) == 1
+    request = requests[0]
+    assert request["schema"] == "llm_batch_request_v1"
+    assert request["custom_id"] == "jd-feedback:job-1:chunk-000001"
+    assert request["request"]["model"] == "claude-haiku-4-5"
+    assert request["request"]["max_tokens"] == 2048
+    prompt = request["request"]["messages"][0]["content"]
+    assert "候选人有相关平台经验" in prompt
+    assert "整体相关，不过证据偏浅" in prompt
+    assert "认可，可以推进沟通" not in prompt
+    assert request["metadata"]["items"][0]["candidate_id"] == "102"
+    assert request["metadata"]["items"][1]["candidate_id"] == "103"
+    assert request["metadata"]["prompt_hash"] == manifest["requests"][0]["prompt_hash"]
+
+    rule_results = json.loads(
+        (job_dir / "rule-results.json").read_text(encoding="utf-8-sig")
+    )
+    assert rule_results["schema"] == "jd_feedback_batch_rule_results_v1"
+    assert rule_results["items"][0]["row"]["candidate_id"] == "101"
+    assert rule_results["items"][0]["parsed"]["parse_source"] == "rule"
+    assert not (root / "feedback" / "delivery-feedback.json").exists()
+
+
+def test_apply_feedback_batch_job_output_combines_rule_and_batch_results_and_records_usage(
+    tmp_path: Path,
+) -> None:
+    root = _run_root(tmp_path)
+    (root / "reports" / "outreach-queue.csv").write_text(
+        (
+            "candidate_id,rank,grade,score,feedback_note\n"
+            "101,1,A,88,认可，可以推进沟通。\n"
+            "102,2,A,84,候选人有相关平台经验，但需要确认是否偏算法研究而不是工程落地。\n"
+            "103,3,B,76,整体相关，不过证据偏浅，需要确认是否只是关键词命中。\n"
+        ),
+        encoding="utf-8-sig",
+    )
+    prepare_feedback_batch_job(root, job_id="job-1")
+    job_dir = root / "feedback" / "batch-jobs" / "job-1"
+    output_jsonl = job_dir / "provider-output.jsonl"
+    output_jsonl.write_text(
+        json.dumps(
+            {
+                "custom_id": "jd-feedback:job-1:chunk-000001",
+                "response": {
+                    "body": {
+                        "id": "msg_1",
+                        "stop_reason": "end_turn",
+                        "content": [
+                            {
+                                "text": _batch_response(
+                                    [
+                                        {
+                                            "feedback_label": "待定",
+                                            "reason_codes": ["wrong_role_type"],
+                                            "hunter_note": "可能偏算法研究，需要确认工程落地经验。",
+                                            "parse_confidence": 0.74,
+                                        },
+                                        {
+                                            "feedback_label": "待定",
+                                            "reason_codes": ["evidence_too_shallow"],
+                                            "hunter_note": "证据偏浅，需要人工确认。",
+                                            "parse_confidence": 0.52,
+                                        },
+                                    ]
+                                )
+                            }
+                        ],
+                        "usage": {"input_tokens": 1200, "output_tokens": 160},
+                    }
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    ledger_dir = tmp_path / "ledger"
+
+    result = apply_feedback_batch_job(
+        root,
+        job_dir=job_dir,
+        output_jsonl=output_jsonl,
+        ledger=LLMUsageLedger(ledger_dir),
+    )
+
+    assert result["parsed_count"] == 3
+    assert result["accepted_count"] == 2
+    assert result["review_count"] == 1
+    assert result["usage_record_count"] == 1
+    delivery = json.loads(
+        (root / "feedback" / "delivery-feedback.json").read_text(encoding="utf-8-sig")
+    )
+    items_by_id = {
+        item["candidate_id"]: item for item in delivery["candidate_feedback"]
+    }
+    assert items_by_id["101"]["parse_source"] == "rule"
+    assert items_by_id["102"]["parse_source"] == "llm_batch_job"
+    assert items_by_id["102"]["reason_codes"] == ["wrong_role_type"]
+    review = json.loads(
+        (root / "feedback" / "parse-review-queue.json").read_text(encoding="utf-8-sig")
+    )
+    assert review["items"][0]["candidate_id"] == "103"
+    assert review["items"][0]["parse_source"] == "llm_batch_job"
+    assert review["items"][0]["review_reasons"] == ["low_confidence"]
+
+    ledger_paths = sorted(ledger_dir.glob("llm-usage-*.jsonl"))
+    assert len(ledger_paths) == 1
+    ledger_row = json.loads(ledger_paths[0].read_text(encoding="utf-8"))
+    manifest = json.loads((job_dir / "batch-job-manifest.json").read_text(encoding="utf-8-sig"))
+    assert ledger_row["workflow"] == "jd-feedback"
+    assert ledger_row["stage"] == "parse-low-confidence-batch"
+    assert ledger_row["input_tokens"] == 1200
+    assert ledger_row["output_tokens"] == 160
+    assert ledger_row["usage_source"] == "api_usage"
+    assert ledger_row["batch_discount_applied"] is True
+    assert ledger_row["batch_job_id"] == "job-1"
+    assert ledger_row["batch_custom_id"] == "jd-feedback:job-1:chunk-000001"
+    assert ledger_row["batch_output_artifact"] == str(output_jsonl)
+    assert len(ledger_row["output_artifact_hash"]) == 64
+    assert ledger_row["input_artifact_hash"] == manifest["source_csv_hash"]
+    assert ledger_row["prompt_hash"] == manifest["requests"][0]["prompt_hash"]
+
+
 def test_parse_feedback_csv_dry_run_does_not_write_outputs(tmp_path: Path) -> None:
     root = _run_root(tmp_path)
     client = QueueClient([_response(), _response(parse_confidence=0.52)])
@@ -583,6 +767,76 @@ def test_cli_parse_csv_uses_run_root(tmp_path: Path) -> None:
     assert exit_code == 0
     assert (root / "feedback" / "delivery-feedback.json").exists()
     assert (root / "feedback" / "parse-review-queue.json").exists()
+
+
+def test_cli_prepare_batch_writes_job_artifacts(tmp_path: Path) -> None:
+    root = _run_root(tmp_path)
+
+    exit_code = main(["prepare-batch", "--run-root", str(root), "--job-id", "job-cli"])
+
+    job_dir = root / "feedback" / "batch-jobs" / "job-cli"
+    assert exit_code == 0
+    assert (job_dir / "batch-job-manifest.json").exists()
+    assert (job_dir / "requests.jsonl").exists()
+    assert (job_dir / "rule-results.json").exists()
+
+
+def test_cli_apply_batch_writes_outputs_and_usage_ledger(tmp_path: Path) -> None:
+    root = _run_root(tmp_path)
+    prepare_feedback_batch_job(root, job_id="job-cli")
+    job_dir = root / "feedback" / "batch-jobs" / "job-cli"
+    output_jsonl = job_dir / "provider-output.jsonl"
+    output_jsonl.write_text(
+        json.dumps(
+            {
+                "custom_id": "jd-feedback:job-cli:chunk-000001",
+                "response": {
+                    "body": {
+                        "id": "msg_cli",
+                        "stop_reason": "end_turn",
+                        "content": [
+                            {
+                                "text": _batch_response(
+                                    [
+                                        {"parse_confidence": 0.91},
+                                        {
+                                            "feedback_label": "待定",
+                                            "reason_codes": ["evidence_too_shallow"],
+                                            "parse_confidence": 0.52,
+                                        },
+                                    ]
+                                )
+                            }
+                        ],
+                        "usage": {"input_tokens": 100, "output_tokens": 20},
+                    }
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    ledger_dir = tmp_path / "ledger"
+
+    exit_code = main(
+        [
+            "apply-batch",
+            "--run-root",
+            str(root),
+            "--job-dir",
+            str(job_dir),
+            "--output-jsonl",
+            str(output_jsonl),
+            "--ledger-dir",
+            str(ledger_dir),
+        ]
+    )
+
+    assert exit_code == 0
+    assert (root / "feedback" / "delivery-feedback.json").exists()
+    assert (root / "feedback" / "parse-review-queue.json").exists()
+    assert list(ledger_dir.glob("llm-usage-*.jsonl"))
 
 
 def test_cli_parse_csv_reports_validation_error_without_traceback(

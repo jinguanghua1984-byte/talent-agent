@@ -11,6 +11,7 @@ from scripts.llm_usage import (
     hash_prompt,
     resolve_llm_route,
     summarize_usage,
+    usage_record_from_response,
 )
 
 
@@ -75,8 +76,44 @@ def test_usage_ledger_writes_monthly_provider_neutral_jsonl(tmp_path: Path) -> N
             "usage_source": "api_usage",
             "cost_formula": "anthropic_messages_v1",
             "estimated_cost_usd": 0.1234,
+            "batch_job_id": None,
+            "batch_custom_id": None,
+            "batch_output_artifact": None,
+            "output_artifact_hash": None,
         }
     ]
+
+
+def test_usage_record_carries_provider_batch_metadata() -> None:
+    record = usage_record_from_response(
+        provider="anthropic",
+        tool_surface="claude_api",
+        agent_runtime="script",
+        workflow="jd-feedback",
+        stage="parse-low-confidence-batch",
+        model="claude-haiku-4-5",
+        max_tokens=2048,
+        messages=[{"role": "user", "content": "batch prompt"}],
+        usage={"input_tokens": 1000, "output_tokens": 100},
+        request_id="msg_1",
+        stop_reason="end_turn",
+        artifact_root="data/output/run/feedback/batch-jobs/job-1",
+        input_artifact_hash="csv-hash",
+        batch_discount_applied=True,
+        batch_job_id="job-1",
+        batch_custom_id="jd-feedback:job-1:chunk-000001",
+        batch_output_artifact="data/output/run/feedback/batch-jobs/job-1/output.jsonl",
+        output_artifact_hash="out-hash",
+    )
+
+    assert record.batch_job_id == "job-1"
+    assert record.batch_custom_id == "jd-feedback:job-1:chunk-000001"
+    assert record.batch_output_artifact == "data/output/run/feedback/batch-jobs/job-1/output.jsonl"
+    assert record.output_artifact_hash == "out-hash"
+    assert record.input_artifact_hash == "csv-hash"
+    assert record.batch_discount_applied is True
+    assert record.usage_source == "api_usage"
+    assert record.estimated_cost_usd == 0.00075
 
 
 def test_anthropic_cost_uses_cache_multipliers_and_batch_discount() -> None:

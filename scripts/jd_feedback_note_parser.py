@@ -21,7 +21,15 @@ from scripts.jd_delivery_feedback import (
     write_json,
 )
 from scripts.pipeline_utils import call_llm_with_retry, create_llm_client
-from scripts.llm_usage import LLMRoute, resolve_llm_route
+from scripts.llm_usage import (
+    LLMUsageLedger,
+    LLMRoute,
+    hash_artifact,
+    hash_prompt,
+    resolve_llm_route,
+    usage_record_from_response,
+    utc_now_iso,
+)
 
 
 LOW_CONFIDENCE_THRESHOLD = 0.7
@@ -233,21 +241,7 @@ def parse_feedback_csv(
     paths = _output_paths(root, csv_path, out_path, review_out_path)
     metadata = _load_run_metadata(root)
 
-    candidate_feedback: list[dict[str, Any]] = []
-    review_items: list[dict[str, Any]] = []
-    seen_candidate_ids: set[str] = set()
-    seen_ranks: set[int] = set()
-    rows_to_parse: list[dict[str, str | None]] = []
-
-    with paths["csv"].open(encoding="utf-8-sig", newline="") as handle:
-        reader = csv.DictReader(handle)
-        _validate_csv_columns(reader.fieldnames)
-        for row in reader:
-            note = (row.get("feedback_note") or "").strip()
-            if not note:
-                continue
-            _validate_unique_feedback_row(row, seen_candidate_ids, seen_ranks)
-            rows_to_parse.append(row)
+    rows_to_parse = _load_feedback_rows(paths["csv"])
 
     parsed_results = _parse_rows_rule_first_then_batch(
         rows_to_parse,
@@ -255,6 +249,28 @@ def parse_feedback_csv(
         provider=provider,
         model=model,
     )
+
+    return _write_feedback_results(
+        root,
+        paths=paths,
+        metadata=metadata,
+        rows_to_parse=rows_to_parse,
+        parsed_results=parsed_results,
+        dry_run=dry_run,
+    )
+
+
+def _write_feedback_results(
+    root: Path,
+    *,
+    paths: dict[str, Path],
+    metadata: dict[str, str],
+    rows_to_parse: list[dict[str, str | None]],
+    parsed_results: list[dict[str, Any]],
+    dry_run: bool,
+) -> dict[str, Any]:
+    candidate_feedback: list[dict[str, Any]] = []
+    review_items: list[dict[str, Any]] = []
 
     for row, parsed in zip(rows_to_parse, parsed_results, strict=True):
         item = _candidate_item(row, parsed)
@@ -306,6 +322,261 @@ def parse_feedback_csv(
     return result
 
 
+def prepare_feedback_batch_job(
+    run_root: str | Path,
+    *,
+    csv_path: str | Path | None = None,
+    job_id: str | None = None,
+    job_dir: str | Path | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    root = Path(run_root)
+    paths = _output_paths(root, csv_path, None, None)
+    rows_to_parse = _load_feedback_rows(paths["csv"])
+    route = resolve_llm_route("jd-feedback", "parse-low-confidence-batch")
+    resolved_provider = provider or route.provider
+    resolved_model = model or route.model
+    batch_job_id = job_id or _default_batch_job_id()
+    output_dir = Path(job_dir) if job_dir is not None else root / "feedback" / "batch-jobs" / batch_job_id
+    request_jsonl = output_dir / "requests.jsonl"
+    rule_results_path = output_dir / "rule-results.json"
+    manifest_path = output_dir / "batch-job-manifest.json"
+    expected_output_jsonl = output_dir / "provider-output.jsonl"
+
+    rule_results: list[dict[str, Any]] = []
+    unresolved_rows: list[dict[str, str | None]] = []
+    for row in rows_to_parse:
+        note = (row.get("feedback_note") or "").strip()
+        parsed = parse_feedback_note_by_rule(note)
+        if parsed is None:
+            unresolved_rows.append(row)
+        else:
+            rule_results.append({"row": row, "parsed": parsed})
+
+    request_rows: list[dict[str, Any]] = []
+    request_summaries: list[dict[str, Any]] = []
+    for chunk_index, chunk in enumerate(_chunks(unresolved_rows, BATCH_PARSE_SIZE), start=1):
+        feedback_notes = [(row.get("feedback_note") or "").strip() for row in chunk]
+        messages = [{"role": "user", "content": build_feedback_batch_prompt(feedback_notes)}]
+        prompt_hash = hash_prompt(messages)
+        custom_id = f"jd-feedback:{batch_job_id}:chunk-{chunk_index:06d}"
+        items = [
+            {
+                "index": index,
+                "candidate_id": _required_text(row, "candidate_id"),
+                "rank": _required_int(row, "rank"),
+                "grade": _required_text(row, "grade"),
+                "score": _required_text(row, "score"),
+                "feedback_note": (row.get("feedback_note") or "").strip(),
+            }
+            for index, row in enumerate(chunk)
+        ]
+        request_rows.append(
+            {
+                "schema": "llm_batch_request_v1",
+                "custom_id": custom_id,
+                "provider": resolved_provider,
+                "workflow": route.workflow,
+                "stage": route.stage,
+                "request": {
+                    "model": resolved_model,
+                    "max_tokens": route.max_tokens,
+                    "messages": messages,
+                },
+                "metadata": {
+                    "schema": "jd_feedback_batch_request_metadata_v1",
+                    "batch_job_id": batch_job_id,
+                    "chunk_index": chunk_index,
+                    "prompt_hash": prompt_hash,
+                    "items": items,
+                },
+            }
+        )
+        request_summaries.append(
+            {
+                "custom_id": custom_id,
+                "prompt_hash": prompt_hash,
+                "item_count": len(items),
+            }
+        )
+
+    source_csv_hash = hash_artifact(paths["csv"])
+    manifest = {
+        "schema": "jd_feedback_batch_job_v1",
+        "batch_job_id": batch_job_id,
+        "created_at": utc_now_iso(),
+        "provider": resolved_provider,
+        "model": resolved_model,
+        "tool_surface": route.tool_surface,
+        "agent_runtime": route.agent_runtime,
+        "workflow": route.workflow,
+        "stage": route.stage,
+        "max_tokens": route.max_tokens,
+        "batch_parse_size": BATCH_PARSE_SIZE,
+        "source_outreach_sheet": str(paths["csv"]),
+        "source_csv_hash": source_csv_hash,
+        "request_count": len(request_rows),
+        "unresolved_count": len(unresolved_rows),
+        "rule_parsed_count": len(rule_results),
+        "request_jsonl": str(request_jsonl),
+        "rule_results_path": str(rule_results_path),
+        "expected_output_jsonl": str(expected_output_jsonl),
+        "delivery_output": str(paths["delivery"]),
+        "review_output": str(paths["review"]),
+        "summary_output": str(paths["summary"]),
+        "suggestions_output": str(paths["suggestions"]),
+        "requests": request_summaries,
+    }
+    result = {
+        "run_root": str(root),
+        "job_dir": str(output_dir),
+        "manifest_path": str(manifest_path),
+        "request_jsonl": str(request_jsonl),
+        "rule_results_path": str(rule_results_path),
+        "expected_output_jsonl": str(expected_output_jsonl),
+        "batch_job_id": batch_job_id,
+        "request_count": len(request_rows),
+        "unresolved_count": len(unresolved_rows),
+        "rule_parsed_count": len(rule_results),
+        "dry_run": dry_run,
+    }
+    if dry_run:
+        return result
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    write_json(manifest_path, manifest)
+    write_json(
+        rule_results_path,
+        {
+            "schema": "jd_feedback_batch_rule_results_v1",
+            "batch_job_id": batch_job_id,
+            "items": rule_results,
+        },
+    )
+    with request_jsonl.open("w", encoding="utf-8") as handle:
+        for row in request_rows:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    return result
+
+
+def apply_feedback_batch_job(
+    run_root: str | Path,
+    *,
+    job_dir: str | Path,
+    output_jsonl: str | Path | None = None,
+    ledger: Any | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    root = Path(run_root)
+    output_dir = Path(job_dir)
+    manifest_path = output_dir / "batch-job-manifest.json"
+    manifest = _read_json_object(manifest_path)
+    provider_output = Path(output_jsonl) if output_jsonl is not None else Path(str(manifest["expected_output_jsonl"]))
+    paths = _output_paths(
+        root,
+        manifest.get("source_outreach_sheet"),
+        manifest.get("delivery_output"),
+        manifest.get("review_output"),
+    )
+    metadata = _load_run_metadata(root)
+    rows_to_parse = _load_feedback_rows(paths["csv"])
+    parsed_by_candidate_id = _load_batch_rule_results(Path(str(manifest["rule_results_path"])))
+
+    output_by_custom_id = {
+        row.get("custom_id"): row
+        for row in _read_jsonl(provider_output)
+        if isinstance(row.get("custom_id"), str)
+    }
+    usage_record_count = 0
+    output_artifact_hash = hash_artifact(provider_output)
+    route = resolve_llm_route(str(manifest["workflow"]), str(manifest["stage"]))
+
+    for request_row in _read_jsonl(Path(str(manifest["request_jsonl"]))):
+        custom_id = str(request_row["custom_id"])
+        output_row = output_by_custom_id.get(custom_id)
+        if output_row is None:
+            raise ValueError(f"batch output missing custom_id: {custom_id}")
+
+        response_text = _extract_batch_output_text(output_row)
+        parsed_payload = extract_json_object(response_text)
+        raw_items = parsed_payload.get("items")
+        if not isinstance(raw_items, list):
+            raise ValueError(f"batch output {custom_id} must contain items list")
+        parsed_items = {
+            item.get("index"): item
+            for item in raw_items
+            if isinstance(item, dict) and isinstance(item.get("index"), int)
+        }
+        for item in request_row["metadata"]["items"]:
+            index = int(item["index"])
+            candidate_id = str(item["candidate_id"])
+            note = str(item["feedback_note"])
+            parsed = parsed_items.get(index)
+            if parsed is None:
+                parsed_by_candidate_id[candidate_id] = _fallback_result(
+                    note,
+                    parse_source="llm_batch_job",
+                )
+            else:
+                parsed_by_candidate_id[candidate_id] = _normalize_result(
+                    parsed,
+                    note,
+                    parse_source="llm_batch_job",
+                )
+
+        if ledger is not None:
+            record = usage_record_from_response(
+                provider=str(manifest["provider"]),
+                tool_surface=str(manifest.get("tool_surface") or route.tool_surface),
+                agent_runtime=str(manifest.get("agent_runtime") or route.agent_runtime),
+                workflow=str(manifest["workflow"]),
+                stage=str(manifest["stage"]),
+                model=str(manifest["model"]),
+                max_tokens=int(manifest["max_tokens"]),
+                messages=request_row["request"]["messages"],
+                usage=_extract_batch_output_usage(output_row),
+                request_id=_extract_batch_output_request_id(output_row),
+                stop_reason=_extract_batch_output_stop_reason(output_row),
+                artifact_root=str(output_dir),
+                input_artifact_hash=str(manifest.get("source_csv_hash") or ""),
+                batch_discount_applied=True,
+                batch_job_id=str(manifest["batch_job_id"]),
+                batch_custom_id=custom_id,
+                batch_output_artifact=str(provider_output),
+                output_artifact_hash=output_artifact_hash,
+            )
+            ledger.append(record)
+            usage_record_count += 1
+
+    parsed_results: list[dict[str, Any]] = []
+    for row in rows_to_parse:
+        candidate_id = _required_text(row, "candidate_id")
+        parsed = parsed_by_candidate_id.get(candidate_id)
+        if parsed is None:
+            raise ValueError(f"missing parsed feedback for candidate_id: {candidate_id}")
+        parsed_results.append(parsed)
+
+    result = _write_feedback_results(
+        root,
+        paths=paths,
+        metadata=metadata,
+        rows_to_parse=rows_to_parse,
+        parsed_results=parsed_results,
+        dry_run=dry_run,
+    )
+    result.update(
+        {
+            "batch_job_id": str(manifest["batch_job_id"]),
+            "job_dir": str(output_dir),
+            "output_jsonl": str(provider_output),
+            "usage_record_count": usage_record_count,
+        }
+    )
+    return result
+
+
 def main(argv: list[str] | None = None, *, client: Any | None = None) -> int:
     parser = argparse.ArgumentParser(description="Parse JD delivery feedback notes")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -324,6 +595,22 @@ def main(argv: list[str] | None = None, *, client: Any | None = None) -> int:
     csv_parser.add_argument("--provider")
     csv_parser.add_argument("--model")
     csv_parser.add_argument("--dry-run", action="store_true")
+
+    prepare_parser = subparsers.add_parser("prepare-batch")
+    prepare_parser.add_argument("--run-root", required=True)
+    prepare_parser.add_argument("--csv")
+    prepare_parser.add_argument("--job-id")
+    prepare_parser.add_argument("--job-dir")
+    prepare_parser.add_argument("--provider")
+    prepare_parser.add_argument("--model")
+    prepare_parser.add_argument("--dry-run", action="store_true")
+
+    apply_parser = subparsers.add_parser("apply-batch")
+    apply_parser.add_argument("--run-root", required=True)
+    apply_parser.add_argument("--job-dir", required=True)
+    apply_parser.add_argument("--output-jsonl")
+    apply_parser.add_argument("--ledger-dir")
+    apply_parser.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args(argv)
     try:
@@ -349,6 +636,29 @@ def main(argv: list[str] | None = None, *, client: Any | None = None) -> int:
             )
             if args.dry_run:
                 print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "prepare-batch":
+            result = prepare_feedback_batch_job(
+                args.run_root,
+                csv_path=args.csv,
+                job_id=args.job_id,
+                job_dir=args.job_dir,
+                provider=args.provider,
+                model=args.model,
+                dry_run=args.dry_run,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "apply-batch":
+            ledger = LLMUsageLedger(args.ledger_dir) if args.ledger_dir else None
+            result = apply_feedback_batch_job(
+                args.run_root,
+                job_dir=args.job_dir,
+                output_jsonl=args.output_jsonl,
+                ledger=ledger,
+                dry_run=args.dry_run,
+            )
+            print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -512,6 +822,23 @@ def _validate_csv_columns(fieldnames: list[str] | None) -> None:
         )
 
 
+def _load_feedback_rows(csv_path: Path) -> list[dict[str, str | None]]:
+    seen_candidate_ids: set[str] = set()
+    seen_ranks: set[int] = set()
+    rows: list[dict[str, str | None]] = []
+
+    with csv_path.open(encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        _validate_csv_columns(reader.fieldnames)
+        for row in reader:
+            note = (row.get("feedback_note") or "").strip()
+            if not note:
+                continue
+            _validate_unique_feedback_row(row, seen_candidate_ids, seen_ranks)
+            rows.append(row)
+    return rows
+
+
 def _validate_feedback_payload(feedback: dict[str, Any]) -> dict[str, Any]:
     with TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / "delivery-feedback.json"
@@ -556,6 +883,104 @@ def _read_optional_json(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return data
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return data
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), start=1):
+        if not line.strip():
+            continue
+        data = json.loads(line)
+        if not isinstance(data, dict):
+            raise ValueError(f"{path}:{line_number} must contain a JSON object")
+        rows.append(data)
+    return rows
+
+
+def _load_batch_rule_results(path: Path) -> dict[str, dict[str, Any]]:
+    payload = _read_json_object(path)
+    parsed_by_candidate_id: dict[str, dict[str, Any]] = {}
+    for item in payload.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        row = item.get("row")
+        parsed = item.get("parsed")
+        if isinstance(row, dict) and isinstance(parsed, dict):
+            parsed_by_candidate_id[_required_text(row, "candidate_id")] = parsed
+    return parsed_by_candidate_id
+
+
+def _extract_batch_output_text(row: dict[str, Any]) -> str:
+    text = row.get("text")
+    if isinstance(text, str):
+        return text
+    body = _extract_batch_output_body(row)
+    body_text = body.get("text")
+    if isinstance(body_text, str):
+        return body_text
+    content = body.get("content")
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and isinstance(block.get("text"), str):
+                return str(block["text"])
+    message = body.get("message")
+    if isinstance(message, dict):
+        message_content = message.get("content")
+        if isinstance(message_content, str):
+            return message_content
+        if isinstance(message_content, list):
+            for block in message_content:
+                if isinstance(block, dict) and isinstance(block.get("text"), str):
+                    return str(block["text"])
+    raise ValueError("batch output row did not contain response text")
+
+
+def _extract_batch_output_usage(row: dict[str, Any]) -> Any | None:
+    if "usage" in row:
+        return row.get("usage")
+    return _extract_batch_output_body(row).get("usage")
+
+
+def _extract_batch_output_request_id(row: dict[str, Any]) -> str | None:
+    for source in (row, _extract_batch_output_body(row)):
+        value = source.get("request_id") or source.get("id")
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _extract_batch_output_stop_reason(row: dict[str, Any]) -> str | None:
+    for source in (row, _extract_batch_output_body(row)):
+        value = source.get("stop_reason") or source.get("finish_reason")
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _extract_batch_output_body(row: dict[str, Any]) -> dict[str, Any]:
+    response = row.get("response")
+    if isinstance(response, dict):
+        body = response.get("body")
+        if isinstance(body, dict):
+            return body
+        return response
+    return row
+
+
+def _chunks(rows: list[dict[str, str | None]], size: int) -> list[list[dict[str, str | None]]]:
+    return [rows[start : start + size] for start in range(0, len(rows), size)]
+
+
+def _default_batch_job_id() -> str:
+    digits = re.sub(r"\D", "", utc_now_iso())
+    return f"jd-feedback-batch-{digits[:14]}"
 
 
 def _candidate_item(row: dict[str, str | None], parsed: dict[str, Any]) -> dict[str, Any]:

@@ -44,6 +44,10 @@ class LLMUsageRecord:
     usage_source: str
     cost_formula: str
     estimated_cost_usd: float
+    batch_job_id: str | None = None
+    batch_custom_id: str | None = None
+    batch_output_artifact: str | None = None
+    output_artifact_hash: str | None = None
 
 
 @dataclass(frozen=True)
@@ -318,6 +322,10 @@ def usage_record_from_response(
     local_cache_hit: bool = False,
     batch_discount_applied: bool = False,
     usage_source: str | None = None,
+    batch_job_id: str | None = None,
+    batch_custom_id: str | None = None,
+    batch_output_artifact: str | None = None,
+    output_artifact_hash: str | None = None,
 ) -> LLMUsageRecord:
     parsed = parse_usage(usage)
     source = usage_source or ("api_usage" if usage is not None else "manual_estimate")
@@ -357,6 +365,10 @@ def usage_record_from_response(
         usage_source=source,
         cost_formula=cost_formula_for_provider(provider),
         estimated_cost_usd=estimated_cost,
+        batch_job_id=batch_job_id,
+        batch_custom_id=batch_custom_id,
+        batch_output_artifact=batch_output_artifact,
+        output_artifact_hash=output_artifact_hash,
     )
 
 
