@@ -24,7 +24,8 @@ description: Use when the user asks to turn a JD into a local talent-library rec
 - `top_n=30`
 - `publish_feishu=true`
 - `wiki_space_id=7642607697183001542`
-- 输入齐全后自动从 S0 连续执行到 S8，不需要阶段间人工二次确认。
+- 默认 `publish_feishu=true` 时，输入齐全后自动从 S0 连续执行到 S8，不需要阶段间人工二次确认。
+- 用户明确设置 `publish_feishu=false` 时，workflow 在 S6 生成本地报告、外联表和质量门禁后关闭本地交付，不创建飞书产物，不进入 S7/S8。
 - 输出目录：首次运行使用 `data/output/<jd-slug>-<YYYY-MM-DD>/`；如果该目录已经存在且非空，必须分配 `data/output/<jd-slug>-<YYYY-MM-DD>-run-NNN/`。
 - 后续所有产物必须使用 `run-manifest.json` 中的实际 `output_dir`，不得假设固定目录名。
 
@@ -41,6 +42,9 @@ description: Use when the user asks to turn a JD into a local talent-library rec
 - `scoring/detailed-rank.json`
 - `reports/talent-recommendation.md`
 - `reports/outreach-queue.csv`
+
+`publish_feishu=true` 时还必须写入：
+
 - `feishu/publish-manifest.json`
 - `feishu/publish-results.json`
 - `feishu/im-notification-results.json`

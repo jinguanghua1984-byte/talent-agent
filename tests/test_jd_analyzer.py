@@ -154,6 +154,37 @@ class TestAnalyzeJd:
         assert "agent" in result.core_skills
         assert result.position_type == "AI产品经理"
 
+    def test_analyze_passes_route_metadata(self, mocker):
+        captured = {}
+        response_text = json.dumps({
+            "core_skills": ["agent", "ai平台"],
+            "supplement_skills": [],
+            "position_type": "AI产品经理",
+            "experience_range": [5, 10],
+            "education_requirement": "本科以上",
+            "industry_preference": ["AI"],
+            "exclusion_criteria": [],
+        })
+
+        def fake_call(client, model, messages, **kwargs):
+            captured["client"] = client
+            captured["model"] = model
+            captured["messages"] = messages
+            captured["kwargs"] = kwargs
+            return response_text
+
+        mocker.patch("scripts.jd_analyzer.call_llm_with_retry", side_effect=fake_call)
+        client = object()
+
+        result = analyze_jd(client, SAMPLE_JD_TEXT, model="model-x")
+
+        assert result is not None
+        assert captured["client"] is client
+        assert captured["model"] == "model-x"
+        assert captured["kwargs"]["workflow"] == "jd-talent-delivery"
+        assert captured["kwargs"]["stage"] == "role-profile"
+        assert captured["kwargs"]["max_tokens"] == 8000
+
     def test_analyze_invalid_json_retries(self, mocker):
         mock_client = mocker.MagicMock()
         mock_client.messages.create.side_effect = [

@@ -263,6 +263,9 @@ BOOLEAN_POLICY_FIELDS = [
 
 INTEGER_POLICY_FIELDS = [
     "max_contacts_per_run",
+]
+
+OPTIONAL_INTEGER_POLICY_FIELDS = [
     "max_contacts_per_day",
 ]
 
@@ -335,8 +338,15 @@ def validate_executor_policy(policy: dict[str, Any], execute: bool) -> dict[str,
         if isinstance(value, bool) or not isinstance(value, int):
             raise ValueError(f"{field} must be an int")
 
+    for field in OPTIONAL_INTEGER_POLICY_FIELDS:
+        value = policy.get(field)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+            raise ValueError(f"{field} must be an int or null")
+
     if policy["max_contacts_per_run"] != 1:
         raise ValueError("max_contacts_per_run must be 1 for MVP")
+    if policy.get("max_contacts_per_day") is not None and policy["max_contacts_per_day"] <= 0:
+        raise ValueError("max_contacts_per_day must be positive when set")
 
     if execute:
         if policy["allow_real_contact"] is not True:

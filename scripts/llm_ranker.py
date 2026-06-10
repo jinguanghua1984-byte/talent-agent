@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re as _re
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,10 +16,12 @@ from scripts.pipeline_utils import (
     truncate_text_by_relevance,
     write_cache,
 )
+from scripts.llm_usage import resolve_llm_route
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = os.environ.get("LLM_MODEL", "intelligence")
+DEFAULT_RANK_LIMIT = 60
+DEFAULT_CANDIDATE_EVIDENCE_MAX_CHARS = 1200
 
 RANK_PROMPT_TEMPLATE = """你是一位资深猎头，专注 AI/大模型方向的人才评估。
 
@@ -92,7 +93,25 @@ class RankScore:
     gap: str
 
 
-def _format_candidate(c: dict, keywords: list[str]) -> str:
+def _apply_candidate_evidence_budget(text: str, max_chars: int | None) -> str:
+    if max_chars is None or len(text) <= max_chars:
+        return text
+
+    first_line, separator, rest = text.partition("\n")
+    if not separator:
+        return text[: max(0, max_chars - 3)] + "..."
+    if len(first_line) + 4 >= max_chars:
+        return first_line[: max(0, max_chars - 3)] + "..."
+
+    remaining = max_chars - len(first_line) - 1
+    return first_line + "\n" + rest[: max(0, remaining - 3)] + "..."
+
+
+def _format_candidate(
+    c: dict,
+    keywords: list[str],
+    evidence_max_chars: int | None = DEFAULT_CANDIDATE_EVIDENCE_MAX_CHARS,
+) -> str:
     parts = [f"### {c.get('name', '未知')} (ID: {c.get('id', '未知')})"]
 
     if c.get("current_title") or c.get("current_company"):
@@ -130,18 +149,19 @@ def _format_candidate(c: dict, keywords: list[str]) -> str:
         truncated = truncate_text_by_relevance(desc_raw, keywords, max_length=300)
         parts.append(f"- 个人描述: {truncated}")
 
-    return "\n".join(parts)
+    return _apply_candidate_evidence_budget("\n".join(parts), evidence_max_chars)
 
 
 def build_rank_prompt(
     jd_text: str,
     candidates: list[dict],
     keywords: list[str] | None = None,
+    evidence_max_chars: int | None = DEFAULT_CANDIDATE_EVIDENCE_MAX_CHARS,
 ) -> str:
     if keywords is None:
         keywords = []
     candidates_text = "\n\n".join(
-        _format_candidate(c, keywords) for c in candidates
+        _format_candidate(c, keywords, evidence_max_chars) for c in candidates
     )
     return RANK_PROMPT_TEMPLATE.format(
         jd_text=jd_text, candidates_text=candidates_text
@@ -196,12 +216,27 @@ def rank_single_batch(
     jd_text: str,
     candidates: list[dict],
     keywords: list[str] | None = None,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
+    candidate_evidence_max_chars: int | None = DEFAULT_CANDIDATE_EVIDENCE_MAX_CHARS,
 ) -> list[RankScore]:
+    route = resolve_llm_route("jd-talent-delivery", "detailed-rank")
+    resolved_model = model or route.model
     expected_ids = [c.get("id", "") for c in candidates]
-    prompt = build_rank_prompt(jd_text, candidates, keywords)
+    prompt = build_rank_prompt(
+        jd_text,
+        candidates,
+        keywords,
+        evidence_max_chars=candidate_evidence_max_chars,
+    )
     messages = [{"role": "user", "content": prompt}]
-    response_text = call_llm_with_retry(client, model, messages, max_tokens=4096)
+    response_text = call_llm_with_retry(
+        client,
+        resolved_model,
+        messages,
+        max_tokens=route.max_tokens,
+        workflow=route.workflow,
+        stage=route.stage,
+    )
     return parse_rank_response(response_text, expected_ids)
 
 
@@ -211,9 +246,10 @@ def load_or_rank(
     jd_text: str,
     cache_dir: Path,
     client: Any | None = None,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     keywords: list[str] | None = None,
     force: bool = False,
+    candidate_evidence_max_chars: int | None = DEFAULT_CANDIDATE_EVIDENCE_MAX_CHARS,
 ) -> RankScore | None:
     cache_file = cache_dir / "rank" / f"{candidate_id}.json"
 
@@ -230,9 +266,17 @@ def load_or_rank(
 
     if client is None:
         from scripts.pipeline_utils import create_llm_client
-        client = create_llm_client()
+        route = resolve_llm_route("jd-talent-delivery", "detailed-rank")
+        client = create_llm_client(provider=route.provider, model=model or route.model)
 
-    results = rank_single_batch(client, jd_text, [candidate], keywords=keywords, model=model)
+    results = rank_single_batch(
+        client,
+        jd_text,
+        [candidate],
+        keywords=keywords,
+        model=model,
+        candidate_evidence_max_chars=candidate_evidence_max_chars,
+    )
 
     if results:
         score = results[0]
@@ -254,8 +298,10 @@ def rank_candidates(
     candidates: list[dict],
     batch_size: int = 10,
     keywords: list[str] | None = None,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     cache_dir: Path | None = None,
+    rank_limit: int | None = DEFAULT_RANK_LIMIT,
+    candidate_evidence_max_chars: int | None = DEFAULT_CANDIDATE_EVIDENCE_MAX_CHARS,
 ) -> list[RankScore]:
     all_results: list[RankScore] = []
     scored_ids: set[str] = set()
@@ -276,13 +322,16 @@ def rank_candidates(
                     scored_ids.add(cached["candidate_id"])
 
     unscored = [c for c in candidates if c.get("id", "") not in scored_ids]
+    if rank_limit is not None:
+        unscored = unscored[: max(0, rank_limit)]
 
     if not unscored:
         logger.info("所有候选人已有缓存评分")
     else:
         logger.info(
-            "开始精排: %d 人已缓存, %d 人待评分, 每批 %d 人",
+            "开始精排: %d 人已缓存, %d 人待评分, 每批 %d 人, LLM 新调用预算 %s",
             len(scored_ids), len(unscored), batch_size,
+            "unlimited" if rank_limit is None else rank_limit,
         )
 
         for i in range(0, len(unscored), batch_size):
@@ -293,7 +342,12 @@ def rank_candidates(
 
             try:
                 results = rank_single_batch(
-                    client, jd_text, batch, keywords=keywords, model=model
+                    client,
+                    jd_text,
+                    batch,
+                    keywords=keywords,
+                    model=model,
+                    candidate_evidence_max_chars=candidate_evidence_max_chars,
                 )
                 all_results.extend(results)
 
@@ -321,8 +375,11 @@ def calibration_round(
     candidates_map: dict[str, dict],
     batch_size: int = 10,
     top_per_batch: int = 3,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
+    candidate_evidence_max_chars: int | None = DEFAULT_CANDIDATE_EVIDENCE_MAX_CHARS,
 ) -> list[RankScore]:
+    route = resolve_llm_route("jd-talent-delivery", "calibration-rank")
+    resolved_model = model or route.model
     config = load_scoring_config()
     cal_config = config.get("calibration", {})
     top_n = cal_config.get("top_per_batch", top_per_batch)
@@ -354,7 +411,7 @@ def calibration_round(
     logger.info("开始校准轮: %d 人", len(cal_dicts))
 
     candidates_text = "\n\n".join(
-        _format_candidate(c, []) for c in cal_dicts
+        _format_candidate(c, [], candidate_evidence_max_chars) for c in cal_dicts
     )
     prompt = CALIBRATION_PROMPT_TEMPLATE.format(
         jd_text=jd_text, candidates_text=candidates_text
@@ -362,7 +419,14 @@ def calibration_round(
     messages = [{"role": "user", "content": prompt}]
 
     try:
-        response_text = call_llm_with_retry(client, model, messages, max_tokens=4096)
+        response_text = call_llm_with_retry(
+            client,
+            resolved_model,
+            messages,
+            max_tokens=route.max_tokens,
+            workflow=route.workflow,
+            stage=route.stage,
+        )
         expected_ids = [c.get("id", "") for c in cal_dicts]
         cal_results = parse_rank_response(response_text, expected_ids)
 

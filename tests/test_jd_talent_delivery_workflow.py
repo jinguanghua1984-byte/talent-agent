@@ -48,10 +48,14 @@ def test_workflow_runs_end_to_end_without_intermediate_confirmation() -> None:
     text = _text()
 
     for token in [
-        "输入齐全且所有门禁通过时，必须按 S0 -> S1 -> S2 -> S3 -> S4 -> S5 -> S6 -> S7 -> S8 顺序连续执行到完成",
+        "默认 `publish_feishu=true` 必须按 S0 -> S1 -> S2 -> S3 -> S4 -> S5 -> S6 -> S7 -> S8 顺序连续执行到完成",
+        "用户明确设置 `publish_feishu=false` 时，S6 生成本地报告、外联表和质量门禁后关闭本地交付，不进入 S7/S8",
         "阶段成功输出即为进入下一阶段的授权",
         "不得在 S1-S8 之间询问是否继续、是否发布或是否发送通知",
         "dry-run、回读和质量门禁都是自动验证门禁；通过即继续，失败才停止",
+        "reports/interruption-*.json",
+        "state/events.jsonl",
+        "state/continuation-plan.json",
     ]:
         assert token in text
 
@@ -89,6 +93,9 @@ def test_workflow_declares_independent_match_and_quality_gates() -> None:
         "CSV 必须可解析且行数等于 TopN",
         "Sheet 回读必须比对本地 CSV 表头和前几行",
         "lark-cli 必须通过 argv list 调用",
+        "已有 `output_dir` 后执行",
+        "lark-cli doctor",
+        "lark-cli auth status",
         "外联表禁止使用 `drive +import --type sheet`",
         "sheets +create",
         "sheets +write --values <UTF-8 JSON>",
@@ -112,7 +119,8 @@ def test_workflow_codifies_completion_notification() -> None:
         "推荐报告摘要",
         "feishu/im-notification-message.txt",
         "feishu/im-notification-results.json",
-        "通知发送失败属于任务失败",
+        "blocked_notification_failed",
+        "可恢复通知重试入口",
     ]:
         assert token in text
 
@@ -164,7 +172,11 @@ def test_workflow_enforces_safety_and_stop_conditions() -> None:
         "权限不足",
         "scope 缺失",
         "dry-run 失败",
+        "reports/interruption-*.json",
+        "state/events.jsonl",
+        "state/continuation-plan.json",
         "外联表发布步骤出现 `drive +import --type sheet`",
         "飞书完成通知发送失败",
+        "blocked_notification_failed",
     ]:
         assert token in text

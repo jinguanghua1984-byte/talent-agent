@@ -1,5 +1,7 @@
 # Lessons
 
+- 2026-06-09：BOSS 多模态视频算法寻访中，目标公司候选若标签或求职目标明确包含“视频算法”“视频目标”或“语音/视频/图形”，应先按视频算法相关信号进入详情/触达判断；不能仅因同屏出现图形、视觉、图像处理、XR 等边界词就直接排除，边界风险应在交付中标注。
+- 2026-06-09：BOSS 列表里候选已被标记为 `hold` / `enter_detail` 后，如果误点右上角“不喜欢/关闭”弹窗，关闭弹窗后必须立即回到同一候选完成详情核实；不得在该候选仍未决时继续向下滚动或进入后续候选处理。
 - 2026-06-07：BOSS 沟通页顶部姓名如果仍显示为“某先生/某女士”这类登记名，不应自动判定为系统未暴露实名；用户确认后应按平台登记实名入库，只有明显昵称或营销名（如长句昵称、非姓名字符串）才标记 `real_name_status=missing`。
 - 2026-06-06：BOSS 触达后从沟通页回采真实姓名时，顶部姓名存在 OCR/视觉误识别风险；一旦用户纠正，必须立即把 `state/executor-result.json`、`raw/communication-pages.jsonl`、`raw/executor-contact-attempts.jsonl`、`structured/candidates.jsonl` 等下游匹配字段统一修正，并重跑 executor validation，避免 BOSS->脉脉匹配沿用错误实名。
 - 2026-06-05：BOSS App 推荐列表寻访的 UI 浏览边界：浏览、滚屏、进详情、返回列表、展开详情等页面操作全部使用 Computer Use；只有在当前详情页已确认触达、`state/current-contact-intent.json` 与 `executor-policy.json` 均满足时，才使用外部执行器点击精确文案 `立即沟通`。不要用 osascript/坐标点击替代 Computer Use 做列表浏览或详情采集。

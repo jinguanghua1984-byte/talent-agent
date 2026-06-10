@@ -9,6 +9,23 @@ from typing import Any
 
 SUMMARY_SCHEMA = "campaign_status_summary_v1"
 BOUND_IDENTITY_STATUSES = {"auto_bound", "confirmed_bound", "manual_bound", "bound"}
+ARTIFACT_PATHS = {
+    "raw_list_cards": "raw/list-cards.jsonl",
+    "raw_detail_pages": "raw/detail-pages.jsonl",
+    "structured_candidates": "structured/candidates.jsonl",
+    "maimai_match_targets": "structured/maimai-match-targets.jsonl",
+    "identity_ledger": "state/cross-channel-identity-ledger.jsonl",
+    "campaign_db_quality_gates": "reports/campaign-db-quality-gates.json",
+    "campaign_db_sync_dry_run": "reports/campaign-db-sync-dry-run.json",
+    "campaign_db_sync_result": "reports/campaign-db-sync-result.json",
+    "main_db_sync_dry_run": "reports/main-db-sync-dry-run.json",
+    "main_db_sync_result": "reports/main-db-sync-result.json",
+    "delivery_quality_gates": "reports/boss-maimai-delivery-quality-gates.json",
+    "feishu_dry_run_results": "feishu/dry-run-results.json",
+    "feishu_publish_results": "feishu/boss-maimai-delivery-publish-results.json",
+    "feishu_readback_results": "feishu/readback-results.json",
+    "im_notification_results": "feishu/im-notification-results.json",
+}
 
 
 def load_json(path: str | Path, default: Any = None) -> Any:
@@ -45,10 +62,16 @@ def summarize_campaign(campaign_root: str | Path) -> dict[str, Any]:
     executor_validation = _object(load_json(root / "reports" / "executor-validation.json", default={}))
     campaign_gates = _object(load_json(root / "reports" / "campaign-db-quality-gates.json", default={}))
     delivery_gates = _object(load_json(root / "reports" / "boss-maimai-delivery-quality-gates.json", default={}))
+    campaign_db_dry_run = _object(load_json(root / "reports" / "campaign-db-sync-dry-run.json", default={}))
+    campaign_db_result = _object(load_json(root / "reports" / "campaign-db-sync-result.json", default={}))
+    feishu_dry_run = _object(load_json(root / "feishu" / "dry-run-results.json", default={}))
     feishu_publish = _object(load_json(root / "feishu" / "boss-maimai-delivery-publish-results.json", default={}))
+    feishu_readback = _object(load_json(root / "feishu" / "readback-results.json", default={}))
     im_notification = _object(load_json(root / "feishu" / "im-notification-results.json", default={}))
     main_db_dry_run = _object(load_json(root / "reports" / "main-db-sync-dry-run.json", default={}))
     main_db_result = _object(load_json(root / "reports" / "main-db-sync-result.json", default={}))
+    artifact_status = _artifact_status(root)
+    missing_artifacts = _missing_artifacts(artifact_status)
 
     candidates = _latest_by_key(load_jsonl(root / "structured" / "candidates.jsonl"))
     identity_rows = load_jsonl(root / "state" / "cross-channel-identity-ledger.jsonl")
@@ -78,10 +101,14 @@ def summarize_campaign(campaign_root: str | Path) -> dict[str, Any]:
     dry_run_apply_status = {
         "executor_validation_status": executor_validation.get("status"),
         "campaign_db_quality_gate_status": campaign_gates.get("status"),
+        "campaign_db_sync_dry_run_status": "present" if campaign_db_dry_run else None,
+        "campaign_db_sync_result_status": "present" if campaign_db_result else None,
         "main_db_sync_dry_run_status": "present" if main_db_dry_run else None,
         "main_db_sync_result_status": "present" if main_db_result else None,
         "delivery_quality_gate_status": delivery_gates.get("status"),
+        "feishu_dry_run_status": feishu_dry_run.get("status") or ("present" if feishu_dry_run else None),
         "feishu_publish_status": feishu_publish.get("status"),
+        "feishu_readback_status": feishu_readback.get("status") or ("present" if feishu_readback else None),
         "im_notification_status": im_notification.get("status"),
     }
     dry_run_apply_status = {
@@ -95,8 +122,11 @@ def summarize_campaign(campaign_root: str | Path) -> dict[str, Any]:
         "campaign_type": _detect_campaign_type(root, manifest),
         "current_stage": str(continuation.get("stage") or stage_state.get("stage") or manifest.get("status") or ""),
         "status": str(continuation.get("status") or stage_state.get("status") or manifest.get("status") or "unknown"),
+        "derived_stage": _derive_stage(artifact_status, blocked_by, dry_run_apply_status),
         "blocked_by": blocked_by,
         "counts": counts,
+        "artifact_status": artifact_status,
+        "missing_artifacts": missing_artifacts,
         "latest_interruption": _latest_interruption(root),
         "continuation_plan": continuation,
         "dry_run_apply_status": dry_run_apply_status,
@@ -138,6 +168,46 @@ def format_summary_markdown(summary: dict[str, Any]) -> str:
 
 def _object(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _artifact_status(root: Path) -> dict[str, str]:
+    return {
+        name: "present" if (root / relative_path).exists() else "missing"
+        for name, relative_path in ARTIFACT_PATHS.items()
+    }
+
+
+def _missing_artifacts(artifact_status: dict[str, str]) -> list[str]:
+    return [
+        ARTIFACT_PATHS[name]
+        for name, status in artifact_status.items()
+        if status == "missing"
+    ]
+
+
+def _derive_stage(
+    artifact_status: dict[str, str],
+    blocked_by: str,
+    dry_run_apply_status: dict[str, Any],
+) -> str:
+    if blocked_by:
+        return "blocked"
+    if (
+        artifact_status.get("raw_list_cards") == "present"
+        and artifact_status.get("structured_candidates") == "missing"
+    ):
+        return "standardize-needed"
+    if (
+        dry_run_apply_status.get("main_db_sync_dry_run_status") == "present"
+        and dry_run_apply_status.get("main_db_sync_result_status") != "present"
+    ):
+        return "main-db-apply-authorization"
+    if (
+        dry_run_apply_status.get("campaign_db_sync_dry_run_status") == "present"
+        and dry_run_apply_status.get("campaign_db_sync_result_status") != "present"
+    ):
+        return "campaign-db-apply-authorization"
+    return "status-review"
 
 
 def _contact(candidate: dict[str, Any]) -> dict[str, Any]:

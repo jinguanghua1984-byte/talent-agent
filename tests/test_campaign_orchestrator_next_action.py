@@ -19,6 +19,56 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
     )
 
 
+def _raw_without_structured(root: Path) -> Path:
+    _write_json(
+        root / "campaign-manifest.json",
+        {
+            "schema": "boss_app_recommendation_sourcing_manifest_v1",
+            "campaign_id": root.name,
+            "status": "raw_captured",
+        },
+    )
+    _write_jsonl(root / "raw" / "list-cards.jsonl", [{"candidate_key": "c1"}])
+    return root
+
+
+def _campaign_db_dry_run_pending(root: Path) -> Path:
+    _write_json(
+        root / "campaign-manifest.json",
+        {
+            "schema": "liepin_campaign_manifest_v1",
+            "campaign_id": root.name,
+            "status": "campaign_db_dry_run_ready",
+        },
+    )
+    _write_jsonl(root / "raw" / "list-cards.jsonl", [{"candidate_key": "c1"}])
+    _write_jsonl(root / "structured" / "candidates.jsonl", [{"candidate_key": "c1"}])
+    _write_json(root / "reports" / "campaign-db-sync-dry-run.json", {"would_write": 1})
+    return root
+
+
+def _feishu_dry_run_pending_publish(root: Path) -> Path:
+    _write_json(
+        root / "campaign-manifest.json",
+        {
+            "schema": "boss_maimai_delivery_manifest_v1",
+            "campaign_id": root.name,
+            "workflow_chain": ["agents/skills/boss-maimai-cross-channel-delivery/SKILL.md"],
+        },
+    )
+    _write_jsonl(root / "raw" / "list-cards.jsonl", [{"candidate_key": "c1"}])
+    _write_jsonl(root / "structured" / "candidates.jsonl", [{"candidate_key": "c1"}])
+    _write_json(root / "reports" / "main-db-sync-result.json", {"written": 1})
+    _write_json(root / "feishu" / "dry-run-results.json", {"status": "passed"})
+    return root
+
+
+def _feishu_publish_pending_im(root: Path) -> Path:
+    _feishu_dry_run_pending_publish(root)
+    _write_json(root / "feishu" / "boss-maimai-delivery-publish-results.json", {"status": "published"})
+    return root
+
+
 def _boss_maimai_blocked_campaign(root: Path) -> Path:
     _write_json(
         root / "campaign-manifest.json",
@@ -163,3 +213,69 @@ def test_campaign_orchestrator_next_action_cli(tmp_path: Path) -> None:
     payload = json.loads(completed.stdout)
     assert payload["next_stage"] == "maimai-match-session"
     assert payload["safe_commands"][0][2] == "scripts.platform_match.session"
+
+
+def test_next_action_suggests_standardize_when_raw_exists_without_structured(tmp_path: Path) -> None:
+    root = _raw_without_structured(tmp_path / "raw-only")
+
+    action = next_action(root)
+
+    assert action["next_stage"] == "standardize"
+    assert action["blocked_by"] == "missing_structured_candidates"
+    assert action["requires_user_authorization"] is False
+    assert "structured/candidates.jsonl" in action["summary"]["missing_artifacts"]
+    assert action["safe_commands"][0][:4] == [
+        ".venv/bin/python",
+        "-m",
+        "scripts.campaign_status",
+        "summarize",
+    ]
+
+
+def test_next_action_blocks_campaign_db_apply_until_confirm_text(tmp_path: Path) -> None:
+    root = _campaign_db_dry_run_pending(tmp_path / "campaign-db-pending")
+
+    action = next_action(root)
+
+    assert action["next_stage"] == "campaign-db-apply-authorization"
+    assert action["blocked_by"] == "requires_user_confirm"
+    assert action["required_confirm_text"] == "确认写入 Campaign DB"
+    assert action["requires_user_authorization"] is True
+    assert action["safe_commands"] == []
+    assert "reports/campaign-db-sync-result.json" in action["summary"]["missing_artifacts"]
+
+
+def test_next_action_suggests_feishu_publish_preflight_after_dry_run(tmp_path: Path) -> None:
+    root = _feishu_dry_run_pending_publish(tmp_path / "feishu-pending")
+
+    action = next_action(root)
+
+    assert action["next_stage"] == "feishu-publish-preflight"
+    assert action["blocked_by"] == "requires_feishu_publish"
+    assert action["requires_user_authorization"] is False
+    assert action["safe_commands"] == [
+        ["lark-cli", "doctor"],
+        ["lark-cli", "auth", "status"],
+    ]
+    assert "feishu/boss-maimai-delivery-publish-results.json" in action["summary"]["missing_artifacts"]
+
+
+def test_next_action_suggests_im_notification_after_feishu_publish(tmp_path: Path) -> None:
+    root = _feishu_publish_pending_im(tmp_path / "im-pending")
+
+    action = next_action(root)
+
+    assert action["next_stage"] == "feishu-im-notification"
+    assert action["blocked_by"] == "requires_im_notification"
+    assert action["requires_user_authorization"] is False
+    assert action["safe_commands"] == [
+        [
+            ".venv/bin/python",
+            "-m",
+            "scripts.campaign_orchestrator",
+            "next-action",
+            "--campaign-root",
+            str(root),
+        ]
+    ]
+    assert "feishu/im-notification-results.json" in action["summary"]["missing_artifacts"]

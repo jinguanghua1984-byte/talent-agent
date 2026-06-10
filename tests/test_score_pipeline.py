@@ -99,3 +99,95 @@ def test_run_pipeline_passes_provider_to_client(mocker):
 
     create_client.assert_called_once_with(provider="openai-compatible", model="deepseek-chat")
     assert result["ranked"] == []
+
+
+def test_run_pipeline_uses_route_model_when_model_is_not_explicit(mocker):
+    from scripts.score_pipeline import run_pipeline
+    from scripts.jd_analyzer import JDAnalysis
+
+    fake_client = mocker.MagicMock()
+    create_client = mocker.patch(
+        "scripts.score_pipeline.create_llm_client", return_value=fake_client
+    )
+    load_analysis = mocker.patch(
+        "scripts.score_pipeline.load_or_analyze",
+        return_value=JDAnalysis(
+            core_skills=["AI"],
+            supplement_skills=[],
+            position_type="AI产品经理",
+            experience_range=(3, 10),
+            education_requirement="本科",
+            industry_preference=[],
+            exclusion_criteria=[],
+            raw_jd="jd",
+            jd_hash="hash",
+        ),
+    )
+    mocker.patch("scripts.score_pipeline.screen_candidates", return_value=[])
+
+    result = run_pipeline(
+        jd_id="jd-test",
+        jd_text="jd",
+        candidates=[],
+        provider=None,
+        model=None,
+    )
+
+    create_client.assert_called_once_with(provider="anthropic", model="claude-sonnet-4-6")
+    load_analysis.assert_called_once()
+    assert load_analysis.call_args.kwargs["model"] == "claude-sonnet-4-6"
+    assert result["ranked"] == []
+
+
+def test_run_pipeline_passes_rank_budget_and_preserves_coarse_order(mocker):
+    from scripts.score_pipeline import run_pipeline
+    from scripts.coarse_screener import CoarseScore
+    from scripts.jd_analyzer import JDAnalysis
+
+    fake_client = mocker.MagicMock()
+    mocker.patch("scripts.score_pipeline.create_llm_client", return_value=fake_client)
+    mocker.patch(
+        "scripts.score_pipeline.load_or_analyze",
+        return_value=JDAnalysis(
+            core_skills=["AI"],
+            supplement_skills=[],
+            position_type="AI产品经理",
+            experience_range=(3, 10),
+            education_requirement="本科",
+            industry_preference=[],
+            exclusion_criteria=[],
+            raw_jd="jd",
+            jd_hash="hash",
+        ),
+    )
+    mocker.patch(
+        "scripts.score_pipeline.screen_candidates",
+        return_value=[
+            CoarseScore("c3", 91, ["AI"], [], []),
+            CoarseScore("c1", 88, ["AI"], [], []),
+            CoarseScore("c2", 77, ["AI"], [], []),
+        ],
+    )
+    rank_candidates = mocker.patch(
+        "scripts.score_pipeline.rank_candidates",
+        return_value=[],
+    )
+    candidates = [
+        {"id": "c1", "name": "候选人1"},
+        {"id": "c2", "name": "候选人2"},
+        {"id": "c3", "name": "候选人3"},
+    ]
+
+    result = run_pipeline(
+        jd_id="jd-test",
+        jd_text="jd",
+        candidates=candidates,
+        rank_limit=2,
+        candidate_evidence_max_chars=333,
+    )
+
+    passed_candidates = rank_candidates.call_args.args[2]
+    assert [candidate["id"] for candidate in passed_candidates] == ["c3", "c1", "c2"]
+    assert rank_candidates.call_args.kwargs["rank_limit"] == 2
+    assert rank_candidates.call_args.kwargs["candidate_evidence_max_chars"] == 333
+    assert result["ranked"] == []

@@ -11,6 +11,15 @@ description: 脉脉 unattended campaign 的 canonical workflow，约束搜索、
 - 用户要求继续执行已有 campaign、恢复中断任务、启动搜索执行、抓取详情、生成交付包或处理平台阻断恢复时，读取本 workflow 并按当前阶段继续。
 - 只接受已经落盘的 campaign 合同作为执行事实来源：`requirements.json`、`strategy.json`、`run-policy.json`、`search-implementation-plan.md` 和 `campaign-manifest.json`。
 
+## Shared Policies
+
+| 资源 | 用途 |
+| --- | --- |
+| `agents/policies/platform-automation-safety.md` | 平台自动化、`computer.operate`、CDP、外部执行器和平台阻断停机边界 |
+| `agents/policies/main-db-sync-gates.md` | Campaign DB 到主库 `data/talent.db` 的 dry-run/apply 门禁 |
+| `agents/policies/feishu-publish-gates.md` | 飞书发布、回读和 IM 完成通知门禁 |
+| `agents/policies/campaign-recovery.md` | 中断证据、continuation plan、磁盘事实源和下一步判断 |
+
 ## 安全边界
 
 - 真实执行阶段不自动导航、刷新、点击已进入执行态的脉脉业务页面。
@@ -20,7 +29,7 @@ description: 脉脉 unattended campaign 的 canonical workflow，约束搜索、
 
 ## 无人值守推进规则
 
-- 搜索计划生成完毕后只在计划确认点停一次；确认后自动启动 CDP 浏览器，加载 `data/session/maimai-cdp-profile` 和 `extensions/maimai-scraper`，不再提示负责人手动启动浏览器。
+- 搜索计划生成完毕后只在计划确认点停一次；确认后自动启动 CDP 浏览器，加载 `data/session/maimai-cdp-profile` 和 `extensions/maimai-scraper`，使用 `--remote-debugging-port=9888` 并健康检查 `http://127.0.0.1:9888`，不再提示负责人手动启动浏览器。
 - 确认进入无人值守后，搜索 clean dry-run 自动 apply 到 Campaign DB，列表全批次抓取完成后自动进入粗筛，生成 A/B/C/淘汰漏斗。
 - 详情默认只抓取 A+B；当 A+B+C 总数不超过 100 时抓取 A+B+C。详情健康检查通过、详情 dry-run clean 后自动 apply 到 Campaign DB。
 - 详情抓取完成后自动进入详评和精排，自动生成交付包并推送飞书；摘要内容和表格标题必须使用中文。
@@ -44,9 +53,9 @@ description: 脉脉 unattended campaign 的 canonical workflow，约束搜索、
 
 ## 停机条件
 
-遇到以下任一情况必须停止当前阶段，不得继续翻页、重试 apply 或推进下游：登录页、登录失效、验证码、安全页、403、429、432、非 JSON、HTML 响应、模板漂移、详情 partial capture。
+遇到以下任一情况必须按 `agents/policies/platform-automation-safety.md` 与 `agents/policies/campaign-recovery.md` 停止当前阶段，不得继续翻页、重试 apply 或推进下游：登录页、登录失效、验证码、安全页、403、429、432、非 JSON、HTML 响应、模板漂移、详情 partial capture。
 
-停机后必须保留已成功 raw 和中断证据，写入 `reports/interruption-*.json`，追加 `state/events.jsonl`，并更新 `state/continuation-plan.json` 作为下一次恢复的唯一计划入口。
+停机后必须保留已成功 raw 和中断证据，写入 `reports/interruption-*.json`，追加 `state/events.jsonl`，并更新 `state/continuation-plan.json` 作为下一次恢复的唯一计划入口；不得绕过 shared policy 的平台和恢复门禁。
 
 ## 恢复事实来源
 

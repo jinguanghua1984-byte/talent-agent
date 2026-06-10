@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -16,10 +15,9 @@ from scripts.pipeline_utils import (
     read_cache,
     write_cache,
 )
+from scripts.llm_usage import resolve_llm_route
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_MODEL = os.environ.get("LLM_MODEL", "intelligence")
 
 SCHEMA_VERSION = 1
 
@@ -122,10 +120,12 @@ def validate_analysis(analysis: JDAnalysis) -> list[str]:
 def analyze_jd(
     client: Any,
     jd_text: str,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
     max_retries: int = 3,
 ) -> JDAnalysis | None:
     """用 LLM 分析 JD 文本，返回结构化结果。"""
+    route = resolve_llm_route("jd-talent-delivery", "role-profile")
+    resolved_model = model or route.model
     jd_hash = compute_jd_hash(jd_text)
     prompt = JD_ANALYSIS_PROMPT.format(jd_text=jd_text)
     messages = [{"role": "user", "content": prompt}]
@@ -133,7 +133,13 @@ def analyze_jd(
     for attempt in range(max_retries):
         try:
             response_text = call_llm_with_retry(
-                client, model, messages, max_tokens=2048, max_retries=1,
+                client,
+                resolved_model,
+                messages,
+                max_tokens=route.max_tokens,
+                max_retries=1,
+                workflow=route.workflow,
+                stage=route.stage,
             )
             json_match = re.search(
                 r"```json\s*(.*?)\s*```", response_text, re.DOTALL
@@ -177,7 +183,7 @@ def load_or_analyze(
     jd_hash: str,
     cache_dir: Path,
     client: Any | None = None,
-    model: str = DEFAULT_MODEL,
+    model: str | None = None,
 ) -> JDAnalysis | None:
     """加载缓存或执行 JD 分析。"""
     analysis_path = cache_dir / "analysis.json"
@@ -195,7 +201,8 @@ def load_or_analyze(
 
     if client is None:
         from scripts.pipeline_utils import create_llm_client
-        client = create_llm_client()
+        route = resolve_llm_route("jd-talent-delivery", "role-profile")
+        client = create_llm_client(provider=route.provider, model=model or route.model)
 
     logger.info("开始 JD 分析...")
     analysis = analyze_jd(client, jd_text, model)

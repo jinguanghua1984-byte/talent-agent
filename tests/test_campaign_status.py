@@ -125,6 +125,61 @@ def test_summarize_campaign_reads_boss_maimai_artifacts_without_side_effects(tmp
     assert not (root / "reports" / "campaign-status-summary.json").exists()
 
 
+def test_summarize_campaign_reports_missing_structured_candidates_and_stage(tmp_path: Path) -> None:
+    root = tmp_path / "raw-only"
+    _write_json(
+        root / "campaign-manifest.json",
+        {
+            "schema": "boss_app_recommendation_sourcing_manifest_v1",
+            "campaign_id": "raw-only",
+            "status": "raw_captured",
+        },
+    )
+    _append_jsonl(
+        root / "raw" / "list-cards.jsonl",
+        [{"candidate_key": "c1"}, {"candidate_key": "c2"}],
+    )
+
+    summary = summarize_campaign(root)
+
+    assert summary["artifact_status"]["raw_list_cards"] == "present"
+    assert summary["artifact_status"]["structured_candidates"] == "missing"
+    assert "structured/candidates.jsonl" in summary["missing_artifacts"]
+    assert summary["derived_stage"] == "standardize-needed"
+
+
+def test_summarize_campaign_reports_db_and_feishu_artifact_status(tmp_path: Path) -> None:
+    root = tmp_path / "db-feishu-pending"
+    _write_json(
+        root / "campaign-manifest.json",
+        {
+            "schema": "boss_app_recommendation_sourcing_manifest_v1",
+            "campaign_id": "db-feishu-pending",
+            "status": "ready_for_sync",
+        },
+    )
+    _append_jsonl(root / "raw" / "list-cards.jsonl", [{"candidate_key": "c1"}])
+    _append_jsonl(root / "structured" / "candidates.jsonl", [{"candidate_key": "c1"}])
+    _write_json(root / "reports" / "campaign-db-sync-dry-run.json", {"would_write": 1})
+    _write_json(root / "reports" / "main-db-sync-dry-run.json", {"created": {"candidates": 1}})
+    _write_json(root / "feishu" / "dry-run-results.json", {"status": "passed"})
+
+    summary = summarize_campaign(root)
+
+    assert summary["artifact_status"]["campaign_db_sync_dry_run"] == "present"
+    assert summary["artifact_status"]["campaign_db_sync_result"] == "missing"
+    assert summary["artifact_status"]["main_db_sync_dry_run"] == "present"
+    assert summary["artifact_status"]["main_db_sync_result"] == "missing"
+    assert summary["artifact_status"]["feishu_dry_run_results"] == "present"
+    assert summary["artifact_status"]["feishu_publish_results"] == "missing"
+    assert summary["artifact_status"]["feishu_readback_results"] == "missing"
+    assert summary["artifact_status"]["im_notification_results"] == "missing"
+    assert summary["dry_run_apply_status"]["campaign_db_sync_dry_run_status"] == "present"
+    assert summary["dry_run_apply_status"]["feishu_dry_run_status"] == "passed"
+    assert summary["derived_stage"] == "main-db-apply-authorization"
+    assert "reports/main-db-sync-result.json" in summary["missing_artifacts"]
+
+
 def test_campaign_status_cli_outputs_json_and_markdown(tmp_path: Path) -> None:
     root = _boss_maimai_campaign(tmp_path / "boss-maimai-demo")
 

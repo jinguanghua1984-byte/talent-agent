@@ -122,6 +122,9 @@ def test_capabilities_include_local_app_operations():
     text = (ROOT / "agents" / "capabilities.md").read_text(encoding="utf-8")
     assert "`computer.operate`" in text
     assert "本地 App" in text
+    assert "任务级授权边界" in text
+    assert "agents/policies/feishu-publish-gates.md" in text
+    assert "dry-run 与回读通过后的发布/通知链路不再逐动作 `human.confirm`" in text
 
 
 def test_agent_collaboration_gates_document_defines_tool_boundaries():
@@ -225,7 +228,7 @@ def test_boss_app_sourcing_contracts_define_contact_audit_gates():
         assert "`allow_real_contact=true`" in text
         assert "`allow_live_contact_test=true`" in text
         assert "默认" in text
-        assert "不点击" in text
+        assert "Computer Use 不直接点击" in text
 
     assert "`allow_real_contact=true`" in s6b
     assert "`allow_live_contact_test=true`" in s6b
@@ -249,6 +252,43 @@ def test_boss_app_sourcing_contracts_define_contact_audit_gates():
     assert "`state/events.jsonl`" in workflow
 
 
+def test_boss_app_sourcing_contracts_default_to_real_executor_contact_without_count_limit():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-app-recommendation-sourcing"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-app-recommendation-sourcing"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+    s6a_text = markdown_section(workflow, "S6a 外部执行器 handoff")
+    s7_text = markdown_section(workflow, "S7 列表滚动与结束")
+
+    for text in (skill, workflow):
+        assert 'contact_mode="external_executor"' in text
+        assert "`allow_real_contact=true`" in text
+        assert "默认可以点击 `立即沟通`" in text
+        assert "无需另行明确授权" in text
+        assert "未明确沟通次数上限" in text
+        assert "不设置本地人数上限" in text
+        assert "平台明确提示次数用尽" in text
+        assert "默认 `contact_mode=dry_run`" not in text
+        assert "默认 `allow_real_contact=false`" not in text
+        assert "默认绝不点击 `立即沟通`" not in text
+
+    assert "默认真实触达模式" in s6a_text
+    assert "直接通过 `shell.run` 调用" in s6a_text
+    assert "不再逐人二次确认" in s6a_text
+    assert "`max_contacts_per_day=null`" in s6a_text
+    assert "平台明确提示次数用尽" in s7_text
+
+
 def test_boss_app_sourcing_contracts_define_external_executor_handoff():
     skill = (
         ROOT
@@ -264,7 +304,7 @@ def test_boss_app_sourcing_contracts_define_external_executor_handoff():
         / "boss-app-recommendation-sourcing"
         / "AGENT.md"
     ).read_text(encoding="utf-8")
-    s6 = workflow.index("### S6 沟通 dry-run")
+    s6 = workflow.index("### S6 沟通意图记录")
     s6a = workflow.index("### S6a 外部执行器 handoff")
     s6b = workflow.index("### S6b live-test 真实沟通")
     s6a_text = markdown_section(workflow, "S6a 外部执行器 handoff")
@@ -279,7 +319,7 @@ def test_boss_app_sourcing_contracts_define_external_executor_handoff():
         assert "`executor-policy.json`" in text
         assert "外部执行器" in text
         assert "Codex" in text
-        assert "campaign 级" in text
+        assert "默认真实触达模式" in text
         assert "不再逐人" in text
 
     for artifact in [
@@ -337,6 +377,156 @@ def test_boss_app_sourcing_contracts_lock_computer_use_browsing_boundary():
 
     assert "Computer Use 缺失" in workflow
     assert "state/continuation-plan.json" in workflow
+
+
+def test_boss_app_sourcing_contracts_require_scanning_until_list_end_or_contact_limit():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-app-recommendation-sourcing"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-app-recommendation-sourcing"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+    s7_text = markdown_section(workflow, "S7 列表滚动与结束")
+
+    for text in (skill, workflow):
+        assert "未遇到合适人选不得停止" not in text
+        assert "发现合格人选并完成对应的 dry-run contact" not in text
+        assert "合格人选后继续扫描" in text
+        assert "继续扫描" in text
+        assert "列表循环到底部" in text
+        assert "立即沟通当日限额达到上限" in text
+        assert "平台明确提示次数用尽" in text
+        assert "列表耗尽" in text
+        assert "当前屏" in text
+        assert "当前批次" in text
+
+    assert "当前屏或当前批次没有 `contact` 人选" in s7_text
+    assert "不得进入 S8" in s7_text
+    assert "发现合格人选并完成对应的 dry-run contact" not in s7_text
+    assert "只有满足以下任一条件才允许正常结束 BOSS 列表扫描" in s7_text
+    assert "列表循环到底部" in s7_text
+    assert "立即沟通当日限额达到上限" in s7_text
+    assert "平台明确提示次数用尽" in s7_text
+    assert "`list_end_stall_scrolls`" in s7_text
+    assert "列表耗尽" in s7_text
+
+
+def test_boss_app_sourcing_contracts_preserve_explicit_video_signal_before_visual_boundary_skip():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-app-recommendation-sourcing"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-app-recommendation-sourcing"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (skill, workflow):
+        assert "视频算法" in text
+        assert "语音/视频/图形" in text
+        assert "不得仅因同屏出现视觉、图像处理、图形、XR 等边界词直接跳过" in text
+        assert "边界风险" in text
+
+
+def test_boss_app_sourcing_contracts_define_generic_signal_priority_policy():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-app-recommendation-sourcing"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-app-recommendation-sourcing"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (skill, workflow):
+        assert "硬排除" in text
+        assert "正向信号" in text
+        assert "边界风险" in text
+        assert "搜索、广告、推荐、NLP" in text
+        assert "视频生成/编辑/理解" in text
+        assert "视频数据链路" in text
+        assert "AIGC" in text
+        assert "VLM" in text
+        assert "Diffusion" in text
+        assert "世界模型" in text
+        assert "VLA" in text
+        assert "音视频工程、编解码、SDK、流媒体" in text
+        assert "不得作为单独 skip 理由" in text
+        assert "优先进入详情核实" in text
+
+
+def test_boss_maimai_cross_channel_preserves_boundary_candidates_for_delivery_risks():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-maimai-cross-channel-delivery"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-maimai-cross-channel-delivery"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (skill, workflow):
+        assert "通用信号优先级" in text
+        assert "搜索/广告/推荐/NLP" in text
+        assert "`contact` 或 strong `hold`" in text
+        assert "视觉、图像、图形、XR、3D、CV" in text
+        assert "音视频工程、编解码、SDK、流媒体" in text
+        assert "不得在" in text
+        assert "单独排除理由" in text
+        assert "交付说明" in text
+
+
+def test_boss_maimai_cross_channel_requires_completed_boss_scan_not_first_hit():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-maimai-cross-channel-delivery"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-maimai-cross-channel-delivery"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (skill, workflow):
+        assert "直到发现合格人选" not in text
+        assert "已发现合格人选，或已确认列表耗尽" not in text
+        assert "合格人选后继续扫描" in text
+        assert "列表循环到底部" in text
+        assert "立即沟通当日限额达到上限" in text
+        assert "平台明确提示次数用尽" in text
+        assert "当前屏" in text
+        assert "当前批次" in text
 
 
 def test_liepin_contracts_define_broad_recall_adaptive_planning_boundary():
@@ -458,6 +648,17 @@ def test_boss_maimai_cross_channel_s10_is_campaign_delivery_not_jd_default():
     assert "feishu/boss-maimai-delivery-manifest.json" in s10
     assert "feishu/im-notification-message.txt" in s10
     assert "feishu/im-notification-results.json" in s10
+    assert "JD需求交付" in s10
+    assert "drive +import --type docx" in s10
+    assert "sheets +create" in s10
+    assert "sheets +append" in s10
+    assert "readback_expectations" in s10
+    assert "BOSS寻访交付报告" in s10
+    assert "BOSS跟进表" in s10
+    assert "Wiki/Doc/Sheet" in s10
+    assert "无法挂到目标知识库" in s10
+    assert "无法回读" in s10
+    assert "S10 停止" in s10
     assert "reports/boss-maimai-delivery-quality-gates.json" in s10
     assert "follow_up_row_count == real_contact_count" in s10
     assert "飞书发布和回读通过后" in s10
@@ -503,7 +704,7 @@ def test_boss_maimai_cross_channel_reuses_maimai_cdp_unattended_contract():
     for token in [
         "agents/workflows/maimai-unattended-campaign/AGENT.md",
         "auto_bootstrap_browser_after_plan_confirmation=true",
-        "不再提示负责人手动启动浏览器",
+        "确认后不得提示负责人手动启动浏览器",
         "data/session/maimai-cdp-profile",
         "extensions/maimai-scraper",
         "--remote-debugging-port=9888",
@@ -516,7 +717,6 @@ def test_boss_maimai_cross_channel_reuses_maimai_cdp_unattended_contract():
     ]:
         assert token in workflow
 
-    assert "不得提示负责人手动启动浏览器" in workflow
     assert "不得要求 Campaign DB clean dry-run 后再次人工确认" in workflow
     assert "主库写入不包含在无人值守授权内" in workflow
 
@@ -606,3 +806,131 @@ def test_liepin_contracts_define_detail_smoke_boundary():
     assert "后续 live detail 扩大执行必须另起确认点" in workflow
     assert "Full detail live execution recovery" in workflow
     assert "全部 target 已经是 terminal job 时不得连接 CDP" in workflow
+
+
+POLICY_CONTRACTS = {
+    "platform-automation-safety": [
+        "Computer Use",
+        "外部执行器",
+        "不得使用 osascript",
+        "坐标点击",
+        "CDP",
+        "登录",
+        "验证码",
+        "安全页",
+        "state/continuation-plan.json",
+    ],
+    "main-db-sync-gates": [
+        "Campaign DB",
+        "`data/talent.db`",
+        "`talent_sync.py export`",
+        "`verify-bundle`",
+        "`talent_sync.py import`",
+        "`CONFIRM_SYNC_TEXT`",
+        "确认同步人才库",
+        "一次总授权",
+        "不得自动执行主库同步",
+    ],
+    "feishu-publish-gates": [
+        "lark-cli",
+        "dry-run",
+        "回读",
+        "`JD需求交付`",
+        "`JD需求协同`",
+        "`im +chat-search`",
+        "`im +messages-send`",
+        "`feishu/im-notification-results.json`",
+        "blocked_notification_failed",
+    ],
+    "campaign-recovery": [
+        "`reports/interruption-*.json`",
+        "`state/continuation-plan.json`",
+        "`state/events.jsonl`",
+        "`state/request-ledger.jsonl`",
+        "磁盘事实",
+        "campaign_status summarize",
+        "next-action",
+        "不得盲信内存上下文",
+    ],
+}
+
+
+def test_shared_policy_files_define_reusable_contracts():
+    for name, required_tokens in POLICY_CONTRACTS.items():
+        path = ROOT / "agents" / "policies" / f"{name}.md"
+        assert path.exists(), f"missing shared policy: {path}"
+        text = path.read_text(encoding="utf-8")
+        assert text.startswith("# ")
+        for token in required_tokens:
+            assert token in text, f"{path} missing policy token: {token}"
+
+
+WORKFLOW_POLICY_REFERENCES = {
+    "boss-maimai-cross-channel-delivery": [
+        "agents/policies/platform-automation-safety.md",
+        "agents/policies/main-db-sync-gates.md",
+        "agents/policies/feishu-publish-gates.md",
+        "agents/policies/campaign-recovery.md",
+    ],
+    "jd-talent-delivery": [
+        "agents/policies/main-db-sync-gates.md",
+        "agents/policies/feishu-publish-gates.md",
+        "agents/policies/campaign-recovery.md",
+    ],
+    "liepin-unattended-campaign": [
+        "agents/policies/platform-automation-safety.md",
+        "agents/policies/main-db-sync-gates.md",
+        "agents/policies/campaign-recovery.md",
+    ],
+    "maimai-unattended-campaign": [
+        "agents/policies/platform-automation-safety.md",
+        "agents/policies/main-db-sync-gates.md",
+        "agents/policies/feishu-publish-gates.md",
+        "agents/policies/campaign-recovery.md",
+    ],
+}
+
+
+def test_workflows_reference_shared_policies_for_reused_gates():
+    for workflow_name, required_refs in WORKFLOW_POLICY_REFERENCES.items():
+        workflow = (
+            ROOT / "agents" / "workflows" / workflow_name / "AGENT.md"
+        ).read_text(encoding="utf-8")
+        for ref in required_refs:
+            assert ref in workflow, f"{workflow_name} missing shared reference {ref}"
+
+
+WORKFLOW_LINE_BUDGETS = {
+    "boss-maimai-cross-channel-delivery": 190,
+    "jd-talent-delivery": 215,
+    "liepin-unattended-campaign": 265,
+    "public-search": 260,
+}
+
+
+def test_compressed_workflows_stay_within_line_budgets():
+    for workflow_name, max_lines in WORKFLOW_LINE_BUDGETS.items():
+        path = ROOT / "agents" / "workflows" / workflow_name / "AGENT.md"
+        lines = path.read_text(encoding="utf-8").splitlines()
+        assert len(lines) <= max_lines, f"{workflow_name} has {len(lines)} lines"
+
+
+def test_public_search_commands_reference_preserves_execution_contract():
+    workflow = (
+        ROOT / "agents" / "workflows" / "public-search" / "AGENT.md"
+    ).read_text(encoding="utf-8")
+    commands = (
+        ROOT / "agents" / "workflows" / "public-search" / "commands.md"
+    ).read_text(encoding="utf-8")
+
+    assert "agents/workflows/public-search/commands.md" in workflow
+    for token in [
+        "Token Tracker",
+        "scripts/public_search/token_tracker.py",
+        "data/token-tracker/tokens.jsonl",
+        "搜索反馈",
+        "迭代循环",
+        "策略沉淀",
+        "放弃记录",
+    ]:
+        assert token in commands
