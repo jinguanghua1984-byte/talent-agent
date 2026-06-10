@@ -78,6 +78,7 @@ def test_init_campaign_creates_contract_tree(tmp_path: Path) -> None:
         "state/continuation-plan.json",
         "structured/candidates.jsonl",
         "structured/contact-decisions.jsonl",
+        "executor-policy.json",
         "reports/sourcing-summary.md",
         "reports/sourcing-summary.json",
     ]:
@@ -85,13 +86,53 @@ def test_init_campaign_creates_contract_tree(tmp_path: Path) -> None:
 
     policy = read_json(root / "run-policy.json")
     assert policy["execution_surface"] == "boss_app_computer_use"
-    assert policy["contact_mode"] == "dry_run"
+    assert policy["contact_mode"] == "external_executor"
+    assert policy["allow_real_contact"] is True
     assert policy["allow_live_contact_test"] is False
     assert policy["live_contact_test_limit"] == 0
+    assert policy["external_executor_contact_limit"] is None
+    assert policy["external_executor_stop_policy"] == "platform_limit_or_list_end"
+
+    executor_policy = read_json(root / "executor-policy.json")
+    assert executor_policy["schema"] == "boss_contact_executor_policy_v1"
+    assert executor_policy["allow_real_contact"] is True
+    assert executor_policy["max_contacts_per_run"] == 1
+    assert executor_policy["max_contacts_per_day"] is None
 
     requirements = read_json(root / "requirements.json")
     assert requirements["filters_text"] == "优先 AI 产品，985 本科以上，年龄 28-35"
     assert requirements["input_mode"] == "post_jd_recommendation_filters"
+
+    strategy = read_json(root / "strategy.json")
+    screening_policy = strategy["screening_policy"]
+    assert "hard_exclusions" in screening_policy
+    assert "positive_signal_priority" in screening_policy
+    assert "boundary_risk_terms" in screening_policy
+    assert "boundary_risk_handling" in screening_policy
+    assert "target_company_sparse_signal_policy" in screening_policy
+    assert any("search" in item for item in screening_policy["hard_exclusions"])
+    assert any("video generation" in item for item in screening_policy["positive_signal_priority"])
+    assert "graphics" in screening_policy["boundary_risk_terms"]
+    assert "not a sole skip reason" in screening_policy["boundary_risk_handling"]
+    assert "prefer enter_detail" in screening_policy["target_company_sparse_signal_policy"]
+
+
+def test_init_campaign_can_be_explicit_dry_run(tmp_path: Path) -> None:
+    result = boss_app_sourcing.init_campaign(
+        campaign_id="boss-app-dry-run",
+        filters_text="只记录不触达",
+        out_base=tmp_path,
+        allow_real_contact=False,
+    )
+
+    root = Path(result["campaign_root"])
+    policy = read_json(root / "run-policy.json")
+    assert policy["contact_mode"] == "dry_run"
+    assert policy["allow_real_contact"] is False
+
+    executor_policy = read_json(root / "executor-policy.json")
+    assert executor_policy["allow_real_contact"] is False
+    assert executor_policy["max_contacts_per_day"] is None
 
 
 def test_init_campaign_rejects_existing_campaign_without_overwrite(tmp_path: Path) -> None:
@@ -135,6 +176,7 @@ def test_init_campaign_rejects_live_contact_without_real_contact(tmp_path: Path)
             campaign_id="bad",
             filters_text="AI 产品",
             out_base=tmp_path,
+            allow_real_contact=False,
             allow_live_contact_test=True,
             live_contact_test_limit=1,
         )
@@ -235,9 +277,56 @@ def test_init_cli_prints_manifest_json(tmp_path: Path, capsys) -> None:
     root = Path(manifest["campaign_root"])
     assert root == tmp_path / "boss-app-cli"
     policy = read_json(root / "run-policy.json")
+    assert policy["contact_mode"] == "live_test"
     assert policy["allow_real_contact"] is True
-    assert policy["allow_live_contact_test"] is True
-    assert policy["live_contact_test_limit"] == 2
+
+
+def test_init_cli_defaults_to_external_executor_contact(tmp_path: Path, capsys) -> None:
+    exit_code = boss_app_sourcing.main([
+        "init",
+        "--campaign-id",
+        "boss-app-cli-default-contact",
+        "--filters-text",
+        "看多模态视频算法",
+        "--out-base",
+        str(tmp_path),
+        "--date",
+        "2026-06-09",
+    ])
+
+    assert exit_code == 0
+    manifest = json.loads(capsys.readouterr().out)
+    root = Path(manifest["campaign_root"])
+    policy = read_json(root / "run-policy.json")
+    executor_policy = read_json(root / "executor-policy.json")
+    assert policy["contact_mode"] == "external_executor"
+    assert policy["allow_real_contact"] is True
+    assert executor_policy["allow_real_contact"] is True
+    assert executor_policy["max_contacts_per_day"] is None
+
+
+def test_init_cli_can_disable_real_contact(tmp_path: Path, capsys) -> None:
+    exit_code = boss_app_sourcing.main([
+        "init",
+        "--campaign-id",
+        "boss-app-cli-dry-run",
+        "--filters-text",
+        "看多模态视频算法",
+        "--out-base",
+        str(tmp_path),
+        "--date",
+        "2026-06-09",
+        "--no-real-contact",
+    ])
+
+    assert exit_code == 0
+    manifest = json.loads(capsys.readouterr().out)
+    root = Path(manifest["campaign_root"])
+    policy = read_json(root / "run-policy.json")
+    executor_policy = read_json(root / "executor-policy.json")
+    assert policy["contact_mode"] == "dry_run"
+    assert policy["allow_real_contact"] is False
+    assert executor_policy["allow_real_contact"] is False
 
 
 def test_jsonl_append_loads_all_rows_without_truncating(tmp_path: Path) -> None:
@@ -1386,6 +1475,91 @@ def test_validate_executor_artifacts_reports_invalid_sent_protocol(tmp_path: Pat
     assert "executor_result.sent_missing_real_name" in validation["issues"]
     assert "executor_result.sent_invalid_message_status" in validation["issues"]
     assert "executor_result.intent_mismatch" in validation["issues"]
+
+
+def test_validate_executor_artifacts_accepts_manual_verified_sent_unverified_decision(tmp_path: Path) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    boss_app_sourcing.record_approved_contact_queue_item(root, candidate_key)
+    intent = boss_app_sourcing.write_current_contact_intent(
+        root,
+        candidate_key,
+        now_text="2026-06-02T10:00:00+08:00",
+    )
+    boss_app_sourcing.write_json(root / "state/executor-result.json", {
+        "schema": "boss_executor_result_v1",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "result": "sent_unverified",
+        "button_before_click": "立即沟通",
+        "message_template_id": "boss-current-preset",
+        "message_status": "送达",
+        "stopped_reason": "communication_result_unverified",
+    })
+    boss_app_sourcing.append_jsonl(root / "raw/executor-contact-attempts.jsonl", {
+        "schema": "boss_contact_attempt_event_v1",
+        "event_type": "attempt_started",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+    })
+    boss_app_sourcing.append_jsonl(root / "raw/executor-contact-attempts.jsonl", {
+        "schema": "boss_contact_attempt_event_v1",
+        "event_type": "attempt_finished",
+        "intent_id": intent["intent_id"],
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "result": "sent_unverified",
+        "button_before_click": "立即沟通",
+    })
+    boss_app_sourcing.append_jsonl(root / "structured/contact-decisions.jsonl", {
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "mode": "external_executor",
+        "would_contact": True,
+        "button_seen": "立即沟通",
+        "action_confirmed": True,
+        "contacted": True,
+        "already_contacted": False,
+        "preset_message_auto_sent": True,
+        "message_template_id": "boss-current-preset",
+        "message_status": "送达",
+        "executor_intent_id": intent["intent_id"],
+        "executor_result": "sent_unverified_manual_delivered",
+        "real_name_status": "missing",
+        "manual_review_note": "沟通页消息状态送达；页面未暴露完整候选人实名。",
+    })
+
+    validation = boss_app_sourcing.validate_executor_artifacts(root)
+
+    assert validation["status"] == "passed"
+    assert validation["issues"] == []
+
+
+def test_validate_executor_artifacts_accepts_legacy_manual_verified_decision_without_intent(tmp_path: Path) -> None:
+    root, candidate_key = _contact_candidate_for_executor(tmp_path)
+    boss_app_sourcing.append_jsonl(root / "structured/contact-decisions.jsonl", {
+        "campaign_id": root.name,
+        "candidate_key": candidate_key,
+        "mode": "external_executor",
+        "would_contact": True,
+        "button_seen": "立即沟通",
+        "action_confirmed": True,
+        "contacted": True,
+        "already_contacted": False,
+        "preset_message_auto_sent": True,
+        "message_template_id": "boss-current-preset",
+        "message_status": "送达",
+        "executor_intent_id": None,
+        "executor_result": "sent_unverified_manual_delivered",
+        "real_name_status": "missing",
+        "manual_review_note": "历史人工核实：沟通页消息状态送达；页面未暴露完整候选人实名。",
+    })
+
+    validation = boss_app_sourcing.validate_executor_artifacts(root)
+
+    assert validation["status"] == "passed"
+    assert validation["issues"] == []
 
 
 def test_raw_detail_and_communication_records_include_recovery_fields(tmp_path: Path) -> None:

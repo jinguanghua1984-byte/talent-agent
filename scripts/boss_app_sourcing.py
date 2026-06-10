@@ -20,6 +20,7 @@ EXECUTOR_ATTEMPT_SCHEMA = "boss_contact_attempt_event_v1"
 EXECUTOR_LOCK_SCHEMA = "boss_executor_lock_v1"
 VALID_SENT_MESSAGE_STATUSES = {"送达", "已读", "已触达"}
 SUPPORTED_EXECUTOR_RESULTS = {"dry_run_ready", "sent", "skipped_continue_chat", "sent_unverified", "stopped"}
+MANUAL_VERIFIED_EXECUTOR_RESULTS = {"sent_unverified_manual_delivered"}
 EXECUTOR_IDENTITY_FIELDS = ["intent_id", "campaign_id", "candidate_key"]
 VALID_REAL_NAME_SOURCES = {
     "communication_page_after_live_contact_test",
@@ -29,8 +30,8 @@ VALID_REAL_NAME_SOURCES = {
 
 DEFAULT_RUN_POLICY: dict[str, Any] = {
     "execution_surface": "boss_app_computer_use",
-    "contact_mode": "dry_run",
-    "allow_real_contact": False,
+    "contact_mode": "external_executor",
+    "allow_real_contact": True,
     "allow_live_contact_test": False,
     "live_contact_test_limit": 0,
     "require_action_time_confirmation_for_real_contact": True,
@@ -39,6 +40,8 @@ DEFAULT_RUN_POLICY: dict[str, Any] = {
     "stop_on_captcha": True,
     "stop_on_ui_template_drift": True,
     "list_end_stall_scrolls": 3,
+    "external_executor_contact_limit": None,
+    "external_executor_stop_policy": "platform_limit_or_list_end",
 }
 
 REQUIRED_EMPTY_FILES = [
@@ -65,6 +68,10 @@ BOOLEAN_POLICY_FIELDS = [
 INTEGER_POLICY_FIELDS = [
     "live_contact_test_limit",
     "list_end_stall_scrolls",
+]
+
+OPTIONAL_INTEGER_POLICY_FIELDS = [
+    "external_executor_contact_limit",
 ]
 
 
@@ -171,10 +178,15 @@ def validate_run_policy(policy: dict[str, Any]) -> dict[str, Any]:
     for field in INTEGER_POLICY_FIELDS:
         if isinstance(merged[field], bool) or not isinstance(merged[field], int):
             raise ValueError(f"{field} must be integer")
+    for field in OPTIONAL_INTEGER_POLICY_FIELDS:
+        if merged[field] is not None and (isinstance(merged[field], bool) or not isinstance(merged[field], int)):
+            raise ValueError(f"{field} must be integer or null")
     if merged["execution_surface"] != "boss_app_computer_use":
         raise ValueError("execution_surface must be boss_app_computer_use")
-    if merged["contact_mode"] not in {"dry_run", "live_test"}:
-        raise ValueError("contact_mode must be dry_run or live_test")
+    if merged["contact_mode"] not in {"dry_run", "external_executor", "live_test"}:
+        raise ValueError("contact_mode must be dry_run, external_executor, or live_test")
+    if merged["contact_mode"] == "external_executor" and not merged["allow_real_contact"]:
+        merged["contact_mode"] = "dry_run"
     if merged["contact_mode"] == "live_test":
         if not merged["allow_real_contact"]:
             raise ValueError("contact_mode live_test requires allow_real_contact")
@@ -192,11 +204,38 @@ def validate_run_policy(policy: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("live_contact_test_limit must be non-negative")
     if merged["list_end_stall_scrolls"] <= 0:
         raise ValueError("list_end_stall_scrolls must be positive")
+    if (
+        merged["external_executor_contact_limit"] is not None
+        and merged["external_executor_contact_limit"] <= 0
+    ):
+        raise ValueError("external_executor_contact_limit must be positive when set")
+    if merged["external_executor_stop_policy"] != "platform_limit_or_list_end":
+        raise ValueError("external_executor_stop_policy must be platform_limit_or_list_end")
     if merged["allow_live_contact_test"]:
         merged["contact_mode"] = "live_test"
     if not merged["allow_live_contact_test"]:
         merged["live_contact_test_limit"] = 0
     return merged
+
+
+def default_executor_policy(campaign_id: str, run_policy: dict[str, Any], root: Path) -> dict[str, Any]:
+    return {
+        "schema": "boss_contact_executor_policy_v1",
+        "campaign_id": campaign_id,
+        "allow_real_contact": bool(run_policy["allow_real_contact"]),
+        "operator_acknowledgement": "I understand this sends real messages to third-party candidates.",
+        "max_contacts_per_run": 1,
+        "max_contacts_per_day": run_policy.get("external_executor_contact_limit"),
+        "message_template_id": "boss-current-preset",
+        "require_execute_flag": True,
+        "skip_continue_chat": True,
+        "stop_on_paid_prompt": True,
+        "stop_on_captcha": True,
+        "stop_on_login_or_security_page": True,
+        "stop_on_unknown_ui": True,
+        "capture_real_name_after_contact": True,
+        "kill_switch_path": str(root / "state/stop-executor.flag"),
+    }
 
 
 def _initial_requirements(filters_text: str, campaign_id: str, date_text: str) -> dict[str, Any]:
@@ -216,6 +255,39 @@ def _initial_requirements(filters_text: str, campaign_id: str, date_text: str) -
 def _initial_strategy(filters_text: str) -> dict[str, Any]:
     return {
         "strategy_version": "boss_app_recommendation_sourcing_v1",
+        "screening_policy": {
+            "hard_exclusions": [
+                "current company is outside user-confirmed target company scope",
+                "user-confirmed excluded domains such as search, advertising, recommendation, NLP, or voice-only roles",
+            ],
+            "positive_signal_priority": [
+                "explicit JD-critical signals should send target-company candidates to detail review before boundary-risk skips",
+                "for video or multimodal roles, explicit video algorithm, video generation, video editing, video understanding, video data pipeline, audio/video/graphics job target, AIGC, multimodal, VLM, Diffusion, world model, or VLA evidence is a positive signal",
+                "if detail text confirms JD-critical video or multimodal evidence, classify as contact or hold before applying visual/image/graphics boundary exclusions",
+            ],
+            "boundary_risk_terms": [
+                "vision",
+                "image",
+                "graphics",
+                "XR",
+                "3D",
+                "CV",
+                "audio/video engineering",
+                "codec",
+                "SDK",
+                "streaming media",
+            ],
+            "boundary_risk_handling": (
+                "boundary-risk terms are not a sole skip reason when explicit JD-critical "
+                "positive signals exist; record them in risks and downgrade to hold/contact "
+                "according to evidence strength"
+            ),
+            "target_company_sparse_signal_policy": (
+                "when the current company is in target scope and the list card shows an "
+                "algorithm, deep learning, AIGC, multimodal, or research role but sparse "
+                "direction evidence, prefer enter_detail over list-stage skip"
+            ),
+        },
         "list_screening": {
             "input_text": filters_text,
             "enter_detail_when": "candidate appears likely to satisfy the filters",
@@ -232,7 +304,7 @@ def init_campaign(
     filters_text: str,
     out_base: str | Path = "data/campaigns",
     date_text: str | None = None,
-    allow_real_contact: bool = False,
+    allow_real_contact: bool = True,
     allow_live_contact_test: bool = False,
     live_contact_test_limit: int = 0,
 ) -> dict[str, Any]:
@@ -269,6 +341,7 @@ def init_campaign(
     write_json(root / "requirements.json", requirements)
     write_json(root / "strategy.json", strategy)
     write_json(root / "run-policy.json", policy)
+    write_json(root / "executor-policy.json", default_executor_policy(normalized_campaign_id, policy, root))
     write_json(root / "campaign-manifest.json", manifest)
     write_json(root / "state/continuation-plan.json", {
         "stage": "initialized",
@@ -1086,6 +1159,12 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
         if row.get("event_type") in {"attempt_finished", "attempt_dry_run"}
         and row.get("result") == "sent"
     }
+    manual_verified_attempt_keys = {
+        _executor_identity_key(row)
+        for row in attempts
+        if row.get("event_type") in {"attempt_finished", "attempt_dry_run"}
+        and row.get("result") == "sent_unverified"
+    }
     for row in decisions:
         if row.get("mode") != "external_executor":
             continue
@@ -1094,7 +1173,21 @@ def validate_executor_artifacts(campaign_root: str | Path) -> dict[str, Any]:
             str(row.get("campaign_id") or ""),
             str(row.get("candidate_key") or ""),
         )
-        if decision_identity not in sent_attempt_keys:
+        is_manual_verified = (
+            row.get("executor_result") in MANUAL_VERIFIED_EXECUTOR_RESULTS
+            and row.get("contacted") is True
+            and row.get("message_status") in VALID_SENT_MESSAGE_STATUSES
+            and decision_identity in manual_verified_attempt_keys
+        )
+        is_legacy_manual_verified = (
+            row.get("executor_result") in MANUAL_VERIFIED_EXECUTOR_RESULTS
+            and row.get("contacted") is True
+            and row.get("message_status") in VALID_SENT_MESSAGE_STATUSES
+            and not str(row.get("executor_intent_id") or "")
+            and row.get("candidate_key") in candidates_by_key
+            and bool(_clean_text(row.get("manual_review_note")))
+        )
+        if decision_identity not in sent_attempt_keys and not is_manual_verified and not is_legacy_manual_verified:
             issues.append("contact_decision.intent_mismatch")
 
     if executor_lock:
@@ -1548,7 +1641,9 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--filters-text", required=True)
     init_parser.add_argument("--out-base", default="data/campaigns")
     init_parser.add_argument("--date", default=date.today().isoformat())
-    init_parser.add_argument("--allow-real-contact", action="store_true")
+    init_contact_group = init_parser.add_mutually_exclusive_group()
+    init_contact_group.add_argument("--allow-real-contact", dest="allow_real_contact", action="store_true", default=True)
+    init_contact_group.add_argument("--no-real-contact", dest="allow_real_contact", action="store_false")
     init_parser.add_argument("--allow-live-contact-test", action="store_true")
     init_parser.add_argument("--live-contact-test-limit", type=int, default=0)
 

@@ -228,7 +228,7 @@ def test_boss_app_sourcing_contracts_define_contact_audit_gates():
         assert "`allow_real_contact=true`" in text
         assert "`allow_live_contact_test=true`" in text
         assert "默认" in text
-        assert "不点击" in text
+        assert "Computer Use 不直接点击" in text
 
     assert "`allow_real_contact=true`" in s6b
     assert "`allow_live_contact_test=true`" in s6b
@@ -252,6 +252,43 @@ def test_boss_app_sourcing_contracts_define_contact_audit_gates():
     assert "`state/events.jsonl`" in workflow
 
 
+def test_boss_app_sourcing_contracts_default_to_real_executor_contact_without_count_limit():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-app-recommendation-sourcing"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-app-recommendation-sourcing"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+    s6a_text = markdown_section(workflow, "S6a 外部执行器 handoff")
+    s7_text = markdown_section(workflow, "S7 列表滚动与结束")
+
+    for text in (skill, workflow):
+        assert 'contact_mode="external_executor"' in text
+        assert "`allow_real_contact=true`" in text
+        assert "默认可以点击 `立即沟通`" in text
+        assert "无需另行明确授权" in text
+        assert "未明确沟通次数上限" in text
+        assert "不设置本地人数上限" in text
+        assert "平台明确提示次数用尽" in text
+        assert "默认 `contact_mode=dry_run`" not in text
+        assert "默认 `allow_real_contact=false`" not in text
+        assert "默认绝不点击 `立即沟通`" not in text
+
+    assert "默认真实触达模式" in s6a_text
+    assert "直接通过 `shell.run` 调用" in s6a_text
+    assert "不再逐人二次确认" in s6a_text
+    assert "`max_contacts_per_day=null`" in s6a_text
+    assert "平台明确提示次数用尽" in s7_text
+
+
 def test_boss_app_sourcing_contracts_define_external_executor_handoff():
     skill = (
         ROOT
@@ -267,7 +304,7 @@ def test_boss_app_sourcing_contracts_define_external_executor_handoff():
         / "boss-app-recommendation-sourcing"
         / "AGENT.md"
     ).read_text(encoding="utf-8")
-    s6 = workflow.index("### S6 沟通 dry-run")
+    s6 = workflow.index("### S6 沟通意图记录")
     s6a = workflow.index("### S6a 外部执行器 handoff")
     s6b = workflow.index("### S6b live-test 真实沟通")
     s6a_text = markdown_section(workflow, "S6a 外部执行器 handoff")
@@ -282,7 +319,7 @@ def test_boss_app_sourcing_contracts_define_external_executor_handoff():
         assert "`executor-policy.json`" in text
         assert "外部执行器" in text
         assert "Codex" in text
-        assert "campaign 级" in text
+        assert "默认真实触达模式" in text
         assert "不再逐人" in text
 
     for artifact in [
@@ -340,6 +377,156 @@ def test_boss_app_sourcing_contracts_lock_computer_use_browsing_boundary():
 
     assert "Computer Use 缺失" in workflow
     assert "state/continuation-plan.json" in workflow
+
+
+def test_boss_app_sourcing_contracts_require_scanning_until_list_end_or_contact_limit():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-app-recommendation-sourcing"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-app-recommendation-sourcing"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+    s7_text = markdown_section(workflow, "S7 列表滚动与结束")
+
+    for text in (skill, workflow):
+        assert "未遇到合适人选不得停止" not in text
+        assert "发现合格人选并完成对应的 dry-run contact" not in text
+        assert "合格人选后继续扫描" in text
+        assert "继续扫描" in text
+        assert "列表循环到底部" in text
+        assert "立即沟通当日限额达到上限" in text
+        assert "平台明确提示次数用尽" in text
+        assert "列表耗尽" in text
+        assert "当前屏" in text
+        assert "当前批次" in text
+
+    assert "当前屏或当前批次没有 `contact` 人选" in s7_text
+    assert "不得进入 S8" in s7_text
+    assert "发现合格人选并完成对应的 dry-run contact" not in s7_text
+    assert "只有满足以下任一条件才允许正常结束 BOSS 列表扫描" in s7_text
+    assert "列表循环到底部" in s7_text
+    assert "立即沟通当日限额达到上限" in s7_text
+    assert "平台明确提示次数用尽" in s7_text
+    assert "`list_end_stall_scrolls`" in s7_text
+    assert "列表耗尽" in s7_text
+
+
+def test_boss_app_sourcing_contracts_preserve_explicit_video_signal_before_visual_boundary_skip():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-app-recommendation-sourcing"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-app-recommendation-sourcing"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (skill, workflow):
+        assert "视频算法" in text
+        assert "语音/视频/图形" in text
+        assert "不得仅因同屏出现视觉、图像处理、图形、XR 等边界词直接跳过" in text
+        assert "边界风险" in text
+
+
+def test_boss_app_sourcing_contracts_define_generic_signal_priority_policy():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-app-recommendation-sourcing"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-app-recommendation-sourcing"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (skill, workflow):
+        assert "硬排除" in text
+        assert "正向信号" in text
+        assert "边界风险" in text
+        assert "搜索、广告、推荐、NLP" in text
+        assert "视频生成/编辑/理解" in text
+        assert "视频数据链路" in text
+        assert "AIGC" in text
+        assert "VLM" in text
+        assert "Diffusion" in text
+        assert "世界模型" in text
+        assert "VLA" in text
+        assert "音视频工程、编解码、SDK、流媒体" in text
+        assert "不得作为单独 skip 理由" in text
+        assert "优先进入详情核实" in text
+
+
+def test_boss_maimai_cross_channel_preserves_boundary_candidates_for_delivery_risks():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-maimai-cross-channel-delivery"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-maimai-cross-channel-delivery"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (skill, workflow):
+        assert "通用信号优先级" in text
+        assert "搜索/广告/推荐/NLP" in text
+        assert "`contact` 或 strong `hold`" in text
+        assert "视觉、图像、图形、XR、3D、CV" in text
+        assert "音视频工程、编解码、SDK、流媒体" in text
+        assert "不得在" in text
+        assert "单独排除理由" in text
+        assert "交付说明" in text
+
+
+def test_boss_maimai_cross_channel_requires_completed_boss_scan_not_first_hit():
+    skill = (
+        ROOT
+        / "agents"
+        / "skills"
+        / "boss-maimai-cross-channel-delivery"
+        / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    workflow = (
+        ROOT
+        / "agents"
+        / "workflows"
+        / "boss-maimai-cross-channel-delivery"
+        / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (skill, workflow):
+        assert "直到发现合格人选" not in text
+        assert "已发现合格人选，或已确认列表耗尽" not in text
+        assert "合格人选后继续扫描" in text
+        assert "列表循环到底部" in text
+        assert "立即沟通当日限额达到上限" in text
+        assert "平台明确提示次数用尽" in text
+        assert "当前屏" in text
+        assert "当前批次" in text
 
 
 def test_liepin_contracts_define_broad_recall_adaptive_planning_boundary():

@@ -22,10 +22,12 @@ description: BOSS App 推荐列表寻访 canonical workflow，约束合同、本
 
 ## 安全边界
 
-- 默认 `contact_mode=dry_run`，只定位 `立即沟通`，记录 `would_contact`，不点击。
-- 默认 `allow_real_contact=false`，因此默认绝不点击 `立即沟通`。
+- 默认 `contact_mode=external_executor`，`allow_real_contact=true`，合适人选可以真实触达。
+- 默认可以点击 `立即沟通`，无需另行明确授权，但只能由外部执行器在当前详情页点击精确文案，Computer Use 不直接点击。
+- 默认未明确沟通次数上限时不设置本地人数上限：`external_executor_contact_limit=null`，`executor-policy.max_contacts_per_day=null`；直到平台明确提示次数用尽或列表循环到底部才正常终止。
 - live-test 真实点击必须同时满足 `allow_real_contact=true` 和 `allow_live_contact_test=true`、未超过 `live_contact_test_limit`、候选人 `recommendation=contact`，并在点击前用 `human.confirm` 说明候选人、判定理由和自动发送预设消息的副作用。
-- campaign 级真实触达授权是独立于 live-test 的执行器路径。用户明确给出“合适立即沟通、不用二次确认、联系 N 人后结束”等授权时，本 workflow 可通过 `shell.run` 调用外部执行器；不再对每位候选人调用 `human.confirm`。
+- 如果执行任务的命令明确给出“只 dry-run/不真实触达”，本 workflow 只记录 `would_contact` 和 handoff，不调用带 `--execute` 的执行器。
+- 如果执行任务的命令明确给出“联系 N 人后结束”等数量上限，写入 `external_executor_contact_limit` 和 `executor-policy.max_contacts_per_day`；否则不以本地人数计数提前停止。
 - 外部执行器只能点击当前详情页精确文案 `立即沟通`。列表滚动、详情采集、候选筛选、回到列表和报告由 `computer.operate` 与 sourcing helper 完成；不得让执行器遍历列表或判断候选人是否合适。
 - 登录失效、验证码、安全页、权限弹窗、系统遮挡、UI 模板漂移或疑似真实发送风险时必须停止，写入 `reports/interruption-<stage>-<reason>-<timestamp>.json`，更新 `state/continuation-plan.json`，并追加到 `state/events.jsonl`。
 - 不处理验证码，不修改账号设置，不修改沟通话术，不删除/屏蔽/拉黑人选。
@@ -34,7 +36,7 @@ description: BOSS App 推荐列表寻访 canonical workflow，约束合同、本
 
 ### S0 合同检查
 
-读取 `requirements.json`、`strategy.json`、`run-policy.json` 和 `campaign-manifest.json`。确认 `execution_surface=boss_app_computer_use`，默认 `contact_mode=dry_run`。
+读取 `requirements.json`、`strategy.json`、`run-policy.json`、`executor-policy.json` 和 `campaign-manifest.json`。确认 `execution_surface=boss_app_computer_use`，默认 `contact_mode="external_executor"`、`allow_real_contact=true`，未明确沟通次数上限时 `external_executor_contact_limit=null`。
 
 ### S1 App 预检
 
@@ -56,6 +58,12 @@ description: BOSS App 推荐列表寻访 canonical workflow，约束合同、本
 
 按 `strategy.json` 判断是否进入详情。低概率人选写入 `structured/candidates.jsonl`，状态为 `skip_list_stage`。高概率人选进入 S4。
 
+筛选多模态、视频、AIGC、图形/音视频等边界词密集岗位时，先按 `strategy.json.screening_policy` 拆分硬排除、正向信号和边界风险。硬排除包括当前公司不在用户确认目标范围，或命中用户明确排除的搜索、广告、推荐、NLP、纯语音等主线。正向信号包括与 JD 主任务直接相关的方向词；多模态视频类 JD 中，“视频算法”“视频生成/编辑/理解”“视频数据链路”“视频目标”“语音/视频/图形”“AIGC”“多模态”“VLM”“Diffusion”“世界模型”“VLA”等都算正向信号。视觉、图像处理、图形、XR、3D、CV、音视频工程、编解码、SDK、流媒体等边界词不得作为单独 skip 理由；当正向信号存在时，只能写入风险、降低优先级或进入 `hold`/详情核实。
+
+目标公司候选若职位/标签显示算法、深度学习、大模型、AIGC、多模态或研究员，但列表证据不足，应优先进入详情核实，不在列表层直接跳过；详情仍缺少 JD 关键证据时再 `skip`。
+
+多模态视频算法类 JD 的目标公司候选若标签、求职目标或列表摘要明确包含“视频算法”“视频目标”或“语音/视频/图形”，必须先按视频算法相关信号进入详情判断；不得仅因同屏出现视觉、图像处理、图形、XR 等边界词直接跳过，相关边界风险写入候选风险。
+
 ### S4 详情采集
 
 使用 `computer.operate` 点击卡片进入详情页。读取首屏文本，点击 `展开全部`、`查看更多` 或相近折叠入口，在详情页内部滚动到底。只保存结构化文本和截图哈希。完成后返回列表页。
@@ -64,15 +72,19 @@ description: BOSS App 推荐列表寻访 canonical workflow，约束合同、本
 
 基于详情结构化文本输出 `contact`、`hold` 或 `skip`，并写入证据、分数、缺失项和风险。
 
-### S6 沟通 dry-run
+详情精筛必须先判断是否存在 JD 关键正向信号，再处理边界风险。若当前公司和其他硬门满足，且详情中出现视频/多模态/AIGC/世界模型/VLA 等与 JD 主任务直接相关的证据，不得仅因视觉、图像、图形、3D、音视频工程或编解码等边界词直接 `skip`；应根据证据强度输出 `contact` 或 `hold`，并把边界词、工程化偏向、搜索/广告/推荐/NLP 混杂等写入 `risks`。只有详情主线明确落在用户排除方向，或缺少 JD 关键证据时，才输出 `skip`。
 
-对 `recommendation=contact` 的候选人定位 `立即沟通` 按钮，记录 `would_contact=true`、按钮位置和截图哈希，不点击按钮。
+详情中若出现明确“视频算法”“视频目标”或“语音/视频/图形”证据，应优先按视频算法相关候选做 `contact`/`hold` 判断；视觉、图像处理、图形、XR 等边界词只作为边界风险，不得在已有明确视频信号时自动触发 `skip`。
+
+### S6 沟通意图记录
+
+对 `recommendation=contact` 的候选人定位 `立即沟通` 按钮，记录 `would_contact=true`、按钮位置和截图哈希。默认真实触达模式下，继续进入 S6a；显式 dry-run 模式只记录意图，不点击按钮。
 
 ### S6a 外部执行器 handoff
 
 当候选人已判定为 `contact`，且 BOSS 当前详情页按钮为 `立即沟通` 时，写入外部执行器 handoff 产物：`structured/approved-contact-queue.jsonl` 和 `state/current-contact-intent.json`。这些文件表达已审核触达意图；真实点击只能由执行器完成，不能由 `computer.operate` 直接点击。
 
-如果本 campaign 没有真实触达授权，只能展示下面的命令并等待用户手动执行：
+如果本 campaign 被执行命令明确设为 dry-run 或 `allow_real_contact=false`，只能展示下面的命令并等待用户手动执行：
 
 ```bash
 .venv/bin/python -m scripts.boss_contact_executor contact-current \
@@ -80,7 +92,7 @@ description: BOSS App 推荐列表寻访 canonical workflow，约束合同、本
   --execute
 ```
 
-如果用户已给出 campaign 级真实触达授权，workflow 必须直接通过 `shell.run` 调用同一命令，不再逐人二次确认：
+默认真实触达模式下，workflow 必须直接通过 `shell.run` 调用同一命令，不再逐人二次确认：
 
 ```bash
 .venv/bin/python -m scripts.boss_contact_executor contact-current \
@@ -88,12 +100,12 @@ description: BOSS App 推荐列表寻访 canonical workflow，约束合同、本
   --execute
 ```
 
-`--execute` 只能在上述 campaign 级授权成立且 policy/intent 均通过时使用。
+`--execute` 只能在默认真实触达模式成立且 policy/intent 均通过时使用。
 
 调用前必须满足：
 
-- 用户授权范围仍在本职位、本筛选规则、本 campaign 触达上限内。
-- `executor-policy.json` 存在，`allow_real_contact=true`，`operator_acknowledgement` 为固定确认语，`max_contacts_per_run=1`，`stop_on_paid_prompt=true`，`stop_on_captcha=true`，`stop_on_login_or_security_page=true`，`stop_on_unknown_ui=true`。
+- 当前执行仍在本职位、本筛选规则内；如果命令明确给了本地触达上限，不得超过该上限。
+- `executor-policy.json` 存在，`allow_real_contact=true`，`operator_acknowledgement` 为固定确认语，`max_contacts_per_run=1`，未明确沟通次数上限时 `max_contacts_per_day=null`，`stop_on_paid_prompt=true`，`stop_on_captcha=true`，`stop_on_login_or_security_page=true`，`stop_on_unknown_ui=true`。
 - `state/current-contact-intent.json` 未过期，`approval_status=approved_for_auto_contact`，`expected_button=立即沟通`，`current_page=candidate_detail`。
 - 当前 BOSS App 详情页由 Computer Use 定位，不交给执行器翻列表或找人。
 
@@ -124,7 +136,14 @@ description: BOSS App 推荐列表寻访 canonical workflow，约束合同、本
 
 ### S7 列表滚动与结束
 
-当前屏处理完成后滚动列表。连续 `list_end_stall_scrolls` 次滚动无新卡片，或识别到列表底部时停止。
+当前屏处理完成后滚动列表。当前屏或当前批次没有 `contact` 人选时，不得进入 S8，也不得输出最终无合格人选结论，必须继续扫描下一屏。发现合格人选后继续扫描，先记录 `would_contact`、S6a 执行器 handoff 或授权范围内真实触达结果，不得把单个命中作为正常终止条件。
+
+只有满足以下任一条件才允许正常结束 BOSS 列表扫描：
+
+- 列表循环到底部：连续 `list_end_stall_scrolls` 次滚动无新卡片，或识别到列表底部，能够确认列表耗尽。
+- `立即沟通当日限额达到上限`：默认真实触达模式下，只有命令明确给出本地人数上限且执行器回写当天新增触达数达到该上限，或平台明确提示次数用尽时成立；未明确沟通次数上限时，只能以平台明确提示次数用尽作为触达上限证据。
+
+dry-run 模式不会达到 `立即沟通当日限额达到上限`，必须继续到列表循环到底部。列表耗尽后仍没有合格人选时，S8 才能生成无合格人选报告。
 
 ### S8 报告与关闭
 
@@ -149,8 +168,8 @@ description: BOSS App 推荐列表寻访 canonical workflow，约束合同、本
 
 ## 验收
 
-- dry-run 不点击 `立即沟通`。
-- campaign 级真实触达授权存在时，workflow 可调用外部执行器 `contact-current --execute`，不逐人 `human.confirm`。
+- 默认真实触达模式下，workflow 可调用外部执行器 `contact-current --execute`，不逐人 `human.confirm`。
+- 显式 dry-run 不点击 `立即沟通`。
 - 执行器只处理当前详情页的一次 `立即沟通` 点击，不负责列表遍历、详情采集、候选筛选或翻页。
 - live-test 每次真实点击都有动作级确认记录。
 - 详情只保存结构化文本和截图哈希。

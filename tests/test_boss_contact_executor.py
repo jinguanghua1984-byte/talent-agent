@@ -83,6 +83,16 @@ def test_validate_policy_requires_execute_flag_and_acknowledgement(tmp_path: Pat
         boss_contact_executor.validate_executor_policy(policy, execute=True)
 
 
+def test_validate_policy_allows_null_daily_contact_limit(tmp_path: Path) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    policy = boss_contact_executor.load_executor_policy(root)
+    policy["max_contacts_per_day"] = None
+
+    validated = boss_contact_executor.validate_executor_policy(policy, execute=True)
+
+    assert validated["max_contacts_per_day"] is None
+
+
 def test_validate_policy_rejects_batch_size_in_mvp(tmp_path: Path) -> None:
     root, _ = make_executor_campaign(tmp_path)
     policy = boss_contact_executor.load_executor_policy(root)
