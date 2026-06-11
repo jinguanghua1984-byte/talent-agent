@@ -75,6 +75,7 @@ def summarize_campaign(campaign_root: str | Path) -> dict[str, Any]:
 
     candidates = _latest_by_key(load_jsonl(root / "structured" / "candidates.jsonl"))
     identity_rows = load_jsonl(root / "state" / "cross-channel-identity-ledger.jsonl")
+    latest_identity_rows = _latest_identity_by_key(identity_rows)
     blocked_by = _blocked_reason(continuation, stage_state)
 
     counts = {
@@ -95,7 +96,14 @@ def summarize_campaign(campaign_root: str | Path) -> dict[str, Any]:
         ),
         "maimai_missing_real_name_count": _int_or_default(match_summary.get("missing_real_name_count"), 0),
         "maimai_identity_bound_count": sum(
-            1 for row in identity_rows if str(row.get("status") or "") in BOUND_IDENTITY_STATUSES
+            1 for row in latest_identity_rows.values() if str(row.get("status") or "") in BOUND_IDENTITY_STATUSES
+        ),
+        "maimai_identity_final_decision_count": len(latest_identity_rows),
+        "maimai_identity_pending_confirmation_count": sum(
+            1 for row in latest_identity_rows.values() if str(row.get("status") or "") == "pending_confirmation"
+        ),
+        "maimai_identity_no_match_count": sum(
+            1 for row in latest_identity_rows.values() if str(row.get("status") or "") == "no_match"
         ),
     }
     dry_run_apply_status = {
@@ -219,6 +227,19 @@ def _latest_by_key(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     latest: dict[str, dict[str, Any]] = {}
     for index, row in enumerate(rows):
         key = str(row.get("candidate_key") or row.get("id") or index)
+        latest[key] = row
+    return latest
+
+
+def _latest_identity_by_key(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    latest: dict[str, dict[str, Any]] = {}
+    for index, row in enumerate(rows):
+        key = str(
+            row.get("target_id")
+            or row.get("boss_candidate_key")
+            or row.get("source_candidate_key")
+            or index
+        )
         latest[key] = row
     return latest
 

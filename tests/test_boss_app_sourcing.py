@@ -303,6 +303,7 @@ def test_init_cli_defaults_to_external_executor_contact(tmp_path: Path, capsys) 
     assert policy["allow_real_contact"] is True
     assert executor_policy["allow_real_contact"] is True
     assert executor_policy["max_contacts_per_day"] is None
+    assert executor_policy["capture_real_name_after_contact"] is False
 
 
 def test_init_cli_can_disable_real_contact(tmp_path: Path, capsys) -> None:
@@ -645,6 +646,14 @@ def test_backfill_real_name_requires_valid_source_state_and_rejects_overwrite(tm
             "communication_page_after_live_contact_test",
         )
 
+    with pytest.raises(ValueError, match="invalid real name source"):
+        boss_app_sourcing.backfill_real_name(
+            root,
+            candidate["candidate_key"],
+            "郑 XX",
+            "communication_page_after_external_executor",
+        )
+
     boss_app_sourcing.backfill_real_name(root, candidate["candidate_key"], "郑 XX", "manual_opened_communication_page")
 
     with pytest.raises(ValueError, match="already captured"):
@@ -848,7 +857,7 @@ def test_approved_contact_queue_requires_dry_run_decision_artifact(tmp_path: Pat
         boss_app_sourcing.record_approved_contact_queue_item(root, candidate["candidate_key"])
 
 
-def test_consume_executor_sent_result_updates_contact_and_real_name(tmp_path: Path) -> None:
+def test_consume_executor_sent_result_updates_contact_without_real_name_backfill(tmp_path: Path) -> None:
     root, candidate_key = _contact_candidate_for_executor(tmp_path)
     intent = boss_app_sourcing.write_current_contact_intent(
         root,
@@ -864,8 +873,6 @@ def test_consume_executor_sent_result_updates_contact_and_real_name(tmp_path: Pa
         "button_before_click": "立即沟通",
         "message_template_id": "boss-current-preset",
         "message_status": "送达",
-        "real_name": "陶壮",
-        "communication_page_text": "沟通页顶部：陶壮；AI Infra训练与推理研发；状态：送达",
         "next_action_for_codex": "record_contact_return_to_list_and_continue",
         "stopped_reason": None,
         "started_at": "2026-06-02T10:00:02+08:00",
@@ -876,8 +883,9 @@ def test_consume_executor_sent_result_updates_contact_and_real_name(tmp_path: Pa
     assert consumed["result"] == "sent"
 
     latest = boss_app_sourcing.latest_candidate(root, candidate_key)
-    assert latest["real_name"] == "陶壮"
-    assert latest["real_name_source"] == "communication_page_after_external_executor"
+    assert latest["real_name"] is None
+    assert latest["real_name_status"] == "not_available_dry_run"
+    assert latest["real_name_source"] is None
     assert latest["contact"]["contacted"] is True
     assert latest["contact"]["contact_mode"] == "external_executor"
 
@@ -885,6 +893,16 @@ def test_consume_executor_sent_result_updates_contact_and_real_name(tmp_path: Pa
     assert decisions[-1]["mode"] == "external_executor"
     assert decisions[-1]["message_status"] == "送达"
     assert decisions[-1]["preset_message_auto_sent"] is True
+
+    backfilled = boss_app_sourcing.backfill_real_name(
+        root,
+        candidate_key,
+        "陶壮",
+        "manual_opened_communication_page",
+        page_text="Computer Use 已沟通页顶部：陶壮；状态：送达",
+    )
+    assert backfilled["real_name"] == "陶壮"
+    assert backfilled["real_name_source"] == "manual_opened_communication_page"
 
 
 def test_validate_executor_artifacts_accepts_batched_history_with_multiple_intents(tmp_path: Path) -> None:
@@ -1005,7 +1023,6 @@ def test_consume_and_validate_sent_result_require_current_intent(tmp_path: Path)
     ("override", "error_match"),
     [
         ({"button_before_click": "继续沟通"}, "button_before_click"),
-        ({"real_name": ""}, "real_name"),
         ({"message_status": "发送中"}, "message_status"),
         ({"campaign_id": "other-campaign"}, "current contact intent"),
         ({"candidate_key": "boss-app:other"}, "current contact intent"),
@@ -1120,7 +1137,7 @@ def test_consume_executor_rejects_non_sent_intent_mismatch_without_writes(
     assert "executor_result.intent_mismatch" in validation["issues"]
 
 
-def test_consume_sent_existing_real_name_failure_has_no_partial_writes(tmp_path: Path) -> None:
+def test_consume_sent_preserves_existing_manual_real_name(tmp_path: Path) -> None:
     root, candidate_key = _contact_candidate_for_executor(tmp_path)
     intent = boss_app_sourcing.write_current_contact_intent(
         root,
@@ -1133,9 +1150,6 @@ def test_consume_sent_existing_real_name_failure_has_no_partial_writes(tmp_path:
         "陶壮",
         "manual_opened_communication_page",
     )
-    before_candidate = boss_app_sourcing.latest_candidate(root, candidate_key)
-    before_decisions = boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl")
-    before_attempts = boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl")
     before_communication_pages = boss_app_sourcing.load_jsonl(root / "raw/communication-pages.jsonl")
     boss_app_sourcing.write_json(root / "state/executor-result.json", {
         "schema": "boss_executor_result_v1",
@@ -1151,17 +1165,17 @@ def test_consume_sent_existing_real_name_failure_has_no_partial_writes(tmp_path:
         "next_action_for_codex": "record_contact_return_to_list_and_continue",
     })
 
-    with pytest.raises(ValueError, match="real_name already captured"):
-        boss_app_sourcing.consume_executor_result(root)
+    consumed = boss_app_sourcing.consume_executor_result(root)
+    assert consumed["result"] == "sent"
 
     latest = boss_app_sourcing.latest_candidate(root, candidate_key)
-    assert latest == before_candidate
-    assert boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl") == before_decisions
-    assert boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl") == before_attempts
+    assert latest["real_name"] == "陶壮"
+    assert latest["real_name_source"] == "manual_opened_communication_page"
+    assert latest["contact"]["contacted"] is True
     assert boss_app_sourcing.load_jsonl(root / "raw/communication-pages.jsonl") == before_communication_pages
 
 
-def test_consume_sent_external_real_name_whitespace_conflict_has_no_partial_writes(tmp_path: Path) -> None:
+def test_consume_sent_ignores_executor_real_name_conflict(tmp_path: Path) -> None:
     root, candidate_key = _contact_candidate_for_executor(tmp_path)
     intent = boss_app_sourcing.write_current_contact_intent(
         root,
@@ -1172,12 +1186,9 @@ def test_consume_sent_external_real_name_whitespace_conflict_has_no_partial_writ
         root,
         candidate_key,
         "陶 壮",
-        "communication_page_after_external_executor",
+        "manual_opened_communication_page",
         page_text="沟通页顶部：陶 壮；状态：送达",
     )
-    before_candidate = boss_app_sourcing.latest_candidate(root, candidate_key)
-    before_decisions = boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl")
-    before_attempts = boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl")
     before_communication_pages = boss_app_sourcing.load_jsonl(root / "raw/communication-pages.jsonl")
     boss_app_sourcing.write_json(root / "state/executor-result.json", {
         "schema": "boss_executor_result_v1",
@@ -1193,25 +1204,23 @@ def test_consume_sent_external_real_name_whitespace_conflict_has_no_partial_writ
         "next_action_for_codex": "record_contact_return_to_list_and_continue",
     })
 
-    with pytest.raises(ValueError, match="real_name already captured"):
-        boss_app_sourcing.consume_executor_result(root)
+    consumed = boss_app_sourcing.consume_executor_result(root)
+    assert consumed["result"] == "sent"
 
-    assert boss_app_sourcing.latest_candidate(root, candidate_key) == before_candidate
-    assert boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl") == before_decisions
-    assert boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl") == before_attempts
+    latest = boss_app_sourcing.latest_candidate(root, candidate_key)
+    assert latest["real_name"] == "陶 壮"
+    assert latest["real_name_source"] == "manual_opened_communication_page"
+    assert latest["contact"]["contacted"] is True
     assert boss_app_sourcing.load_jsonl(root / "raw/communication-pages.jsonl") == before_communication_pages
 
 
-def test_consume_sent_invalid_communication_page_text_has_no_partial_writes(tmp_path: Path) -> None:
+def test_consume_sent_ignores_executor_communication_page_text(tmp_path: Path) -> None:
     root, candidate_key = _contact_candidate_for_executor(tmp_path)
     intent = boss_app_sourcing.write_current_contact_intent(
         root,
         candidate_key,
         now_text="2026-06-02T10:00:00+08:00",
     )
-    before_candidate = boss_app_sourcing.latest_candidate(root, candidate_key)
-    before_decisions = boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl")
-    before_attempts = boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl")
     before_communication_pages = boss_app_sourcing.load_jsonl(root / "raw/communication-pages.jsonl")
     boss_app_sourcing.write_json(root / "state/executor-result.json", {
         "schema": "boss_executor_result_v1",
@@ -1227,12 +1236,12 @@ def test_consume_sent_invalid_communication_page_text_has_no_partial_writes(tmp_
         "next_action_for_codex": "record_contact_return_to_list_and_continue",
     })
 
-    with pytest.raises(ValueError, match="communication_page_text"):
-        boss_app_sourcing.consume_executor_result(root)
+    consumed = boss_app_sourcing.consume_executor_result(root)
+    assert consumed["result"] == "sent"
 
-    assert boss_app_sourcing.latest_candidate(root, candidate_key) == before_candidate
-    assert boss_app_sourcing.load_jsonl(root / "structured/contact-decisions.jsonl") == before_decisions
-    assert boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl") == before_attempts
+    latest = boss_app_sourcing.latest_candidate(root, candidate_key)
+    assert latest["contact"]["contacted"] is True
+    assert latest["real_name"] is None
     assert boss_app_sourcing.load_jsonl(root / "raw/communication-pages.jsonl") == before_communication_pages
 
 
@@ -1472,7 +1481,6 @@ def test_validate_executor_artifacts_reports_invalid_sent_protocol(tmp_path: Pat
 
     assert validation["status"] == "failed"
     assert "executor_result.sent_invalid_button" in validation["issues"]
-    assert "executor_result.sent_missing_real_name" in validation["issues"]
     assert "executor_result.sent_invalid_message_status" in validation["issues"]
     assert "executor_result.intent_mismatch" in validation["issues"]
 

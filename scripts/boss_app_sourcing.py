@@ -12,7 +12,6 @@ from typing import Any
 
 
 MANIFEST_SCHEMA = "boss_app_recommendation_sourcing_manifest_v1"
-EXTERNAL_EXECUTOR_REAL_NAME_SOURCE = "communication_page_after_external_executor"
 EXECUTOR_RESULT_SCHEMA = "boss_executor_result_v1"
 CURRENT_CONTACT_INTENT_SCHEMA = "boss_current_contact_intent_v1"
 APPROVED_CONTACT_QUEUE_SCHEMA = "boss_approved_contact_queue_v1"
@@ -25,7 +24,6 @@ EXECUTOR_IDENTITY_FIELDS = ["intent_id", "campaign_id", "candidate_key"]
 VALID_REAL_NAME_SOURCES = {
     "communication_page_after_live_contact_test",
     "manual_opened_communication_page",
-    EXTERNAL_EXECUTOR_REAL_NAME_SOURCE,
 }
 
 DEFAULT_RUN_POLICY: dict[str, Any] = {
@@ -233,7 +231,7 @@ def default_executor_policy(campaign_id: str, run_policy: dict[str, Any], root: 
         "stop_on_captcha": True,
         "stop_on_login_or_security_page": True,
         "stop_on_unknown_ui": True,
-        "capture_real_name_after_contact": True,
+        "capture_real_name_after_contact": False,
         "kill_switch_path": str(root / "state/stop-executor.flag"),
     }
 
@@ -897,8 +895,6 @@ def _sent_result_protocol_issues(result: dict[str, Any], current_intent: dict[st
         issues.append("current_intent.missing")
     if result.get("button_before_click") != "立即沟通":
         issues.append("executor_result.sent_invalid_button")
-    if not _clean_text(result.get("real_name")):
-        issues.append("executor_result.sent_missing_real_name")
     if result.get("message_status") not in VALID_SENT_MESSAGE_STATUSES:
         issues.append("executor_result.sent_invalid_message_status")
     if current_intent and _executor_identity_mismatch(result, current_intent):
@@ -912,21 +908,11 @@ def _raise_for_sent_result_protocol(result: dict[str, Any], current_intent: dict
         return
     message_by_issue = {
         "executor_result.sent_invalid_button": "sent result button_before_click must be 立即沟通",
-        "executor_result.sent_missing_real_name": "sent result real_name is required",
         "executor_result.sent_invalid_message_status": "sent result message_status must be 送达, 已读, or 已触达",
         "executor_result.intent_mismatch": "sent result does not match current contact intent",
         "current_intent.missing": "sent result requires current contact intent",
     }
     raise ValueError("; ".join(message_by_issue[issue] for issue in issues))
-
-
-def _require_external_executor_real_name_backfill(candidate: dict[str, Any], result: dict[str, Any]) -> None:
-    _prepare_real_name_backfill(
-        candidate,
-        result.get("real_name"),
-        EXTERNAL_EXECUTOR_REAL_NAME_SOURCE,
-        result.get("communication_page_text"),
-    )
 
 
 def _require_executor_result_preflight(campaign_root: str | Path, result: dict[str, Any]) -> dict[str, Any]:
@@ -945,7 +931,6 @@ def _require_executor_result_preflight(campaign_root: str | Path, result: dict[s
     candidate = dict(latest_candidate(campaign_root, candidate_key))
     if result_value == "sent":
         _raise_for_sent_result_protocol(result, current_intent)
-        _require_external_executor_real_name_backfill(candidate, result)
     return candidate
 
 
@@ -967,14 +952,6 @@ def consume_executor_result(campaign_root: str | Path, result_path: str | Path |
             contacted=True,
             preset_message_auto_sent=True,
         )
-        if _clean_text(result.get("real_name")):
-            backfill_real_name(
-                campaign_root,
-                candidate_key,
-                str(result["real_name"]),
-                EXTERNAL_EXECUTOR_REAL_NAME_SOURCE,
-                page_text=result.get("communication_page_text"),
-            )
     elif result_value == "skipped_continue_chat":
         _append_external_executor_decision(
             campaign_root,

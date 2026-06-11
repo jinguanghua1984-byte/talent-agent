@@ -141,6 +141,18 @@ def _boss_maimai_ready_for_delivery(root: Path) -> Path:
     return root
 
 
+def _boss_maimai_pending_identity_review(root: Path) -> Path:
+    _boss_maimai_ready_for_maimai(root)
+    _write_jsonl(
+        root / "state" / "cross-channel-identity-ledger.jsonl",
+        [
+            {"boss_candidate_key": "c1", "target_id": "c1", "status": "pending_confirmation"},
+            {"boss_candidate_key": "c2", "target_id": "c2", "status": "no_match"},
+        ],
+    )
+    return root
+
+
 def test_next_action_blocks_paid_boss_executor_without_safe_commands(tmp_path: Path) -> None:
     root = _boss_maimai_blocked_campaign(tmp_path / "blocked")
 
@@ -176,6 +188,17 @@ def test_next_action_suggests_maimai_session_verify_when_targets_exist(tmp_path:
         ]
     ]
     assert action["forbidden_commands"]
+
+
+def test_next_action_routes_completed_maimai_search_to_identity_review(tmp_path: Path) -> None:
+    root = _boss_maimai_pending_identity_review(tmp_path / "pending-identity")
+
+    action = next_action(root)
+
+    assert action["next_stage"] == "cross-channel-identity-review"
+    assert action["blocked_by"] == "pending_confirmation"
+    assert action["requires_user_authorization"] is True
+    assert action["safe_commands"] == []
 
 
 def test_next_action_blocks_main_db_apply_until_confirm_text(tmp_path: Path) -> None:

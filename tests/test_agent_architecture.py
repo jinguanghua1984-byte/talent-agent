@@ -321,6 +321,7 @@ def test_boss_app_sourcing_contracts_define_external_executor_handoff():
         assert "Codex" in text
         assert "默认真实触达模式" in text
         assert "不再逐人" in text
+        assert "执行器不得回采实名" in text
 
     for artifact in [
         "`structured/approved-contact-queue.jsonl`",
@@ -343,6 +344,9 @@ def test_boss_app_sourcing_contracts_define_external_executor_handoff():
     assert "Computer Use 定位" in s6a_text
     assert "不交给执行器翻列表或找人" in s6a_text
     assert "不能由 `computer.operate` 直接点击" in s6a_text
+    assert "执行器不得回采实名" in s6a_text
+    assert "实名必须由 Computer Use 打开沟通页后回填" in s6a_text
+    assert "real_name_source=manual_opened_communication_page" in s6a_text
     assert "列表遍历、详情采集、候选筛选或翻页" in workflow
 
     assert "`allow_live_contact_test=true`" in s6b_text

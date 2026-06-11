@@ -1,6 +1,6 @@
 ---
 name: boss-app-recommendation-sourcing
-description: "BOSS App 推荐列表寻访。用于通过 Computer Use 操作本机 BOSS App 采集推荐列表和详情，记录 would-contact；在 campaign 级授权后调用外部执行器点击立即沟通，并回采真实姓名。"
+description: "BOSS App 推荐列表寻访。用于通过 Computer Use 操作本机 BOSS App 采集推荐列表和详情，记录 would-contact；在 campaign 级授权后调用外部执行器点击立即沟通，并用 Computer Use 从已沟通页面回采真实姓名。"
 ---
 
 # Claude Code Adapter: boss-app-recommendation-sourcing

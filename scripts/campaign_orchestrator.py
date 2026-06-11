@@ -121,7 +121,19 @@ def next_action(campaign_root: str | Path) -> dict[str, Any]:
     if int(counts.get("maimai_target_count") or 0) > 0:
         bound_count = int(counts.get("maimai_identity_bound_count") or 0)
         target_count = int(counts.get("maimai_target_count") or 0)
-        if bound_count < target_count:
+        final_decision_count = int(counts.get("maimai_identity_final_decision_count") or 0)
+        pending_confirmation_count = int(counts.get("maimai_identity_pending_confirmation_count") or 0)
+        if final_decision_count >= target_count and pending_confirmation_count > 0:
+            return _action(
+                summary,
+                next_stage="cross-channel-identity-review",
+                blocked_by="pending_confirmation",
+                requires_user_authorization=True,
+                safe_commands=[],
+                forbidden_commands=forbidden,
+                required_confirm_text="",
+            )
+        if final_decision_count < target_count and bound_count < target_count:
             return _action(
                 summary,
                 next_stage="maimai-match-session",

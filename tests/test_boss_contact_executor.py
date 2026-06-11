@@ -57,7 +57,7 @@ def make_executor_campaign(tmp_path: Path) -> tuple[Path, str]:
         "stop_on_captcha": True,
         "stop_on_login_or_security_page": True,
         "stop_on_unknown_ui": True,
-        "capture_real_name_after_contact": True,
+        "capture_real_name_after_contact": False,
         "kill_switch_path": str(root / "state/stop-executor.flag"),
     })
     return root, candidate_key
@@ -91,6 +91,15 @@ def test_validate_policy_allows_null_daily_contact_limit(tmp_path: Path) -> None
     validated = boss_contact_executor.validate_executor_policy(policy, execute=True)
 
     assert validated["max_contacts_per_day"] is None
+
+
+def test_validate_policy_rejects_executor_real_name_capture(tmp_path: Path) -> None:
+    root, _ = make_executor_campaign(tmp_path)
+    policy = boss_contact_executor.load_executor_policy(root)
+    policy["capture_real_name_after_contact"] = True
+
+    with pytest.raises(ValueError, match="capture_real_name_after_contact"):
+        boss_contact_executor.validate_executor_policy(policy, execute=True)
 
 
 def test_validate_policy_rejects_batch_size_in_mvp(tmp_path: Path) -> None:
@@ -186,8 +195,9 @@ def test_contact_current_fixture_execute_sends_and_writes_audit(tmp_path: Path) 
     )
     assert result["result"] == "sent"
     assert result["candidate_key"] == candidate_key
-    assert result["real_name"] == "陶壮"
     assert result["message_status"] == "送达"
+    assert "real_name" not in result
+    assert "communication_page_text" not in result
     attempts = boss_app_sourcing.load_jsonl(root / "raw/executor-contact-attempts.jsonl")
     assert [row["event_type"] for row in attempts] == ["attempt_started", "attempt_finished"]
 
@@ -659,7 +669,6 @@ def test_mac_accessibility_ui_extract_requires_confirmed_communication_page() ->
 
     result = ui.extract_communication_result(page)
 
-    assert result.real_name == ""
     assert result.message_status == ""
 
 
@@ -674,7 +683,6 @@ def test_mac_accessibility_ui_extracts_result_from_confirmed_communication_page(
 
     result = ui.extract_communication_result(page)
 
-    assert result.real_name == "陶壮"
     assert result.message_status == "送达"
 
 

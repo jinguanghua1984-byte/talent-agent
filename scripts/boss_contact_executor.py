@@ -287,9 +287,7 @@ class ContactButtonState:
 
 @dataclass
 class CommunicationResult:
-    real_name: str
     message_status: str
-    page_text: str
 
 
 class UIStopError(ValueError):
@@ -347,6 +345,8 @@ def validate_executor_policy(policy: dict[str, Any], execute: bool) -> dict[str,
         raise ValueError("max_contacts_per_run must be 1 for MVP")
     if policy.get("max_contacts_per_day") is not None and policy["max_contacts_per_day"] <= 0:
         raise ValueError("max_contacts_per_day must be positive when set")
+    if policy.get("capture_real_name_after_contact") is not False:
+        raise ValueError("capture_real_name_after_contact must be false for executor")
 
     if execute:
         if policy["allow_real_contact"] is not True:
@@ -479,20 +479,11 @@ class FixtureBossUI:
         return _snapshot_from_mapping(communication)
 
     def extract_communication_result(self, page: BossPageSnapshot) -> CommunicationResult:
-        real_name = ""
-        name_match = re.search(r"沟通页顶部[:：]\s*([^；;，,\s]+)", page.page_text)
-        if name_match:
-            real_name = name_match.group(1).strip()
-            if real_name == "未知":
-                real_name = ""
-        if not real_name and page.window_title not in {"沟通页", "未知"}:
-            real_name = page.window_title
-
         message_status = ""
         status_match = re.search(r"消息状态[:：]\s*([^；;，,\s]+)", page.page_text)
         if status_match:
             message_status = status_match.group(1).strip()
-        return CommunicationResult(real_name=real_name, message_status=message_status, page_text=page.page_text)
+        return CommunicationResult(message_status=message_status)
 
 
 class MacAccessibilityBossUI:
@@ -584,7 +575,7 @@ class MacAccessibilityBossUI:
 
     def extract_communication_result(self, page: BossPageSnapshot) -> CommunicationResult:
         if not _contains_any(page.page_text, COMMUNICATION_PAGE_MARKERS):
-            return CommunicationResult(real_name="", message_status="", page_text=page.page_text)
+            return CommunicationResult(message_status="")
 
         message_status = ""
         for status in SUCCESS_MESSAGE_STATUSES:
@@ -592,16 +583,7 @@ class MacAccessibilityBossUI:
                 message_status = status
                 break
 
-        real_name = ""
-        if page.window_title.strip() not in {"", "沟通页", "BOSS直聘"}:
-            real_name = page.window_title.strip()
-        if not real_name:
-            name_match = re.search(r"(?:沟通页顶部|候选人|姓名)[:：]\s*([^；;，,\s]+)", page.page_text)
-            if name_match:
-                parsed_name = name_match.group(1).strip()
-                if parsed_name not in {"未知", "沟通页", "BOSS直聘"}:
-                    real_name = parsed_name
-        return CommunicationResult(real_name=real_name, message_status=message_status, page_text=page.page_text)
+        return CommunicationResult(message_status=message_status)
 
     @staticmethod
     def _clean_list(value: Any) -> list[str]:
@@ -780,15 +762,10 @@ def contact_current(
                 })
             else:
                 result.update({
-                    "real_name": communication_result.real_name,
                     "message_status": communication_result.message_status,
-                    "communication_page_text": communication_result.page_text,
                     "would_click": True,
                 })
-                if (
-                    communication_result.real_name
-                    and communication_result.message_status in SUCCESS_MESSAGE_STATUSES
-                ):
+                if communication_result.message_status in SUCCESS_MESSAGE_STATUSES:
                     result["result"] = "sent"
                 else:
                     result["result"] = "sent_unverified"

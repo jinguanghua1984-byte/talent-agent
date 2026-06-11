@@ -108,12 +108,13 @@ description: BOSS App 推荐列表寻访 canonical workflow，约束合同、本
 - `executor-policy.json` 存在，`allow_real_contact=true`，`operator_acknowledgement` 为固定确认语，`max_contacts_per_run=1`，未明确沟通次数上限时 `max_contacts_per_day=null`，`stop_on_paid_prompt=true`，`stop_on_captcha=true`，`stop_on_login_or_security_page=true`，`stop_on_unknown_ui=true`。
 - `state/current-contact-intent.json` 未过期，`approval_status=approved_for_auto_contact`，`expected_button=立即沟通`，`current_page=candidate_detail`。
 - 当前 BOSS App 详情页由 Computer Use 定位，不交给执行器翻列表或找人。
+- 执行器不得回采实名，不得把沟通页抬头、候选实名或会话正文作为结构化实名来源；执行器只负责当前详情页一次 `立即沟通` 点击及按钮/送达状态审计。
 
 执行器使用 macOS Accessibility / 本机 UI 自动化校验当前详情页、按钮状态和 intent。执行器运行期间可维护 `state/executor.lock`、`state/stop-executor.flag`、`raw/executor-contact-attempts.jsonl`、`reports/executor-summary.md` 和 `reports/executor-summary.json`。
 
-执行器返回后，Codex 读取 `state/executor-result.json`，通过 sourcing helper 回写 `structured/contact-decisions.jsonl`、`raw/communication-pages.jsonl`、`structured/candidates.jsonl`。
+执行器返回后，Codex 读取 `state/executor-result.json`，通过 sourcing helper 回写送达状态到 `structured/contact-decisions.jsonl` 和 `structured/candidates.jsonl`。执行器 result 不应包含 `real_name` 或 `communication_page_text`；实名必须由 Computer Use 打开沟通页后回填：读取会话抬头、可见沟通状态和页面文本，追加到 `raw/communication-pages.jsonl`，并用 `real_name_source=manual_opened_communication_page` 更新 `structured/candidates.jsonl`。
 
-如果 result 是 `sent`，workflow 消费结果、记录送达和实名，然后用 `computer.operate` 返回列表并继续处理下一位候选人。
+如果 result 是 `sent`，workflow 消费结果并记录送达；随后必须用 `computer.operate` 检查已沟通页面并回采实名。若 Computer Use 未能从沟通页确认实名，保留 `real_name_status=missing` 并记录原因，然后返回列表继续处理下一位候选人。
 
 如果 result 是 `skipped_continue_chat`，workflow 记录已沟通过，不计入本轮新增触达，然后返回列表继续。
 

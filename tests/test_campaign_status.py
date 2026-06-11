@@ -115,6 +115,9 @@ def test_summarize_campaign_reads_boss_maimai_artifacts_without_side_effects(tmp
         "maimai_target_count": 6,
         "maimai_missing_real_name_count": 1,
         "maimai_identity_bound_count": 1,
+        "maimai_identity_final_decision_count": 1,
+        "maimai_identity_pending_confirmation_count": 0,
+        "maimai_identity_no_match_count": 0,
     }
     assert summary["latest_interruption"]["reason"] == "paid_search_chat_card"
     assert summary["continuation_plan"]["next_action"] == "wait_for_quota_or_user_resolution"
