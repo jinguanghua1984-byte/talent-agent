@@ -71,6 +71,8 @@ python -m scripts.jd_talent_delivery prepare --jd-path <jd_path> --output-base d
 
 如果启用 gbrain 第二大脑 P0，运行 `python -m scripts.second_brain query --jd <jd> --client <client_id> --jd-family <jd_family> --out <run_root>/second-brain/`，生成 `historical-calibration.md`、`historical-calibration.json` 和 `sourcing-strategy-suggestions.md`。该阶段失败或写入 `gbrain_unavailable` 时不得阻塞正式 JD delivery；fallback 结果只能作为 L0 解释层参考。
 
+当前 GBrain adoption level 为 `keep_optional_adapter`。在完成 embedding-enabled 二次 pilot 前，S2b 不自动调用真实 GBrain query，也不得把 GBrain 结果作为默认校准来源；本地 case fallback 仍是主路径。GBrain 只允许按 `docs/dev/gbrain-second-brain-runbook.md` 做手工 pilot，且必须保持正式 JD delivery 非阻塞。
+
 ### S3：评分卡
 
 从岗位画像生成 `scoring/scorecard.json`。评分卡至少包含：
@@ -148,6 +150,8 @@ python -m scripts.jd_feedback_note_parser parse-csv --run-root <run_root>
 ### S8b：Second Brain case/event 生成（可选）
 
 当推荐反馈中包含 `consultant_decision` 或可从 `feedback_note` 推断时，可运行 `python -m scripts.second_brain prepare-case --run-root <run_root> --client <client_id> --jd-family <jd_family>`，生成 append-only events、public/private case page 和后续 gbrain 导入材料。该阶段不调用平台、不写主库、不自动发布飞书。
+
+如需给 GBrain pilot 导入材料，只能使用 `scripts.second_brain_gbrain.export_source_tree` 生成 redacted source tree；不得直接导入 `data/second-brain/private-cases/`、private visibility events、`data/talent.db`、平台 raw capture、cookie、token 或联系方式。JSONL events 若要进入 GBrain 检索，必须先转换为 public Markdown summary。
 
 ## Scorecard 一致性
 

@@ -59,6 +59,8 @@ description: Use when the user asks to turn a JD into a local talent-library rec
 
 当仓库启用 gbrain 第二大脑 P0 时，本 Skill 仍以 JD delivery 为主流程。second-brain 只生成 shadow calibration、case page 和事件账本，不写 `data/talent.db`，不触发平台动作，不自动发布飞书。
 
+当前 GBrain adoption level 为 `keep_optional_adapter`：已验证本地 PGLite 安装、Markdown import 和 exact-token search，但在无 embedding provider 的 conservative pilot 中，自然语言中文/英文 query 均未形成可用召回。因此 `scripts.second_brain query` 仍以本地 case fallback 为主；GBrain 只作为手工 pilot / optional adapter 使用。只有完成 embedding-enabled 二次 pilot，并证明召回、引用和 gap analysis 优于本地 fallback 后，才可把 GBrain 升级为默认校准路径。操作细节见 `docs/dev/gbrain-second-brain-runbook.md`。
+
 ## 岗位画像 contract
 
 岗位画像必须复用 `hr-talent` 的岗位分析框架，结构参考 `docs/business-requirements/2026-05-21-llm-inference-role-deep-dive.md`。画像至少覆盖结论摘要、岗位真实问题、能力模型、候选人类型、寻访关键点、公司池、关键词、排除项和风险项。
