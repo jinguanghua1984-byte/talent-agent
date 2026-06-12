@@ -313,6 +313,18 @@ def push(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
         raise CloudSyncError("open sync conflicts exist; resolve them before push")
 
     state = load_state(config.state_path)
+    config.work_dir.mkdir(parents=True, exist_ok=True)
+    local_node_id = _node_id(config.db_path) if config.db_path.exists() else ""
+    remote_indexes = _download_indexes(provider, config.work_dir)
+    pending_remote = _unapplied_remote_indexes(
+        remote_indexes,
+        state,
+        config.db_path,
+        local_node_id,
+    )
+    if pending_remote:
+        raise CloudSyncError("pull remote bundles before push")
+
     export_mode = config.export_mode
     if export_mode not in {"full", "incremental"}:
         raise CloudSyncError(f"unsupported export mode: {export_mode}")
@@ -332,7 +344,6 @@ def push(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
             "bundle_id": state.get("last_push_bundle_id"),
         }
 
-    config.work_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="talent-cloud-push-", dir=str(config.work_dir)) as dirname:
         temp_dir = Path(dirname)
         plain_bundle = temp_dir / f"talent-sync-{uuid.uuid4()}.zip"
@@ -477,11 +488,31 @@ def _local_import_recorded(db_path: Path, bundle_id: str) -> bool:
         conn.close()
 
 
+def _unapplied_remote_indexes(
+    indexes: list[dict[str, Any]],
+    state: dict[str, Any],
+    db_path: Path,
+    local_node_id: str,
+) -> list[dict[str, Any]]:
+    pending: list[dict[str, Any]] = []
+    for index in indexes:
+        bundle_id = str(index["bundle_id"])
+        if bundle_id in state["applied_bundle_ids"]:
+            continue
+        if _local_import_recorded(db_path, bundle_id):
+            continue
+        if local_node_id and index.get("source_node_id") == local_node_id:
+            continue
+        pending.append(index)
+    return pending
+
+
 def pull(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict[str, Any]:
     provider = provider or _provider(config)
     provider.ensure_layout()
     config.work_dir.mkdir(parents=True, exist_ok=True)
     state = load_state(config.state_path)
+    pull_started_at = _now_utc()
     local_node_id = _node_id(config.db_path) if config.db_path.exists() else ""
     applied = 0
     skipped = 0
@@ -519,7 +550,16 @@ def pull(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
             if config.auto_apply:
                 import_bundle(plain_path, config.db_path, apply=True, confirm=CONFIRM_SYNC_TEXT)
                 applied += 1
-                state["applied_bundle_ids"].append(bundle_id)
+                if bundle_id not in state["applied_bundle_ids"]:
+                    state["applied_bundle_ids"].append(bundle_id)
+                state["applied_bundles"].append(
+                    {
+                        "bundle_id": bundle_id,
+                        "source_node_id": str(index.get("source_node_id") or ""),
+                        "created_at": str(index.get("created_at") or ""),
+                        "applied_at": _now_utc(),
+                    }
+                )
             else:
                 skipped += 1
         if bundle_id not in state["seen_bundle_ids"]:
@@ -527,6 +567,8 @@ def pull(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
 
     state["blocked_remote_bundles"] = blocked
     state["last_sync_at"] = _now_utc()
+    if applied and not state.get("last_successful_push_started_at"):
+        state["last_successful_push_started_at"] = pull_started_at
     save_state(config.state_path, state)
     return {"applied": applied, "skipped": skipped, "blocked": blocked}
 

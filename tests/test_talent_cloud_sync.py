@@ -362,6 +362,26 @@ def test_push_refuses_when_local_conflicts_are_open(tmp_path: Path) -> None:
         push(config, provider=provider)
 
 
+def test_push_blocks_when_remote_bundle_has_not_been_pulled(tmp_path: Path) -> None:
+    key = keygen()
+    left_db = tmp_path / "left.db"
+    right_db = tmp_path / "right.db"
+    _seed_candidate(left_db, "Alice", platform_id="maimai-left")
+    _seed_candidate(right_db, "Bob", platform_id="maimai-right")
+    left_config = _config(tmp_path / "left", left_db, key=key, export_mode="full")
+    right_config = _config(tmp_path / "right", right_db, key=key, export_mode="full")
+    right_config = dataclasses.replace(
+        right_config,
+        localfs_root=left_config.localfs_root,
+    )
+    provider = LocalFsProvider(left_config.localfs_root)
+    init_remote(provider)
+    push(left_config, provider=provider)
+
+    with pytest.raises(CloudSyncError, match="pull remote bundles before push"):
+        push(right_config, provider=provider)
+
+
 def test_pull_imports_remote_bundle_after_dry_run(tmp_path: Path) -> None:
     source_db = tmp_path / "source.db"
     target_db = tmp_path / "target.db"
@@ -381,6 +401,32 @@ def test_pull_imports_remote_bundle_after_dry_run(tmp_path: Path) -> None:
 
     assert result["applied"] == 1
     assert _candidate_names(target_db) == ["Alice"]
+
+
+def test_pull_records_applied_bundle_metadata_and_export_cursor(
+    tmp_path: Path,
+) -> None:
+    key = keygen()
+    source_db = tmp_path / "source.db"
+    target_db = tmp_path / "target.db"
+    _seed_candidate(source_db, "Alice")
+    source_config = _config(tmp_path / "source", source_db, key=key, export_mode="full")
+    target_config = _config(tmp_path / "target", target_db, key=key, export_mode="full")
+    target_config = dataclasses.replace(
+        target_config,
+        localfs_root=source_config.localfs_root,
+    )
+    provider = LocalFsProvider(source_config.localfs_root)
+    init_remote(provider)
+    push_result = push(source_config, provider=provider)
+
+    pull_result = pull(target_config, provider=provider)
+
+    state = load_state(target_config.state_path)
+    assert pull_result["applied"] == 1
+    assert push_result["bundle_id"] in state["applied_bundle_ids"]
+    assert state["applied_bundles"][0]["bundle_id"] == push_result["bundle_id"]
+    assert state["last_successful_push_started_at"] is not None
 
 
 def test_pull_rejects_wrong_encryption_key_without_creating_target_db(tmp_path: Path) -> None:
