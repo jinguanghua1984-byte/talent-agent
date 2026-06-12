@@ -1,0 +1,56 @@
+{
+  "schema_version": "second_brain_taxonomy_v1",
+  "jd_families": {
+    "ai_infra": {
+      "label": "AI Infra",
+      "aliases": ["AI Infra", "大模型基础设施", "训练推理基础设施", "推理加速"],
+      "keywords": ["大模型", "训练", "推理", "GPU", "分布式", "高性能计算"]
+    },
+    "multi_modal_algorithm": {
+      "label": "多模态算法",
+      "aliases": ["多模态", "视频算法", "视觉算法", "语音视频算法"],
+      "keywords": ["多模态", "视频", "图像", "视觉", "语音", "生成模型"]
+    },
+    "ai_product": {
+      "label": "AI 产品",
+      "aliases": ["AI产品", "大模型产品", "智能产品"],
+      "keywords": ["产品", "需求", "商业化", "用户增长", "解决方案"]
+    },
+    "quant_research": {
+      "label": "量化研究",
+      "aliases": ["量化", "量化研究员", "策略研究"],
+      "keywords": ["量化", "策略", "因子", "回测", "金融"]
+    },
+    "candidate_family": {
+      "label": "候选 JD 家族",
+      "aliases": [],
+      "keywords": []
+    }
+  },
+  "company_aliases": {},
+  "skill_neighbors": {},
+  "feedback_reason_map": {
+    "direction_mismatch": ["方向不符", "方向偏", "不匹配"],
+    "seniority_mismatch": ["年限不符", "太 senior", "太 junior"],
+    "weak_execution_evidence": ["落地弱", "项目不够", "偏研究"],
+    "strong_candidate": ["认可", "可以推进", "优先联系", "不错"]
+  },
+  "candidate_type_tags": {
+    "research_heavy": ["研究", "论文", "算法研究"],
+    "engineering_delivery": ["工程", "落地", "上线", "系统"]
+  },
+  "sourcing_channel_tags": {
+    "maimai": ["脉脉", "Maimai"],
+    "boss": ["BOSS", "BOSS直聘"],
+    "liepin": ["猎聘", "Liepin"]
+  },
+  "sensitive_terms_blocklist": [
+    "cookie",
+    "access_token",
+    "authorization",
+    "trackable_token",
+    "手机号",
+    "微信",
+    "邮箱"
+  ]
+}
