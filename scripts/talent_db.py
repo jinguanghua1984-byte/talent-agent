@@ -783,6 +783,7 @@ class TalentDB:
 
             self._merge_candidate(existing_id, merge_data, pending_data.get("_platform", ""))
             self._move_sources(int(new_id), existing_id)
+            self._record_candidate_tombstone(int(new_id), "local_merge")
             self._conn.execute("DELETE FROM candidates WHERE id = ?", (int(new_id),))
             self._conn.execute(
                 """
@@ -1424,28 +1425,7 @@ class TalentDB:
             )
 
         with self._conn:
-            self._ensure_candidate_sync_id(candidate_id)
-            row = self._conn.execute(
-                "SELECT sync_id FROM candidates WHERE id = ?",
-                (candidate_id,),
-            ).fetchone()
-            sync_id = str(row["sync_id"]) if row is not None else ""
-            if not sync_id:
-                raise ValueError(f"Candidate does not exist: {candidate_id}")
-
-            self._conn.execute(
-                """
-                INSERT INTO sync_tombstones(
-                    entity_type, entity_sync_id, source_node_id, reason
-                )
-                VALUES ('candidate', ?, ?, 'local_delete')
-                ON CONFLICT(entity_type, entity_sync_id) DO UPDATE SET
-                    deleted_at = excluded.deleted_at,
-                    source_node_id = excluded.source_node_id,
-                    reason = excluded.reason
-                """,
-                (sync_id, self._node_id()),
-            )
+            self._record_candidate_tombstone(candidate_id, "local_delete")
             if self._vec_available:
                 self._conn.execute(
                     "DELETE FROM candidate_vectors WHERE candidate_id = ?",
@@ -1466,6 +1446,31 @@ class TalentDB:
             vectors_deleted=vectors_deleted,
             timelines_deleted=timelines_deleted,
         )
+
+    def _record_candidate_tombstone(self, candidate_id: int, reason: str) -> str:
+        self._ensure_candidate_sync_id(candidate_id)
+        row = self._conn.execute(
+            "SELECT sync_id FROM candidates WHERE id = ?",
+            (candidate_id,),
+        ).fetchone()
+        sync_id = str(row["sync_id"]) if row is not None else ""
+        if not sync_id:
+            raise ValueError(f"Candidate does not exist: {candidate_id}")
+
+        self._conn.execute(
+            """
+            INSERT INTO sync_tombstones(
+                entity_type, entity_sync_id, source_node_id, reason
+            )
+            VALUES ('candidate', ?, ?, ?)
+            ON CONFLICT(entity_type, entity_sync_id) DO UPDATE SET
+                deleted_at = excluded.deleted_at,
+                source_node_id = excluded.source_node_id,
+                reason = excluded.reason
+            """,
+            (sync_id, self._node_id(), reason),
+        )
+        return sync_id
 
     def update_overall_score(
         self,

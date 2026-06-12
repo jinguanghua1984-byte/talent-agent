@@ -121,6 +121,12 @@
 .venv/bin/python -m scripts.talent_cloud_sync pull --provider feishu
 ```
 
+如果这台电脑在拉取前已经有本地人才库数据，拉取后第一次上传不要直接依赖默认增量。先显式做一次 full bootstrap，或指定明确的 `--since` 起点：
+
+```bash
+.venv/bin/python -m scripts.talent_cloud_sync push --provider feishu --mode full
+```
+
 日常同步使用增量：
 
 ```bash

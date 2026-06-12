@@ -39,7 +39,6 @@ from scripts.talent_sync_models import CONFIRM_SYNC_TEXT, canonical_json
 
 
 DEFAULT_MAX_UPLOAD_BYTES = 18 * 1024 * 1024
-_BLOCKING_CANDIDATE_CONFLICT_FIELDS = {"name"}
 
 
 def _load_local_dotenv() -> None:
@@ -200,19 +199,6 @@ def _node_id(db_path: Path) -> str:
         db.close()
 
 
-def _open_conflict_count(db_path: Path) -> int:
-    if not db_path.exists():
-        return 0
-    db = TalentDB(db_path)
-    try:
-        row = db._conn.execute(
-            "SELECT COUNT(*) FROM sync_conflicts WHERE status = 'open'"
-        ).fetchone()
-        return int(row[0])
-    finally:
-        db.close()
-
-
 def _db_fingerprint(db_path: Path) -> str:
     if not db_path.exists():
         return "missing"
@@ -307,11 +293,19 @@ def _incremental_since(config: CloudSyncConfig, state: dict[str, Any]) -> str:
     return str(cursor)
 
 
+def _candidate_count(db_path: Path) -> int:
+    if not db_path.exists():
+        return 0
+    db = TalentDB(db_path)
+    try:
+        return db.count()
+    finally:
+        db.close()
+
+
 def push(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict[str, Any]:
     provider = provider or _provider(config)
     provider.ensure_layout()
-    if _open_conflict_count(config.db_path) > 0:
-        raise CloudSyncError("open sync conflicts exist; resolve them before push")
 
     state = load_state(config.state_path)
     config.work_dir.mkdir(parents=True, exist_ok=True)
@@ -334,16 +328,15 @@ def push(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
     if export_mode == "incremental":
         since = _incremental_since(config, state)
 
-    current_fingerprint = _db_fingerprint(config.db_path)
-    if (
-        export_mode == "full"
-        and state.get("last_pushed_db_fingerprint") == current_fingerprint
-    ):
-        return {
-            "uploaded": False,
-            "reason": "unchanged",
-            "bundle_id": state.get("last_push_bundle_id"),
-        }
+    current_fingerprint = None
+    if export_mode == "full":
+        current_fingerprint = _db_fingerprint(config.db_path)
+        if state.get("last_pushed_db_fingerprint") == current_fingerprint:
+            return {
+                "uploaded": False,
+                "reason": "unchanged",
+                "bundle_id": state.get("last_push_bundle_id"),
+            }
 
     with tempfile.TemporaryDirectory(prefix="talent-cloud-push-", dir=str(config.work_dir)) as dirname:
         temp_dir = Path(dirname)
@@ -410,7 +403,8 @@ def push(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
     state["schema"] = STATE_SCHEMA
     state["provider"] = config.provider
     state["last_push_bundle_id"] = bundle_id
-    state["last_pushed_db_fingerprint"] = current_fingerprint
+    if current_fingerprint is not None:
+        state["last_pushed_db_fingerprint"] = current_fingerprint
     state["last_sync_at"] = _now_utc()
     state["last_successful_push_started_at"] = push_started_at
     if bundle_id not in state["seen_bundle_ids"]:
@@ -428,68 +422,7 @@ def push(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
 
 
 def _has_blocking_conflicts(plan: dict[str, Any]) -> bool:
-    if int(plan.get("conflicts", {}).get("candidates", 0) or 0) <= 0:
-        return False
-    conflict_fields = plan.get("_sync_conflict_fields")
-    if conflict_fields is None:
-        return True
-    if not conflict_fields:
-        return True
-    return any(
-        str(field) in _BLOCKING_CANDIDATE_CONFLICT_FIELDS
-        for field in conflict_fields
-    )
-
-
-def _copy_db_snapshot(source_path: Path, target_path: Path) -> None:
-    if not source_path.exists():
-        return
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    source = sqlite3.connect(str(source_path))
-    try:
-        target = sqlite3.connect(str(target_path))
-        try:
-            source.backup(target)
-        finally:
-            target.close()
-    finally:
-        source.close()
-
-
-def _preview_import_bundle(bundle_path: Path, db_path: Path, work_dir: Path) -> dict[str, Any]:
-    work_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="talent-cloud-preview-", dir=str(work_dir)) as dirname:
-        preview_db = Path(dirname) / "preview.db"
-        _copy_db_snapshot(db_path, preview_db)
-        result = import_bundle(
-            bundle_path,
-            preview_db,
-            apply=True,
-            confirm=CONFIRM_SYNC_TEXT,
-        )
-        result["_sync_conflict_fields"] = _sync_conflict_fields(preview_db)
-        return result
-
-
-def _sync_conflict_fields(db_path: Path) -> list[str]:
-    if not db_path.exists():
-        return []
-    conn = sqlite3.connect(str(db_path))
-    try:
-        rows = conn.execute(
-            """
-            SELECT field_name
-            FROM sync_conflicts
-            WHERE entity_type = 'candidate'
-              AND status = 'open'
-            ORDER BY field_name
-            """
-        ).fetchall()
-    except sqlite3.OperationalError:
-        return []
-    finally:
-        conn.close()
-    return [str(row[0]) for row in rows]
+    return int(plan.get("conflicts", {}).get("candidates", 0) or 0) > 0
 
 
 def _download_indexes(provider: CloudProvider, work_dir: Path) -> list[dict[str, Any]]:
@@ -548,6 +481,7 @@ def pull(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
     state = load_state(config.state_path)
     pull_started_at = _now_utc()
     local_node_id = _node_id(config.db_path) if config.db_path.exists() else ""
+    had_local_candidates = _candidate_count(config.db_path) > 0
     applied = 0
     skipped = 0
     blocked: list[dict[str, Any]] = []
@@ -577,10 +511,6 @@ def pull(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
             if _has_blocking_conflicts(plan):
                 blocked.append({"bundle_id": bundle_id, "reason": "conflicts", "plan": plan})
                 continue
-            preview = _preview_import_bundle(plain_path, config.db_path, temp_dir / "preview")
-            if _has_blocking_conflicts(preview):
-                blocked.append({"bundle_id": bundle_id, "reason": "conflicts", "plan": preview})
-                continue
             if config.auto_apply:
                 import_bundle(plain_path, config.db_path, apply=True, confirm=CONFIRM_SYNC_TEXT)
                 applied += 1
@@ -601,7 +531,11 @@ def pull(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
 
     state["blocked_remote_bundles"] = blocked
     state["last_sync_at"] = _now_utc()
-    if applied and not state.get("last_successful_push_started_at"):
+    if (
+        applied
+        and not state.get("last_successful_push_started_at")
+        and not had_local_candidates
+    ):
         state["last_successful_push_started_at"] = pull_started_at
     save_state(config.state_path, state)
     return {"applied": applied, "skipped": skipped, "blocked": blocked}

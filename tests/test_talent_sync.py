@@ -459,6 +459,59 @@ def test_export_incremental_bundle_includes_mixed_recent_tombstones(
     assert tombstones[0]["reason"] == "local_delete"
 
 
+def test_export_incremental_includes_resolve_merge_loser_tombstone(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "incremental-merge-delete.zip"
+    db = TalentDB(db_path)
+    try:
+        db.ingest(
+            {
+                "name": "Resolve Person",
+                "current_company": "ByteDance",
+                "current_title": "Engineer",
+                "city": "Shanghai",
+                "education": "Bachelor",
+                "platform_id": "maimai-resolve-existing",
+            },
+            platform="maimai",
+        )
+        db.add_company_alias("ByteDance", "Toutiao")
+        losing_id = db.ingest(
+            {
+                "name": "Resolve Person",
+                "current_company": "Toutiao",
+                "current_title": "Engineer",
+                "city": "Shanghai",
+                "education": "Bachelor",
+                "platform_id": "boss-resolve-losing",
+            },
+            platform="boss",
+        )
+        losing_sync_id = db._conn.execute(
+            "SELECT sync_id FROM candidates WHERE id = ?",
+            (losing_id,),
+        ).fetchone()["sync_id"]
+        pending_id = db.pending_merges()[0].id
+        db.resolve_merge(pending_id, "merge")
+    finally:
+        db.close()
+
+    summary = export_bundle(
+        db_path,
+        bundle_path,
+        mode="incremental",
+        since="2000-01-01T00:00:00Z",
+    )
+
+    tombstones = _read_bundle_jsonl(bundle_path, "data/tombstones.jsonl")
+    assert summary["tables"]["tombstones"] == 1
+    assert tombstones[0]["entity_type"] == "candidate"
+    assert tombstones[0]["entity_sync_id"] == losing_sync_id
+    assert tombstones[0]["reason"] == "local_merge"
+
+
 def test_incremental_bundle_manifest_records_cursor_metadata(
     tmp_path: Path,
 ) -> None:

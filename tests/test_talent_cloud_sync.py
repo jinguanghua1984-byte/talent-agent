@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import talent_cloud_sync as cloud_sync
 from scripts import talent_cloud_sync_providers as provider_module
 from scripts.talent_db import TalentDB
 from scripts.talent_cloud_sync import (
@@ -100,12 +101,56 @@ def test_config_from_env_requires_provider_specific_values(
     assert config.db_path == db_path
     assert config.localfs_root == tmp_path / "remote"
     assert config.state_path == Path("data/sync/cloud-state.json")
+    assert config.export_mode == "incremental"
+    assert config.since is None
+
+
+def test_config_from_env_accepts_export_mode_and_since(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "talent.db"
+    monkeypatch.setenv("TALENT_SYNC_PROVIDER", "localfs")
+    monkeypatch.setenv("TALENT_SYNC_LOCALFS_ROOT", str(tmp_path / "remote"))
+    monkeypatch.setenv("TALENT_SYNC_ENCRYPTION_KEY", keygen())
+    monkeypatch.setenv("TALENT_SYNC_EXPORT_MODE", "full")
+    monkeypatch.setenv("TALENT_SYNC_SINCE", "2026-06-12T00:00:00Z")
+
+    config = CloudSyncConfig.from_env(db_path=db_path)
+
+    assert config.export_mode == "full"
+    assert config.since == "2026-06-12T00:00:00Z"
 
 
 def test_load_state_creates_empty_state_when_missing(tmp_path: Path) -> None:
     state = load_state(tmp_path / "missing-state.json")
 
     assert state["schema"] == "talent_cloud_state_v2"
+    assert state["applied_bundle_ids"] == []
+    assert state["applied_bundles"] == []
+    assert state["blocked_remote_bundles"] == []
+    assert state["last_successful_push_started_at"] is None
+
+
+def test_load_state_migrates_legacy_v1_state(tmp_path: Path) -> None:
+    state_path = tmp_path / "cloud-state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema": "talent_cloud_state_v1",
+                "provider": "localfs",
+                "seen_bundle_ids": ["bundle-old"],
+                "last_push_bundle_id": "bundle-old",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = load_state(state_path)
+
+    assert state["schema"] == "talent_cloud_state_v2"
+    assert state["provider"] == "localfs"
+    assert state["seen_bundle_ids"] == ["bundle-old"]
     assert state["applied_bundle_ids"] == []
     assert state["applied_bundles"] == []
     assert state["blocked_remote_bundles"] == []
@@ -253,6 +298,32 @@ def test_incremental_push_uploads_only_changes_after_cursor(tmp_path: Path) -> N
     assert index_data["tables"]["candidates"] == 1
 
 
+def test_incremental_push_does_not_compute_full_db_fingerprint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "source.db"
+    _seed_candidate(db_path, "Alice")
+    config = _config(tmp_path, db_path, export_mode="incremental")
+    provider = LocalFsProvider(config.localfs_root)
+    init_remote(provider)
+    state = load_state(config.state_path)
+    state["schema"] = "talent_cloud_state_v2"
+    state["last_successful_push_started_at"] = "2000-01-01T00:00:00Z"
+    config.state_path.parent.mkdir(parents=True, exist_ok=True)
+    config.state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    def fail_full_fingerprint(db_path: Path) -> str:
+        raise AssertionError("incremental push must not compute full db fingerprint")
+
+    monkeypatch.setattr(cloud_sync, "_db_fingerprint", fail_full_fingerprint)
+
+    result = push(config, provider=provider)
+
+    assert result["uploaded"] is True
+    assert result["tables"]["candidates"] == 1
+
+
 def test_incremental_push_noops_when_no_rows_changed(tmp_path: Path) -> None:
     db_path = tmp_path / "source.db"
     candidate_id = _seed_candidate(db_path, "Alice")
@@ -336,7 +407,7 @@ def test_push_can_split_large_encrypted_bundle_and_pull_reassembles_parts(tmp_pa
     assert _candidate_names(target_db) == ["Alice"]
 
 
-def test_push_refuses_when_local_conflicts_are_open(tmp_path: Path) -> None:
+def test_push_allows_open_candidate_field_conflicts(tmp_path: Path) -> None:
     db_path = tmp_path / "source.db"
     _seed_candidate(db_path, "Alice")
     db = TalentDB(db_path)
@@ -358,8 +429,9 @@ def test_push_refuses_when_local_conflicts_are_open(tmp_path: Path) -> None:
     provider = LocalFsProvider(config.localfs_root)
     init_remote(provider)
 
-    with pytest.raises(CloudSyncError, match="open sync conflicts"):
-        push(config, provider=provider)
+    result = push(config, provider=provider)
+
+    assert result["uploaded"] is True
 
 
 def test_push_blocks_when_remote_bundle_has_not_been_pulled(tmp_path: Path) -> None:
@@ -429,6 +501,38 @@ def test_pull_records_applied_bundle_metadata_and_export_cursor(
     assert state["last_successful_push_started_at"] is not None
 
 
+def test_pull_does_not_seed_incremental_cursor_when_existing_local_data(
+    tmp_path: Path,
+) -> None:
+    key = keygen()
+    source_db = tmp_path / "source.db"
+    target_db = tmp_path / "target.db"
+    _seed_candidate(source_db, "Alice", platform_id="maimai-source")
+    _seed_candidate(target_db, "Bob", platform_id="maimai-local")
+    source_config = _config(tmp_path / "source", source_db, key=key, export_mode="full")
+    target_config = _config(
+        tmp_path / "target",
+        target_db,
+        key=key,
+        export_mode="incremental",
+    )
+    target_config = dataclasses.replace(
+        target_config,
+        localfs_root=source_config.localfs_root,
+    )
+    provider = LocalFsProvider(source_config.localfs_root)
+    init_remote(provider)
+    push(source_config, provider=provider)
+
+    pull_result = pull(target_config, provider=provider)
+
+    assert pull_result["applied"] == 1
+    state = load_state(target_config.state_path)
+    assert state["last_successful_push_started_at"] is None
+    with pytest.raises(CloudSyncError, match="incremental push requires"):
+        push(target_config, provider=provider)
+
+
 def test_pull_rejects_wrong_encryption_key_without_creating_target_db(tmp_path: Path) -> None:
     source_db = tmp_path / "source.db"
     target_db = tmp_path / "target.db"
@@ -449,7 +553,33 @@ def test_pull_rejects_wrong_encryption_key_without_creating_target_db(tmp_path: 
     assert not target_db.exists()
 
 
-def test_pull_stops_on_conflict_without_auto_apply(tmp_path: Path) -> None:
+def test_pull_stops_on_candidate_identity_conflict(tmp_path: Path) -> None:
+    source_db = tmp_path / "source.db"
+    target_db = tmp_path / "target.db"
+    key = keygen()
+    _seed_candidate(source_db, "Alice", platform_id="maimai-shared")
+    _seed_candidate(target_db, "Alicia", platform_id="maimai-shared")
+    _seed_candidate(target_db, "Alice", platform_id="maimai-other")
+    source_config = _config(tmp_path / "source", source_db, key=key)
+    target_config = _config(tmp_path / "target", target_db, key=key)
+    target_config = dataclasses.replace(
+        target_config,
+        localfs_root=source_config.localfs_root,
+    )
+    provider = LocalFsProvider(source_config.localfs_root)
+    init_remote(provider)
+    push(source_config, provider=provider)
+
+    result = pull(target_config, provider=provider)
+
+    assert result["applied"] == 0
+    assert result["blocked"][0]["reason"] == "conflicts"
+    assert sorted(_candidate_names(target_db)) == ["Alice", "Alicia"]
+
+
+def test_pull_applies_name_field_conflict_and_records_sync_conflict(
+    tmp_path: Path,
+) -> None:
     source_db = tmp_path / "source.db"
     target_db = tmp_path / "target.db"
     key = keygen()
@@ -467,9 +597,28 @@ def test_pull_stops_on_conflict_without_auto_apply(tmp_path: Path) -> None:
 
     result = pull(target_config, provider=provider)
 
-    assert result["applied"] == 0
-    assert result["blocked"][0]["reason"] == "conflicts"
+    assert result["applied"] == 1
+    assert result["blocked"] == []
+    conn = sqlite3.connect(str(target_db))
+    try:
+        conflict_fields = [
+            row[0]
+            for row in conn.execute(
+                """
+                SELECT field_name
+                FROM sync_conflicts
+                WHERE entity_type = 'candidate'
+                  AND status = 'open'
+                ORDER BY field_name
+                """
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+    assert "name" in conflict_fields
     assert _candidate_names(target_db) == ["Alicia"]
+    push_result = push(target_config, provider=provider)
+    assert push_result["uploaded"] is True
 
 
 def test_pull_applies_field_conflicts_and_records_sync_conflict(
@@ -520,6 +669,8 @@ def test_pull_applies_field_conflicts_and_records_sync_conflict(
     finally:
         conn.close()
     assert open_conflict_count >= 1
+    push_result = push(target_config, provider=provider)
+    assert push_result["uploaded"] is True
 
 
 def test_sync_is_idempotent_for_repeated_runs(tmp_path: Path) -> None:

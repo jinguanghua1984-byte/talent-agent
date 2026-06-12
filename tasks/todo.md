@@ -4,20 +4,6 @@
 
 ## Active Task
 
-### Talent DB 增量同步 P1
-
-- [x] 补齐候选人级 `sync_updated_at` 水位，确保候选人和关联数据写入都会刷新同步时间。
-- [x] 实现候选人闭包增量 bundle 导出，保留全量 bootstrap 行为。
-- [x] 扩展云同步 state、full bootstrap 和增量 push/pull 门禁。
-- [x] 更新跨 PC 文件同步和飞书 Drive 云同步文档。
-- [x] 运行聚焦测试、全量测试和 diff check，归档 Review。
-
-边界：实现 P1 候选人闭包增量同步；不直接同步 `data/talent.db` 文件；不迁移云数据库；不做实时多人并发、行级最小 delta、云端清理或可视化冲突 UI。执行计划见 `docs/superpowers/plans/2026-06-12-talent-db-incremental-sync.md`。
-
-验证方式：聚焦测试 `.venv/bin/python -m pytest tests/test_talent_sync.py tests/test_talent_cloud_sync.py -q`；完成后运行 `.venv/bin/python -m pytest tests -q` 和 `git diff --check`。
-
-Review：2026-06-12 已完成 Talent DB 增量同步 P1。实现候选人级 `sync_updated_at` 水位，覆盖候选人字段、详情、来源、identity、field value、微信时间线、score event、match score 等写入路径；`talent_sync export` 支持 full / incremental、`--since` 和候选人 sync_id 文件；飞书 Drive 云同步支持 full bootstrap、增量 push、远端未应用 bundle push 门禁、pull applied bundle state 和空增量 no-op；跨 PC 文件同步复用同一 bundle 格式。验证：聚焦测试 `83 passed in 1.58s`；全量测试 `1463 passed, 1 warning in 11.18s`；git diff --check clean。
-
 ### 多模态视频算法研究员 Campaign DB 同步主库与增量包
 
 - [x] 校验 campaign DB 已有 5 个确认绑定候选人，主库同步前状态可读。
