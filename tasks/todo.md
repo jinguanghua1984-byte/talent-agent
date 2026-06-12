@@ -4,18 +4,6 @@
 
 ## Active Task
 
-### 提交并推送当前全部更新
-
-- [x] 检查当前分支、远端、Git 可见变更范围和未跟踪文件。
-- [x] fetch `origin/main` 并确认本地与远端提交基线一致。
-- [x] 运行提交前验证：`git diff --check` 和全量测试。
-- [x] stage 全部 Git 可见更新并运行 `git diff --cached --check`。
-- [ ] commit、push，并确认远端 main 与本地 HEAD 一致。
-
-边界：用户已明确授权“提交并推送全部更新”，本轮允许提交并推送当前 Git 可见变更；不额外清理任务台历史、不修改业务数据文件、不做无关重构。
-
-验证方式：`git diff --check`、`.venv/bin/python -m pytest tests -q`、`git diff --cached --check`、`git push origin main`、最终 `git rev-list --left-right --count HEAD...origin/main`。
-
 ### 多模态视频算法研究员 Campaign DB 同步主库与增量包
 
 - [x] 校验 campaign DB 已有 5 个确认绑定候选人，主库同步前状态可读。
@@ -82,6 +70,7 @@ Review：2026-06-11 已按用户确认将黄玉岩、刘骁、张志达、张一
 
 ## Recent Done
 
+- 2026-06-12：已完成当前全部更新提交并推送；推送前本地 `main` 领先 `origin/main` 两个提交：`5f729f1 Design gbrain second brain P0`、`8083654 Plan gbrain second brain P0`，已推送到远端并确认 `HEAD` 与 `origin/main` 一致，完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-10：多模态视频算法研究员 BOSS 寻访已按用户要求停止并完成脉脉匹配交接准备；campaign `multimodal-video-algorithm-boss-maimai-real-contact-2026-06-09` 刷新到 `386` 张列表卡、`137` 条详情、`32` 次真实触达、`19` 个实名；`validate-executor` passed（36 条 approved queue、127 条 executor attempts、无 issues）；已导出 `structured/maimai-match-targets.jsonl`（19 个实名 target，13 个缺实名不进自动匹配）并新增 `reports/maimai-handoff-prep.md`，完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-10：优化 BOSS 多模态/视频类寻访通用筛选策略已完成；在 BOSS sourcing 合同和 BOSS-Maimai 交接中新增明确视频/多模态信号优先于视觉/图像/图形边界词的规则，默认 `strategy.json` 增加 positive/negative/override 信号；新增合同测试覆盖余先生类“视频算法+语音/视频/图形求职目标”可进入 contact_hold、搜索/广告/推荐/NLP/语音/纯视觉仍排除、已触达 hold 边界候选可进入脉脉补充；验证 `19 passed`，完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-10：多模态视频算法研究员 BOSS-Maimai 真实触达寻访已完成本轮飞书交付；BOSS 列表扫描到底部，累计 `115` 张卡片、去重详情候选 `52` 人、raw 详情页 `58` 条、真实触达 `14` 人、实名脉脉 target `8` 人；脉脉 safe resume 搜索 `22` 批全部成功，身份判定 `0 auto_bound / 1 pending_confirmation / 7 no_match`，刘波需人工确认，未写 Campaign DB 和 `data/talent.db`；本地交付包质量门禁 passed，飞书报告 Wiki `TZdywhCTmipVshkFCfkcwoHqnpd`、跟进 Sheet Wiki `YEfMw7Zt3i9WQRkklMacrdTenyh` 已发布并回读 passed，已通知 `JD需求协同` message_id=`om_x100b6dbe3f262134b3cf7232c05ee73`；完整记录已归档到 `tasks/archive/2026-06.md`。
