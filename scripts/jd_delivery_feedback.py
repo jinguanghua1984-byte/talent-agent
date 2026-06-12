@@ -164,10 +164,15 @@ def _calibration_suggestions(reason_counts: Counter[str]) -> list[str]:
 
 
 def compile_feedback_summary(feedback: dict[str, Any]) -> dict[str, Any]:
-    items = [item for item in feedback.get("candidate_feedback") or [] if isinstance(item, dict)]
+    raw_items = feedback.get("candidate_feedback") or feedback.get("items") or []
+    items = [item for item in raw_items if isinstance(item, dict)]
     reason_counts: Counter[str] = Counter()
+    decision_counts: Counter[str] = Counter()
     for item in items:
         reason_counts.update(str(code) for code in item.get("reason_codes") or [])
+        decision = item.get("consultant_decision")
+        if isinstance(decision, str) and decision:
+            decision_counts.update([decision])
 
     accepted_top_10 = [
         item for item in items if item["rank"] <= 10 and item["feedback_label"] == "认可"
@@ -190,6 +195,7 @@ def compile_feedback_summary(feedback: dict[str, Any]) -> dict[str, Any]:
             "accepted_at_30": len(accepted_top_30),
             "bad_at_10": len(bad_top_10),
         },
+        "consultant_decision_counts": dict(sorted(decision_counts.items())),
         "reason_distribution": dict(sorted(reason_counts.items())),
         "grade_acceptance_rate": _grade_acceptance(items),
         "calibration_suggestions": _calibration_suggestions(reason_counts),

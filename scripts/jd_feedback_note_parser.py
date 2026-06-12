@@ -38,6 +38,7 @@ FEEDBACK_SCHEMA = "jd_delivery_feedback_v1"
 REVIEW_QUEUE_SCHEMA = "jd_delivery_feedback_parse_review_queue_v1"
 REQUIRED_CSV_COLUMNS = {"candidate_id", "rank", "score", "grade", "feedback_note"}
 BATCH_PARSE_SIZE = 50
+CONSULTANT_DECISIONS = {"认可", "不认可", "待确认"}
 
 
 def feedback_note_structured_schema() -> StructuredOutputSchema:
@@ -360,6 +361,7 @@ def _write_feedback_results(
         "accepted_count": len(candidate_feedback),
         "review_count": len(review_items),
         "dry_run": dry_run,
+        "items": candidate_feedback + review_items,
     }
 
     if dry_run:
@@ -920,6 +922,21 @@ def _contains_any(text: str, needles: list[str]) -> bool:
     return any(needle in text for needle in needles)
 
 
+def _normalize_consultant_decision(
+    value: str | None,
+    feedback_note: str,
+) -> tuple[str, str]:
+    text = (value or "").strip()
+    if text in CONSULTANT_DECISIONS:
+        return text, "explicit"
+    note = feedback_note.strip()
+    if _contains_any(note, ["不认可", "不合适", "方向偏", "年限不符", "暂缓"]):
+        return "不认可", "inferred_from_note"
+    if _contains_any(note, ["认可", "不错", "可以推荐", "建议推进", "优先联系"]):
+        return "认可", "inferred_from_note"
+    return "待确认", "inferred_from_note"
+
+
 def _rule_result(
     feedback_note: str,
     *,
@@ -1111,6 +1128,10 @@ def _default_batch_job_id() -> str:
 
 
 def _candidate_item(row: dict[str, str | None], parsed: dict[str, Any]) -> dict[str, Any]:
+    decision, decision_source = _normalize_consultant_decision(
+        row.get("consultant_decision"),
+        row.get("feedback_note") or "",
+    )
     return {
         "candidate_id": _required_text(row, "candidate_id"),
         "rank": _required_int(row, "rank"),
@@ -1121,6 +1142,8 @@ def _candidate_item(row: dict[str, str | None], parsed: dict[str, Any]) -> dict[
         "reason_codes": parsed["reason_codes"],
         "hunter_note": parsed["hunter_note"],
         "feedback_note": parsed["feedback_note"],
+        "consultant_decision": decision,
+        "decision_source": decision_source,
         "parse_source": parsed["parse_source"],
         "parse_confidence": parsed["parse_confidence"],
     }

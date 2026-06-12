@@ -177,6 +177,49 @@ def test_compile_feedback_summary_calculates_topn_and_reason_metrics() -> None:
     assert "scorecard_threshold_review" in summary["calibration_suggestions"]
 
 
+def test_compile_feedback_summary_counts_consultant_decisions() -> None:
+    payload = {
+        "role_id": "role",
+        "run_id": "run",
+        "profile_version": "p1",
+        "scorecard_version": "s1",
+        "items": [
+            {
+                "candidate_id": "cand-1",
+                "rank": 1,
+                "grade": "A",
+                "original_score": 90.0,
+                "feedback_label": "accepted",
+                "feedback_stage": "screen",
+                "reason_codes": ["strong_candidate_ranked_low"],
+                "hunter_note": "认可",
+                "feedback_note": "不错",
+                "consultant_decision": "认可",
+                "parse_source": "rule",
+                "parse_confidence": 0.9,
+            },
+            {
+                "candidate_id": "cand-2",
+                "rank": 2,
+                "grade": "B",
+                "original_score": 80.0,
+                "feedback_label": "rejected",
+                "feedback_stage": "screen",
+                "reason_codes": ["direction_mismatch"],
+                "hunter_note": "不认可",
+                "feedback_note": "方向偏",
+                "consultant_decision": "不认可",
+                "parse_source": "rule",
+                "parse_confidence": 0.9,
+            },
+        ],
+    }
+
+    summary = compile_feedback_summary(payload)
+
+    assert summary["consultant_decision_counts"] == {"不认可": 1, "认可": 1}
+
+
 def test_cli_writes_summary_and_calibration_files(tmp_path: Path) -> None:
     feedback_path = tmp_path / "delivery-feedback.json"
     summary_path = tmp_path / "feedback-summary.json"

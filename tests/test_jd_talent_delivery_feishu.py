@@ -531,9 +531,9 @@ def test_validate_delivery_package_allows_blank_feedback_columns(tmp_path: Path)
         root / "reports" / "outreach-queue.csv",
         (
             "candidate_id,company,title,score,grade,suggested_outreach_angle,profile_url,"
-            "feedback_note\n"
+            "consultant_decision,feedback_note\n"
             "1,腾讯,推理工程师,88,A,建议围绕腾讯推理工程师经历沟通,"
-            "https://maimai.cn/profile/detail?dstu=1&trackable_token=secret,\n"
+            "https://maimai.cn/profile/detail?dstu=1&trackable_token=secret,,\n"
         ),
     )
 

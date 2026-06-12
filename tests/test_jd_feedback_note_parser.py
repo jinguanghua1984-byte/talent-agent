@@ -527,6 +527,44 @@ def test_parse_feedback_csv_uses_rules_and_batches_unresolved_notes(
     assert review["items"][0]["review_reasons"] == ["low_confidence"]
 
 
+def test_parse_feedback_csv_preserves_consultant_decision(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    (run_root / "profile").mkdir(parents=True)
+    (run_root / "scoring").mkdir()
+    (run_root / "run-manifest.json").write_text(
+        json.dumps({"output_dir": "data/output/run"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (run_root / "profile" / "role-profile.json").write_text(
+        json.dumps(
+            {"schema": "role_profile_v1", "version": "profile-v1", "role_id": "role"},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (run_root / "scoring" / "scorecard.json").write_text(
+        json.dumps({"schema": "scorecard_v1", "version": "s1"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    csv_path = run_root / "outreach.csv"
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    csv_path.write_text(
+        "\n".join(
+            [
+                "candidate_id,rank,score,grade,consultant_decision,feedback_note",
+                "cand-001,1,91.5,A,认可,这个不错，可以推荐",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = parse_feedback_csv(run_root=run_root, csv_path=csv_path, dry_run=True)
+
+    assert result["items"][0]["consultant_decision"] == "认可"
+    assert result["items"][0]["decision_source"] == "explicit"
+
+
 def test_prepare_feedback_batch_job_writes_manifest_requests_and_rule_results(
     tmp_path: Path,
 ) -> None:

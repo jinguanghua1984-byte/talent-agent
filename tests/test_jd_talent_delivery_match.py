@@ -245,7 +245,7 @@ def test_run_match_outputs_reports_and_outreach(tmp_path: Path, monkeypatch) -> 
         out_dir / "reports" / "outreach-queue.csv"
     ).open(encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
-    expected_feedback_fields = ["feedback_note"]
+    expected_feedback_fields = ["consultant_decision", "feedback_note"]
     removed_feedback_fields = [
         "feedback_label",
         "feedback_stage",

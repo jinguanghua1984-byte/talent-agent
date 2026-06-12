@@ -45,6 +45,7 @@ CSV_FIELDS = [
 ]
 
 FEEDBACK_CSV_FIELDS = [
+    "consultant_decision",
     "feedback_note",
 ]
 
@@ -793,6 +794,7 @@ def _outreach_row(rank: int, item: dict[str, Any]) -> dict[str, Any]:
         "risk_summary": item.get("risk_summary") or "无明显硬风险",
         "suggested_outreach_angle": _outreach_angle(item),
         "profile_url": item.get("profile_url", ""),
+        "consultant_decision": "",
         "feedback_note": "",
     }
 
