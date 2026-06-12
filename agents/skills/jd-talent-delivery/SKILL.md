@@ -51,9 +51,13 @@ description: Use when the user asks to turn a JD into a local talent-library rec
 
 ## 猎头反馈后续
 
-当用户要求回收或分析猎头反馈时，外联表对业务只暴露 `feedback_note` 一个反馈列。使用 `python -m scripts.jd_feedback_note_parser parse-csv --run-root <run_root>` 调用 `jd_feedback_note_parser`，按规则优先、复杂反馈批量 AI 解析的顺序，把自然语言反馈解析为内部 `feedback_label`、`feedback_stage`、`reason_codes`、`hunter_note`。低置信度、被降级或需要人工复核的行写入 `feedback/parse-review-queue.json`，默认不得进入校准统计。
+当用户要求回收或分析猎头反馈时，外联表对业务暴露 `consultant_decision`（可选，`认可`、`不认可`、`待确认`）和 `feedback_note`。使用 `python -m scripts.jd_feedback_note_parser parse-csv --run-root <run_root>` 调用 `jd_feedback_note_parser`，按规则优先、复杂反馈批量 AI 解析的顺序，把自然语言反馈解析为内部 `feedback_label`、`feedback_stage`、`reason_codes`、`hunter_note`。低置信度、被降级或需要人工复核的行写入 `feedback/parse-review-queue.json`，默认不得进入校准统计。
 
 本步骤输出 `feedback/delivery-feedback.json`、`feedback/parse-review-queue.json`、`feedback/feedback-summary.json` 和 `feedback/calibration-suggestions.json`。指标至少包含 `accepted_at_30`、`bad_at_10`、原因分布和 grade acceptance rate。本步骤只生成校准建议，不写 `data/talent.db`，不自动修改评分卡，不自动发布猎头备注。
+
+## Second Brain P0
+
+当仓库启用 gbrain 第二大脑 P0 时，本 Skill 仍以 JD delivery 为主流程。second-brain 只生成 shadow calibration、case page 和事件账本，不写 `data/talent.db`，不触发平台动作，不自动发布飞书。
 
 ## 岗位画像 contract
 

@@ -67,6 +67,10 @@ python -m scripts.jd_talent_delivery prepare --jd-path <jd_path> --output-base d
 
 复用 `hr-talent` 的岗位分析框架生成 `profile/role-deep-dive.md` 和 `profile/role-profile.json`。岗位画像至少包含结论摘要、岗位真实问题、能力模型、候选人类型、寻访关键点、公司池、关键词、排除项和风险项，是后续评分卡、粗筛、精排和报告的唯一 JD 解释来源。
 
+### S2b：Second Brain shadow calibration（可选）
+
+如果启用 gbrain 第二大脑 P0，运行 `python -m scripts.second_brain query --jd <jd> --client <client_id> --jd-family <jd_family> --out <run_root>/second-brain/`，生成 `historical-calibration.md`、`historical-calibration.json` 和 `sourcing-strategy-suggestions.md`。该阶段失败或写入 `gbrain_unavailable` 时不得阻塞正式 JD delivery；fallback 结果只能作为 L0 解释层参考。
+
 ### S3：评分卡
 
 从岗位画像生成 `scoring/scorecard.json`。评分卡至少包含：
@@ -140,6 +144,10 @@ python -m scripts.jd_feedback_note_parser parse-csv --run-root <run_root>
 解析器按规则优先、复杂反馈批量 AI 解析的顺序，把 `feedback_note` 转为内部结构化字段：`feedback_label`、`feedback_stage`、`reason_codes`、`hunter_note`。低置信度、被降级或需要人工复核的行写入 `feedback/parse-review-queue.json`，默认不得进入校准统计。
 
 反馈编译指标至少包含 `accepted_at_30`、`bad_at_10`、原因分布和 grade acceptance rate。输出只能作为下一轮岗位画像、评分卡和匹配策略的校准建议。S9 不得写入 data/talent.db，不得写入 `data/talent.db`，不得自动修改 `scoring/scorecard.json`，不得把猎头备注自动发布到 Wiki。
+
+### S8b：Second Brain case/event 生成（可选）
+
+当推荐反馈中包含 `consultant_decision` 或可从 `feedback_note` 推断时，可运行 `python -m scripts.second_brain prepare-case --run-root <run_root> --client <client_id> --jd-family <jd_family>`，生成 append-only events、public/private case page 和后续 gbrain 导入材料。该阶段不调用平台、不写主库、不自动发布飞书。
 
 ## Scorecard 一致性
 

@@ -938,3 +938,30 @@ def test_public_search_commands_reference_preserves_execution_contract():
         "放弃记录",
     ]:
         assert token in commands
+
+
+def test_jd_delivery_documents_second_brain_shadow_contract():
+    skill = (ROOT / "agents" / "skills" / "jd-talent-delivery" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    workflow = (
+        ROOT / "agents" / "workflows" / "jd-talent-delivery" / "AGENT.md"
+    ).read_text(encoding="utf-8")
+
+    required_skill_tokens = [
+        "consultant_decision",
+        "feedback_note",
+        "second-brain",
+    ]
+    required_workflow_tokens = [
+        "historical-calibration.md",
+        "historical-calibration.json",
+        "sourcing-strategy-suggestions.md",
+        "scripts.second_brain prepare-case",
+        "gbrain_unavailable",
+    ]
+
+    for token in required_skill_tokens:
+        assert token in skill
+    for token in required_workflow_tokens:
+        assert token in workflow
