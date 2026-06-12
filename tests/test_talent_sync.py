@@ -365,6 +365,38 @@ def test_export_incremental_bundle_includes_recent_tombstones(
     assert tombstones[0]["reason"] == "local_delete"
 
 
+def test_export_incremental_with_empty_candidate_sync_ids_exports_no_tombstones_without_since(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "incremental-empty-candidates.zip"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest(
+            {
+                "name": "Deleted Alice",
+                "current_company": "Acme",
+                "platform_id": "maimai-delete",
+            },
+            platform="maimai",
+        )
+        db.delete_candidate(candidate_id)
+    finally:
+        db.close()
+
+    summary = export_bundle(
+        db_path,
+        bundle_path,
+        mode="incremental",
+        candidate_sync_ids=set(),
+    )
+
+    assert summary["tables"]["candidates"] == 0
+    assert summary["tables"]["tombstones"] == 0
+    assert _read_bundle_jsonl(bundle_path, "data/candidates.jsonl") == []
+    assert _read_bundle_jsonl(bundle_path, "data/tombstones.jsonl") == []
+
+
 def test_export_incremental_bundle_includes_mixed_recent_tombstones(
     tmp_path: Path,
 ) -> None:
@@ -513,6 +545,81 @@ def test_export_incremental_requires_since_or_candidate_file(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match="incremental export requires"):
         export_bundle(db_path, bundle_path, mode="incremental")
+
+
+def test_export_incremental_rejects_invalid_since(tmp_path: Path) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "invalid-since.zip"
+    db = TalentDB(db_path)
+    db.close()
+
+    with pytest.raises(ValueError, match="Invalid sync timestamp"):
+        export_bundle(db_path, bundle_path, mode="incremental", since="not-a-date")
+
+    assert not bundle_path.exists()
+
+
+def test_export_full_keeps_orphan_identity_match_but_incremental_excludes_it(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.db"
+    full_bundle = tmp_path / "full.zip"
+    incremental_bundle = tmp_path / "incremental.zip"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest(
+            {
+                "name": "Changed Alice",
+                "current_company": "Acme",
+                "platform_id": "maimai-1",
+            },
+            platform="maimai",
+        )
+        db.record_identity_match(
+            {
+                "source_platform": "boss",
+                "source_candidate_key": "orphan-boss-1",
+                "target_platform": "maimai",
+                "target_platform_id": "maimai-orphan-1",
+                "target_profile_url": "https://maimai.cn/profile/detail?dstu=orphan",
+                "query_text": "Orphan match",
+                "query_level": "person",
+                "confidence": 0.42,
+                "score_breakdown": {"name": 0.42},
+                "match_status": "pending_confirmation",
+            }
+        )
+        db._conn.execute(
+            "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+            ("2030-01-01 00:00:00", candidate_id),
+        )
+        db._conn.commit()
+    finally:
+        db.close()
+
+    full_summary = export_bundle(db_path, full_bundle, mode="full")
+    incremental_summary = export_bundle(
+        db_path,
+        incremental_bundle,
+        mode="incremental",
+        since="2029-01-01T00:00:00Z",
+    )
+
+    assert full_summary["tables"]["candidate_identity_matches"] == 1
+    full_matches = _read_bundle_jsonl(
+        full_bundle,
+        "data/candidate_identity_matches.jsonl",
+    )
+    assert full_matches[0]["candidate_sync_id"] is None
+    assert incremental_summary["tables"]["candidates"] == 1
+    assert incremental_summary["tables"]["candidate_identity_matches"] == 0
+    assert (
+        _read_bundle_jsonl(
+            incremental_bundle,
+            "data/candidate_identity_matches.jsonl",
+        )
+        == []
+    )
 
 
 def test_sync_bundle_round_trips_cross_channel_audit_tables(tmp_path: Path):

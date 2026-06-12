@@ -63,6 +63,9 @@ def export_bundle(
         raise ValueError(
             "incremental export requires --since or --candidate-sync-ids-file"
         )
+    normalized_since = None
+    if mode == "incremental" and since is not None:
+        normalized_since = _normalize_sync_timestamp(since, strict=True)
     target_path = Path(bundle_path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
     cursor_started_at = datetime.now(UTC).replace(microsecond=0).isoformat()
@@ -72,15 +75,12 @@ def export_bundle(
         source_node_id = db._node_id()
         table_rows = db.export_sync_rows(
             candidate_sync_ids=candidate_sync_ids,
-            since=since if mode == "incremental" else None,
+            since=normalized_since if mode == "incremental" else None,
         )
     finally:
         db.close()
 
     table_counts = {table: len(rows) for table, rows in table_rows.items()}
-    base_cursor = None
-    if mode == "incremental" and since is not None:
-        base_cursor = _normalize_sync_timestamp(since)
     manifest = BundleManifest(
         bundle_schema_version=BUNDLE_SCHEMA_VERSION,
         export_mode=mode,
@@ -89,7 +89,7 @@ def export_bundle(
         created_at=datetime.now(UTC).replace(microsecond=0).isoformat(),
         tables=table_counts,
         attachments={"wechat_timelines": False},
-        base_cursor=base_cursor,
+        base_cursor=normalized_since,
         cursor_started_at=cursor_started_at if mode == "incremental" else None,
         candidate_count=table_counts.get("candidates", 0),
     )

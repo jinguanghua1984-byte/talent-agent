@@ -2863,13 +2863,18 @@ class TalentDB:
         candidate_sync_ids: set[str] | list[str] | tuple[str, ...] | None = None,
         since: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
+        normalized_since = (
+            _normalize_sync_timestamp(since, strict=True)
+            if since is not None
+            else None
+        )
         selected_sync_ids: set[str] | None
         if candidate_sync_ids is not None:
             selected_sync_ids = {
                 str(sync_id) for sync_id in candidate_sync_ids if sync_id
             }
         else:
-            selected_sync_ids = self._candidate_sync_ids_changed_since(since)
+            selected_sync_ids = self._candidate_sync_ids_changed_since(normalized_since)
 
         return {
             "candidates": self._export_candidates(selected_sync_ids),
@@ -2884,7 +2889,10 @@ class TalentDB:
             ),
             "score_events": self._export_score_events(selected_sync_ids),
             "match_scores": self._export_match_scores(selected_sync_ids),
-            "tombstones": self._export_tombstones(selected_sync_ids, since=since),
+            "tombstones": self._export_tombstones(
+                selected_sync_ids,
+                since=normalized_since,
+            ),
         }
 
     def _export_candidates(
@@ -3176,9 +3184,12 @@ class TalentDB:
                         f"({placeholders}))"
                     )
                     params.extend(sorted(candidate_sync_ids))
+            elif normalized_since is not None:
+                clauses.append("deleted_at >= ?")
+                params.append(normalized_since)
             else:
-                clauses.append("entity_type = 'candidate'")
-        if normalized_since is not None and not candidate_sync_ids:
+                clauses.append("1 = 0")
+        elif normalized_since is not None:
             clauses.append("deleted_at >= ?")
             params.append(normalized_since)
         where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -3524,15 +3535,25 @@ def _export_row(
     return data
 
 
-def _normalize_sync_timestamp(value: str | None) -> str | None:
-    if not value:
+def _normalize_sync_timestamp(
+    value: str | None,
+    *,
+    strict: bool = False,
+) -> str | None:
+    if value is None:
         return None
     text = str(value).strip()
+    if not text:
+        if strict:
+            raise ValueError("Invalid sync timestamp: empty")
+        return None
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
     try:
         parsed = datetime.fromisoformat(text)
-    except ValueError:
+    except ValueError as exc:
+        if strict:
+            raise ValueError(f"Invalid sync timestamp: {value}") from exc
         return str(value)
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone(UTC).replace(tzinfo=None)
