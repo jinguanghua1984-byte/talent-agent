@@ -107,6 +107,36 @@
 
 初始化后，飞书 Drive 里会出现一组系统目录，例如 `bundle-index`、`bundles`、`_meta`。这些目录不要手动改名、移动或删除。
 
+### 第一次同步和日常同步
+
+第一次把一台电脑的数据放到飞书 Drive 时，使用 full bootstrap：
+
+```bash
+.venv/bin/python -m scripts.talent_cloud_sync push --provider feishu --mode full
+```
+
+其它电脑第一次使用时，先拉取这个全量 bootstrap：
+
+```bash
+.venv/bin/python -m scripts.talent_cloud_sync pull --provider feishu
+```
+
+如果这台电脑在拉取前已经有本地人才库数据，拉取后第一次上传不要直接依赖默认增量。先显式做一次 full bootstrap，或指定明确的 `--since` 起点：
+
+```bash
+.venv/bin/python -m scripts.talent_cloud_sync push --provider feishu --mode full
+```
+
+日常同步使用增量：
+
+```bash
+.venv/bin/python -m scripts.talent_cloud_sync sync --provider feishu
+```
+
+`sync` 会先拉取远端未应用的 bundle，再上传本机增量。如果远端已有本机没拉取的 bundle，系统会拒绝 push，要求先 pull。
+
+如果本机没有任何变化，增量 push 会返回 no-op，不上传空包。
+
 ---
 
 ## 日常同步怎么做

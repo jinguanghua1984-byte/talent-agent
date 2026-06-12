@@ -140,6 +140,47 @@ export TALENT_SYNC_ENCRYPTION_KEY='<上一步生成的 key>'
 .venv/bin/python -m scripts.talent_sync import --bundle <bundle.zip> --db data/talent.db --apply --confirm "确认同步人才库"
 ```
 
+### 增量同步包
+
+日常跨电脑同步优先使用增量包。增量包不是数据库文件，而是系统生成的安全 zip 包。
+
+发送端导出增量包：
+
+```bash
+.venv/bin/python -m scripts.talent_sync export \
+  --db data/talent.db \
+  --mode incremental \
+  --since 2026-06-12T00:00:00Z \
+  --out data/sync/talent-sync-incremental-20260612.zip
+```
+
+接收端先校验：
+
+```bash
+.venv/bin/python -m scripts.talent_sync verify-bundle \
+  --bundle data/sync/talent-sync-incremental-20260612.zip
+```
+
+接收端先 dry-run：
+
+```bash
+.venv/bin/python -m scripts.talent_sync import \
+  --db data/talent.db \
+  --bundle data/sync/talent-sync-incremental-20260612.zip
+```
+
+确认后写入：
+
+```bash
+.venv/bin/python -m scripts.talent_sync import \
+  --db data/talent.db \
+  --bundle data/sync/talent-sync-incremental-20260612.zip \
+  --apply \
+  --confirm "确认同步人才库"
+```
+
+新电脑第一次使用仍然先导入全量包。全量包完成后，后续再使用增量包。
+
 ---
 
 ## 场景一：把人才库备份到另一台电脑

@@ -32,6 +32,9 @@ class BundleManifest:
     source_node_id: str
     export_id: str
     created_at: str
-    db_schema: str = "talent-agent-sqlite"
     tables: dict[str, int] = field(default_factory=dict)
     attachments: dict[str, bool] = field(default_factory=dict)
+    db_schema: str = "talent-agent-sqlite"
+    base_cursor: str | None = None
+    cursor_started_at: str | None = None
+    candidate_count: int | None = None

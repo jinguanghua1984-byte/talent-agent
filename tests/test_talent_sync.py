@@ -1,5 +1,6 @@
 import hashlib
 import json
+import sqlite3
 import zipfile
 from pathlib import Path
 
@@ -49,6 +50,138 @@ def _rewrite_bundle_jsonl(
     with zipfile.ZipFile(target_path, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
         for name in sorted(payloads):
             bundle.writestr(name, payloads[name])
+
+
+def _read_bundle_jsonl(bundle_path: Path, relative_path: str) -> list[dict]:
+    with zipfile.ZipFile(bundle_path) as bundle:
+        payload = bundle.read(relative_path).decode("utf-8")
+    if not payload.strip():
+        return []
+    return [json.loads(line) for line in payload.splitlines()]
+
+
+def _candidate_sync_updated_at(db_path: Path, candidate_id: int) -> str:
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT sync_updated_at FROM candidates WHERE id = ?",
+            (candidate_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    return str(row[0])
+
+
+def _reset_candidate_sync_updated_at(
+    db: TalentDB,
+    candidate_id: int,
+    value: str = "2000-01-01 00:00:00",
+) -> None:
+    db._conn.execute(
+        "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+        (value, candidate_id),
+    )
+    db._conn.commit()
+
+
+def test_candidate_update_refreshes_sync_updated_at(tmp_path: Path) -> None:
+    db_path = tmp_path / "source.db"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest(
+            {
+                "name": "Alice",
+                "current_company": "Acme",
+                "platform_id": "maimai-1",
+            },
+            platform="maimai",
+        )
+        _reset_candidate_sync_updated_at(db, candidate_id)
+
+        db.update_candidate(candidate_id, {"city": "Shanghai"})
+    finally:
+        db.close()
+
+    assert _candidate_sync_updated_at(db_path, candidate_id) > "2000-01-01 00:00:00"
+
+
+def test_candidate_child_writes_refresh_parent_sync_updated_at(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.db"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest(
+            {
+                "name": "Alice",
+                "current_company": "Acme",
+                "platform_id": "maimai-1",
+            },
+            platform="maimai",
+        )
+        source_profile_id = db.get_sources(candidate_id)[0].id
+
+        _reset_candidate_sync_updated_at(db, candidate_id)
+        db.record_identity_match(
+            {
+                "candidate_id": candidate_id,
+                "source_platform": "boss",
+                "source_candidate_key": "boss-1",
+                "target_platform": "maimai",
+                "target_platform_id": "maimai-1",
+                "target_profile_url": "https://maimai.cn/profile/detail?dstu=maimai-1",
+                "query_text": "Alice Acme",
+                "query_level": "person",
+                "confidence": 0.95,
+                "score_breakdown": {"name": 0.98},
+                "match_status": "confirmed",
+                "decision_reason": "same person",
+            }
+        )
+        after_identity = _candidate_sync_updated_at(db_path, candidate_id)
+        assert after_identity > "2000-01-01 00:00:00"
+
+        _reset_candidate_sync_updated_at(db, candidate_id)
+        db.record_field_value(
+            {
+                "candidate_id": candidate_id,
+                "field_name": "current_title",
+                "platform": "maimai",
+                "source_profile_id": source_profile_id,
+                "field_value": {"value": "AI Engineer"},
+                "confidence": 0.9,
+                "merge_decision": "keep_primary",
+            }
+        )
+        after_field = _candidate_sync_updated_at(db_path, candidate_id)
+        assert after_field > "2000-01-01 00:00:00"
+
+        _reset_candidate_sync_updated_at(db, candidate_id)
+        db.add_wechat_timeline(
+            candidate_id,
+            {
+                "chat_name": "Alice Followup",
+                "markdown_path": "wechat/alice.md",
+                "message_count": 3,
+            },
+        )
+        after_wechat = _candidate_sync_updated_at(db_path, candidate_id)
+        assert after_wechat > "2000-01-01 00:00:00"
+
+        _reset_candidate_sync_updated_at(db, candidate_id)
+        db.save_match_score(
+            candidate_id,
+            "jd-1",
+            "final",
+            88,
+            {"skill": 90},
+            "strong match",
+        )
+        after_match = _candidate_sync_updated_at(db_path, candidate_id)
+        assert after_match > "2000-01-01 00:00:00"
+    finally:
+        db.close()
 
 
 def test_canonical_json_is_order_stable():
@@ -129,6 +262,416 @@ def test_export_full_bundle_contains_manifest_and_core_rows(tmp_path: Path):
         line.startswith(hashlib.sha256(candidates_bytes).hexdigest())
         and line.endswith("  data/candidates.jsonl")
         for line in checksums
+    )
+
+
+def test_export_incremental_bundle_contains_changed_candidate_closure(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "incremental.zip"
+    db = TalentDB(db_path)
+    try:
+        old_candidate_id = db.ingest(
+            {
+                "name": "Old Alice",
+                "current_company": "Old Co",
+                "platform_id": "maimai-old",
+                "work_experience": [{"company": "Old Co"}],
+            },
+            platform="maimai",
+        )
+        changed_candidate_id = db.ingest(
+            {
+                "name": "Changed Bob",
+                "current_company": "New Co",
+                "platform_id": "maimai-new",
+                "work_experience": [{"company": "New Co"}],
+            },
+            platform="maimai",
+        )
+        db.save_match_score(
+            changed_candidate_id,
+            "jd-1",
+            "final",
+            91,
+            {"skill": 92},
+            "strong",
+        )
+        db._conn.execute(
+            "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+            ("2000-01-01 00:00:00", old_candidate_id),
+        )
+        db._conn.execute(
+            "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+            ("2030-01-01 00:00:00", changed_candidate_id),
+        )
+        db._conn.commit()
+    finally:
+        db.close()
+
+    summary = export_bundle(
+        db_path,
+        bundle_path,
+        mode="incremental",
+        since="2029-01-01T00:00:00Z",
+    )
+
+    assert summary["mode"] == "incremental"
+    assert summary["tables"]["candidates"] == 1
+    candidates = _read_bundle_jsonl(bundle_path, "data/candidates.jsonl")
+    details = _read_bundle_jsonl(bundle_path, "data/candidate_details.jsonl")
+    sources = _read_bundle_jsonl(bundle_path, "data/source_profiles.jsonl")
+    scores = _read_bundle_jsonl(bundle_path, "data/match_scores.jsonl")
+    assert [row["name"] for row in candidates] == ["Changed Bob"]
+    assert len(details) == 1
+    assert len(sources) == 1
+    assert len(scores) == 1
+    assert details[0]["candidate_sync_id"] == candidates[0]["sync_id"]
+    assert sources[0]["candidate_sync_id"] == candidates[0]["sync_id"]
+    assert scores[0]["candidate_sync_id"] == candidates[0]["sync_id"]
+
+
+def test_export_incremental_bundle_includes_recent_tombstones(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "incremental-delete.zip"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest(
+            {
+                "name": "Deleted Alice",
+                "current_company": "Acme",
+                "platform_id": "maimai-delete",
+            },
+            platform="maimai",
+        )
+        db.delete_candidate(candidate_id)
+    finally:
+        db.close()
+
+    summary = export_bundle(
+        db_path,
+        bundle_path,
+        mode="incremental",
+        since="2000-01-01T00:00:00Z",
+    )
+
+    assert summary["tables"]["candidates"] == 0
+    assert summary["tables"]["tombstones"] == 1
+    tombstones = _read_bundle_jsonl(bundle_path, "data/tombstones.jsonl")
+    assert tombstones[0]["entity_type"] == "candidate"
+    assert tombstones[0]["reason"] == "local_delete"
+
+
+def test_export_incremental_with_empty_candidate_sync_ids_exports_no_tombstones_without_since(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "incremental-empty-candidates.zip"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest(
+            {
+                "name": "Deleted Alice",
+                "current_company": "Acme",
+                "platform_id": "maimai-delete",
+            },
+            platform="maimai",
+        )
+        db.delete_candidate(candidate_id)
+    finally:
+        db.close()
+
+    summary = export_bundle(
+        db_path,
+        bundle_path,
+        mode="incremental",
+        candidate_sync_ids=set(),
+    )
+
+    assert summary["tables"]["candidates"] == 0
+    assert summary["tables"]["tombstones"] == 0
+    assert _read_bundle_jsonl(bundle_path, "data/candidates.jsonl") == []
+    assert _read_bundle_jsonl(bundle_path, "data/tombstones.jsonl") == []
+
+
+def test_export_incremental_bundle_includes_mixed_recent_tombstones(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "incremental-mixed-delete.zip"
+    db = TalentDB(db_path)
+    try:
+        old_candidate_id = db.ingest(
+            {
+                "name": "Old Alice",
+                "current_company": "Old Co",
+                "platform_id": "maimai-old",
+            },
+            platform="maimai",
+        )
+        changed_candidate_id = db.ingest(
+            {
+                "name": "Changed Bob",
+                "current_company": "New Co",
+                "platform_id": "maimai-new",
+            },
+            platform="maimai",
+        )
+        deleted_candidate_id = db.ingest(
+            {
+                "name": "Deleted Carol",
+                "current_company": "Gone Co",
+                "platform_id": "maimai-deleted",
+            },
+            platform="maimai",
+        )
+        db._conn.execute(
+            "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+            ("2000-01-01 00:00:00", old_candidate_id),
+        )
+        db._conn.execute(
+            "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+            ("2030-01-01 00:00:00", changed_candidate_id),
+        )
+        db._conn.commit()
+        db.delete_candidate(deleted_candidate_id)
+        db._conn.execute(
+            "UPDATE sync_tombstones SET deleted_at = ? WHERE reason = ?",
+            ("2030-01-02 00:00:00", "local_delete"),
+        )
+        db._conn.commit()
+    finally:
+        db.close()
+
+    summary = export_bundle(
+        db_path,
+        bundle_path,
+        mode="incremental",
+        since="2029-01-01T00:00:00Z",
+    )
+
+    assert summary["tables"]["candidates"] == 1
+    assert summary["tables"]["tombstones"] == 1
+    tombstones = _read_bundle_jsonl(bundle_path, "data/tombstones.jsonl")
+    assert tombstones[0]["reason"] == "local_delete"
+
+
+def test_export_incremental_includes_resolve_merge_loser_tombstone(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "incremental-merge-delete.zip"
+    db = TalentDB(db_path)
+    try:
+        db.ingest(
+            {
+                "name": "Resolve Person",
+                "current_company": "ByteDance",
+                "current_title": "Engineer",
+                "city": "Shanghai",
+                "education": "Bachelor",
+                "platform_id": "maimai-resolve-existing",
+            },
+            platform="maimai",
+        )
+        db.add_company_alias("ByteDance", "Toutiao")
+        losing_id = db.ingest(
+            {
+                "name": "Resolve Person",
+                "current_company": "Toutiao",
+                "current_title": "Engineer",
+                "city": "Shanghai",
+                "education": "Bachelor",
+                "platform_id": "boss-resolve-losing",
+            },
+            platform="boss",
+        )
+        losing_sync_id = db._conn.execute(
+            "SELECT sync_id FROM candidates WHERE id = ?",
+            (losing_id,),
+        ).fetchone()["sync_id"]
+        pending_id = db.pending_merges()[0].id
+        db.resolve_merge(pending_id, "merge")
+    finally:
+        db.close()
+
+    summary = export_bundle(
+        db_path,
+        bundle_path,
+        mode="incremental",
+        since="2000-01-01T00:00:00Z",
+    )
+
+    tombstones = _read_bundle_jsonl(bundle_path, "data/tombstones.jsonl")
+    assert summary["tables"]["tombstones"] == 1
+    assert tombstones[0]["entity_type"] == "candidate"
+    assert tombstones[0]["entity_sync_id"] == losing_sync_id
+    assert tombstones[0]["reason"] == "local_merge"
+
+
+def test_incremental_bundle_manifest_records_cursor_metadata(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "incremental.zip"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest(
+            {
+                "name": "Alice",
+                "current_company": "Acme",
+                "platform_id": "maimai-1",
+            },
+            platform="maimai",
+        )
+        db._conn.execute(
+            "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+            ("2030-01-01 00:00:00", candidate_id),
+        )
+        db._conn.commit()
+    finally:
+        db.close()
+
+    export_bundle(
+        db_path,
+        bundle_path,
+        mode="incremental",
+        since="2029-01-01T00:00:00Z",
+    )
+
+    with zipfile.ZipFile(bundle_path) as bundle:
+        manifest = json.loads(bundle.read("manifest.json").decode("utf-8"))
+    assert manifest["export_mode"] == "incremental"
+    assert manifest["base_cursor"] == "2029-01-01 00:00:00"
+    assert manifest["cursor_started_at"].endswith("+00:00")
+    assert manifest["candidate_count"] == 1
+
+
+def test_export_cli_accepts_incremental_since_argument(tmp_path: Path) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "cli-incremental.zip"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest(
+            {
+                "name": "Alice",
+                "current_company": "Acme",
+                "platform_id": "maimai-1",
+            },
+            platform="maimai",
+        )
+        db._conn.execute(
+            "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+            ("2030-01-01 00:00:00", candidate_id),
+        )
+        db._conn.commit()
+    finally:
+        db.close()
+
+    result = sync_main(
+        [
+            "export",
+            "--db",
+            str(db_path),
+            "--out",
+            str(bundle_path),
+            "--mode",
+            "incremental",
+            "--since",
+            "2029-01-01T00:00:00Z",
+        ]
+    )
+
+    assert result == 0
+    assert bundle_path.exists()
+    assert verify_bundle(bundle_path)["ok"] is True
+
+
+def test_export_incremental_requires_since_or_candidate_file(tmp_path: Path) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "invalid-incremental.zip"
+    db = TalentDB(db_path)
+    db.close()
+
+    with pytest.raises(ValueError, match="incremental export requires"):
+        export_bundle(db_path, bundle_path, mode="incremental")
+
+
+def test_export_incremental_rejects_invalid_since(tmp_path: Path) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "invalid-since.zip"
+    db = TalentDB(db_path)
+    db.close()
+
+    with pytest.raises(ValueError, match="Invalid sync timestamp"):
+        export_bundle(db_path, bundle_path, mode="incremental", since="not-a-date")
+
+    assert not bundle_path.exists()
+
+
+def test_export_full_keeps_orphan_identity_match_but_incremental_excludes_it(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.db"
+    full_bundle = tmp_path / "full.zip"
+    incremental_bundle = tmp_path / "incremental.zip"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest(
+            {
+                "name": "Changed Alice",
+                "current_company": "Acme",
+                "platform_id": "maimai-1",
+            },
+            platform="maimai",
+        )
+        db.record_identity_match(
+            {
+                "source_platform": "boss",
+                "source_candidate_key": "orphan-boss-1",
+                "target_platform": "maimai",
+                "target_platform_id": "maimai-orphan-1",
+                "target_profile_url": "https://maimai.cn/profile/detail?dstu=orphan",
+                "query_text": "Orphan match",
+                "query_level": "person",
+                "confidence": 0.42,
+                "score_breakdown": {"name": 0.42},
+                "match_status": "pending_confirmation",
+            }
+        )
+        db._conn.execute(
+            "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+            ("2030-01-01 00:00:00", candidate_id),
+        )
+        db._conn.commit()
+    finally:
+        db.close()
+
+    full_summary = export_bundle(db_path, full_bundle, mode="full")
+    incremental_summary = export_bundle(
+        db_path,
+        incremental_bundle,
+        mode="incremental",
+        since="2029-01-01T00:00:00Z",
+    )
+
+    assert full_summary["tables"]["candidate_identity_matches"] == 1
+    full_matches = _read_bundle_jsonl(
+        full_bundle,
+        "data/candidate_identity_matches.jsonl",
+    )
+    assert full_matches[0]["candidate_sync_id"] is None
+    assert incremental_summary["tables"]["candidates"] == 1
+    assert incremental_summary["tables"]["candidate_identity_matches"] == 0
+    assert (
+        _read_bundle_jsonl(
+            incremental_bundle,
+            "data/candidate_identity_matches.jsonl",
+        )
+        == []
     )
 
 
