@@ -8,7 +8,7 @@
 
 - [x] 确认当前 second-brain P0 与 GBrain 上游能力差距，形成 evidence-backed adoption decision。
 - [x] 本机/隔离环境验证 GBrain 安装、doctor 和 search mode 门禁。
-- [ ] 用 Talent-Agent redacted case artifacts 做 pilot，对比 GBrain 与本地 fallback 的查询质量。
+- [x] 用 Talent-Agent redacted case artifacts 做 pilot，对比 GBrain 与本地 fallback 的查询质量。
 - [ ] 根据 pilot 结果调整 adapter/query/workflow/docs，保持 JD delivery 非阻塞。
 - [ ] 运行聚焦测试、全量测试和 diff check，归档 Review。
 
