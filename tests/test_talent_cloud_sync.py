@@ -796,6 +796,33 @@ def test_feishu_provider_builds_upload_and_list_commands(tmp_path: Path) -> None
     assert any("+upload" in command and "--folder-token" in command for command in runner.commands)
 
 
+def test_feishu_upload_uses_relative_file_path_inside_cwd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class UploadRunner(FakeRunner):
+        def __call__(self, argv: list[str]) -> dict:
+            if argv[:3] == ["lark-cli", "drive", "+upload"]:
+                file_arg = argv[argv.index("--file") + 1]
+                assert not Path(file_arg).is_absolute()
+            return super().__call__(argv)
+
+    monkeypatch.chdir(tmp_path)
+    runner = UploadRunner()
+    config = CloudSyncConfig(
+        provider="feishu",
+        db_path=tmp_path / "talent.db",
+        feishu_root_folder_token="fld_root",
+        encryption_key=keygen(),
+    )
+    provider = FeishuDriveProvider(config, runner=runner)
+    source = tmp_path / "work" / "bundle.enc"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"data")
+
+    provider.upload_file("bundles", source, "bundle.enc")
+
+
 def test_feishu_init_remote_creates_p1_subfolders_without_drive_sync(tmp_path: Path) -> None:
     runner = FakeRunner()
     config = CloudSyncConfig(

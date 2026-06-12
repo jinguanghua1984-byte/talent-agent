@@ -227,6 +227,11 @@ class FeishuDriveProvider:
         return self._child_files(self._folder_token(folder))
 
     def upload_file(self, folder: str, local_path: Path, name: str) -> dict[str, Any]:
+        file_arg = local_path
+        try:
+            file_arg = local_path.resolve().relative_to(Path.cwd().resolve())
+        except ValueError:
+            pass
         result = self.runner(
             [
                 "lark-cli",
@@ -237,7 +242,7 @@ class FeishuDriveProvider:
                 "--folder-token",
                 self._folder_token(folder),
                 "--file",
-                str(local_path),
+                str(file_arg),
                 "--name",
                 name,
             ]
