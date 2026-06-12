@@ -9,7 +9,7 @@
 - [x] 补齐候选人级 `sync_updated_at` 水位，确保候选人和关联数据写入都会刷新同步时间。
 - [x] 实现候选人闭包增量 bundle 导出，保留全量 bootstrap 行为。
 - [x] 扩展云同步 state、full bootstrap 和增量 push/pull 门禁。
-- [ ] 更新跨 PC 文件同步和飞书 Drive 云同步文档。
+- [x] 更新跨 PC 文件同步和飞书 Drive 云同步文档。
 - [ ] 运行聚焦测试、全量测试和 diff check，归档 Review。
 
 边界：实现 P1 候选人闭包增量同步；不直接同步 `data/talent.db` 文件；不迁移云数据库；不做实时多人并发、行级最小 delta、云端清理或可视化冲突 UI。执行计划见 `docs/superpowers/plans/2026-06-12-talent-db-incremental-sync.md`。
