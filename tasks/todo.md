@@ -4,6 +4,18 @@
 
 ## Active Task
 
+### GBrain 开源选型闭环与真实适配验证
+
+- [ ] 确认当前 second-brain P0 与 GBrain 上游能力差距，形成 evidence-backed adoption decision。
+- [ ] 本机/隔离环境验证 GBrain 安装、doctor、import/search/think 或记录明确阻断。
+- [ ] 用 Talent-Agent redacted case artifacts 做 pilot，对比 GBrain 与本地 fallback 的查询质量。
+- [ ] 根据 pilot 结果调整 adapter/query/workflow/docs，保持 JD delivery 非阻塞。
+- [ ] 运行聚焦测试、全量测试和 diff check，归档 Review。
+
+边界：先做开源选型闭环和本地 pilot，不把 GBrain 设为正式硬依赖；不导入 private case 到 public/shared source；不在仓库或聊天中保存 API key；不写 `data/talent.db`。执行计划见 `docs/superpowers/plans/2026-06-12-gbrain-open-source-adoption-closure.md`。
+
+验证方式：`gbrain --version` / `gbrain doctor --json` / pilot import-query 证据；聚焦测试覆盖 `tests/test_second_brain_gbrain.py tests/test_second_brain_query.py tests/test_second_brain_cli.py`；完成后运行 `.venv/bin/python -m pytest tests -q` 和 `git diff --check`。
+
 ### 多模态视频算法研究员 Campaign DB 同步主库与增量包
 
 - [x] 校验 campaign DB 已有 5 个确认绑定候选人，主库同步前状态可读。
