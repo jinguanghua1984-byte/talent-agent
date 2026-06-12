@@ -24,7 +24,12 @@ if __package__ in {None, ""}:
 
 from scripts.talent_db import TalentDB
 from scripts.talent_sync import export_bundle, import_bundle, plan_import, verify_bundle
-from scripts.talent_cloud_sync_common import CloudSyncError, INDEX_SCHEMA, STATE_SCHEMA
+from scripts.talent_cloud_sync_common import (
+    CloudSyncError,
+    INDEX_SCHEMA,
+    LEGACY_STATE_SCHEMA,
+    STATE_SCHEMA,
+)
 from scripts.talent_cloud_sync_providers import (
     CloudProvider,
     FeishuDriveProvider,
@@ -54,6 +59,8 @@ class CloudSyncConfig:
     auto_apply: bool = True
     include_wechat_files: bool = False
     max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
+    export_mode: str = "incremental"
+    since: str | None = None
 
     @classmethod
     def from_env(cls, db_path: str | Path = "data/talent.db") -> "CloudSyncConfig":
@@ -81,6 +88,8 @@ class CloudSyncConfig:
             max_upload_bytes=int(
                 os.environ.get("TALENT_SYNC_MAX_UPLOAD_BYTES", str(DEFAULT_MAX_UPLOAD_BYTES))
             ),
+            export_mode=os.environ.get("TALENT_SYNC_EXPORT_MODE", "incremental"),
+            since=os.environ.get("TALENT_SYNC_SINCE") or None,
         )
 
 def keygen() -> str:
@@ -105,26 +114,38 @@ def decrypt_bytes(data: bytes, key: str) -> bytes:
         raise CloudSyncError("cannot decrypt bundle with configured key") from exc
 
 
+def _empty_state() -> dict[str, Any]:
+    return {
+        "schema": STATE_SCHEMA,
+        "provider": "",
+        "remote": {},
+        "seen_bundle_ids": [],
+        "applied_bundle_ids": [],
+        "applied_bundles": [],
+        "blocked_remote_bundles": [],
+        "last_sync_at": None,
+        "last_push_bundle_id": None,
+        "last_pushed_db_fingerprint": None,
+        "last_successful_push_started_at": None,
+    }
+
+
 def load_state(path: Path) -> dict[str, Any]:
     if not path.exists():
-        return {
-            "schema": STATE_SCHEMA,
-            "provider": "",
-            "remote": {},
-            "seen_bundle_ids": [],
-            "applied_bundle_ids": [],
-            "blocked_remote_bundles": [],
-            "last_sync_at": None,
-            "last_push_bundle_id": None,
-        }
+        return _empty_state()
     with path.open("r", encoding="utf-8-sig") as file:
         data = json.load(file)
-    if data.get("schema") != STATE_SCHEMA:
+    if data.get("schema") not in {STATE_SCHEMA, LEGACY_STATE_SCHEMA}:
         raise CloudSyncError(f"unsupported cloud state schema: {data.get('schema')}")
-    data.setdefault("seen_bundle_ids", [])
-    data.setdefault("applied_bundle_ids", [])
-    data.setdefault("blocked_remote_bundles", [])
-    return data
+    defaults = _empty_state()
+    defaults.update(data)
+    defaults["schema"] = STATE_SCHEMA
+    defaults.setdefault("seen_bundle_ids", [])
+    defaults.setdefault("applied_bundle_ids", [])
+    defaults.setdefault("applied_bundles", [])
+    defaults.setdefault("blocked_remote_bundles", [])
+    defaults.setdefault("last_successful_push_started_at", None)
+    return defaults
 
 
 def save_state(path: Path, state: dict[str, Any]) -> None:
@@ -274,6 +295,17 @@ def _download_encrypted_bundle(
     provider.download_file(str(index["bundle_file_token"]), encrypted_path)
 
 
+def _incremental_since(config: CloudSyncConfig, state: dict[str, Any]) -> str:
+    if config.since:
+        return config.since
+    cursor = state.get("last_successful_push_started_at")
+    if not cursor:
+        raise CloudSyncError(
+            "incremental push requires prior bootstrap/full pull or --since"
+        )
+    return str(cursor)
+
+
 def push(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict[str, Any]:
     provider = provider or _provider(config)
     provider.ensure_layout()
@@ -281,8 +313,19 @@ def push(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
         raise CloudSyncError("open sync conflicts exist; resolve them before push")
 
     state = load_state(config.state_path)
+    export_mode = config.export_mode
+    if export_mode not in {"full", "incremental"}:
+        raise CloudSyncError(f"unsupported export mode: {export_mode}")
+    push_started_at = _now_utc()
+    since = None
+    if export_mode == "incremental":
+        since = _incremental_since(config, state)
+
     current_fingerprint = _db_fingerprint(config.db_path)
-    if state.get("last_pushed_db_fingerprint") == current_fingerprint:
+    if (
+        export_mode == "full"
+        and state.get("last_pushed_db_fingerprint") == current_fingerprint
+    ):
         return {
             "uploaded": False,
             "reason": "unchanged",
@@ -297,14 +340,23 @@ def push(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
         summary = export_bundle(
             config.db_path,
             plain_bundle,
-            mode="full",
+            mode=export_mode,
             include_wechat_files=config.include_wechat_files,
+            since=since,
         )
         verification = verify_bundle(plain_bundle)
         if not verification["ok"]:
             raise CloudSyncError(
                 "exported bundle failed verification: " + "; ".join(verification["errors"])
             )
+        if export_mode == "incremental" and all(
+            count == 0 for count in summary["tables"].values()
+        ):
+            state["schema"] = STATE_SCHEMA
+            state["provider"] = config.provider
+            state["last_sync_at"] = _now_utc()
+            save_state(config.state_path, state)
+            return {"uploaded": False, "reason": "no_changes", "bundle_id": None}
 
         plain_bytes = plain_bundle.read_bytes()
         encrypted_bundle.write_bytes(encrypt_bytes(plain_bytes, config.encryption_key))
@@ -335,6 +387,9 @@ def push(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
             "encrypted": True,
             "talent_sync_bundle_sha256": _sha256_bytes(plain_bytes),
             "tables": summary["tables"],
+            "export_mode": export_mode,
+            "base_cursor": manifest.get("base_cursor"),
+            "cursor_started_at": manifest.get("cursor_started_at"),
         }
         index_path = temp_dir / _remote_index_name(created_at, source_node_id, bundle_id)
         _write_json(index_path, index)
@@ -345,6 +400,7 @@ def push(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
     state["last_push_bundle_id"] = bundle_id
     state["last_pushed_db_fingerprint"] = current_fingerprint
     state["last_sync_at"] = _now_utc()
+    state["last_successful_push_started_at"] = push_started_at
     if bundle_id not in state["seen_bundle_ids"]:
         state["seen_bundle_ids"].append(bundle_id)
     save_state(config.state_path, state)
@@ -488,6 +544,12 @@ def sync(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
 def _config_from_args(args: argparse.Namespace) -> CloudSyncConfig:
     _load_local_dotenv()
     key = args.encryption_key or os.environ.get("TALENT_SYNC_ENCRYPTION_KEY", "")
+    export_mode = (
+        getattr(args, "mode", None)
+        or os.environ.get("TALENT_SYNC_EXPORT_MODE")
+        or "incremental"
+    )
+    since = getattr(args, "since", None) or os.environ.get("TALENT_SYNC_SINCE") or None
     return CloudSyncConfig(
         provider=args.provider,
         db_path=Path(args.db),
@@ -503,6 +565,8 @@ def _config_from_args(args: argparse.Namespace) -> CloudSyncConfig:
         max_upload_bytes=int(
             os.environ.get("TALENT_SYNC_MAX_UPLOAD_BYTES", str(DEFAULT_MAX_UPLOAD_BYTES))
         ),
+        export_mode=export_mode,
+        since=since,
     )
 
 
@@ -586,6 +650,13 @@ def _add_common_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--encryption-key", default="")
     parser.add_argument("--no-auto-apply", action="store_true")
     parser.add_argument("--include-wechat-files", action="store_true")
+    parser.add_argument(
+        "--mode",
+        choices=("full", "incremental"),
+        default=None,
+        help="push/export 模式；默认使用 TALENT_SYNC_EXPORT_MODE 或 incremental",
+    )
+    parser.add_argument("--since", default=None, help="增量 push 的起始时间")
 
 
 def build_parser() -> argparse.ArgumentParser:

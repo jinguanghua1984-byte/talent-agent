@@ -51,7 +51,12 @@ def _candidate_names(db_path: Path) -> list[str]:
         db.close()
 
 
-def _config(tmp_path: Path, db_path: Path, key: str | None = None) -> CloudSyncConfig:
+def _config(
+    tmp_path: Path,
+    db_path: Path,
+    key: str | None = None,
+    export_mode: str = "full",
+) -> CloudSyncConfig:
     return CloudSyncConfig(
         provider="localfs",
         db_path=db_path,
@@ -61,6 +66,7 @@ def _config(tmp_path: Path, db_path: Path, key: str | None = None) -> CloudSyncC
         encryption_key=key or keygen(),
         auto_apply=True,
         include_wechat_files=False,
+        export_mode=export_mode,
     )
 
 
@@ -99,9 +105,11 @@ def test_config_from_env_requires_provider_specific_values(
 def test_load_state_creates_empty_state_when_missing(tmp_path: Path) -> None:
     state = load_state(tmp_path / "missing-state.json")
 
-    assert state["schema"] == "talent_cloud_state_v1"
+    assert state["schema"] == "talent_cloud_state_v2"
     assert state["applied_bundle_ids"] == []
+    assert state["applied_bundles"] == []
     assert state["blocked_remote_bundles"] == []
+    assert state["last_successful_push_started_at"] is None
 
 
 def test_localfs_init_remote_creates_expected_layout(tmp_path: Path) -> None:
@@ -195,6 +203,81 @@ def test_push_skips_when_logical_database_is_unchanged(tmp_path: Path) -> None:
     assert second["reason"] == "unchanged"
     assert len(provider.list_files("bundle-index")) == 1
     assert len(provider.list_files("bundles")) == 1
+
+
+def test_incremental_push_requires_prior_cursor_or_since(tmp_path: Path) -> None:
+    db_path = tmp_path / "source.db"
+    _seed_candidate(db_path, "Alice")
+    config = _config(tmp_path, db_path, export_mode="incremental")
+    provider = LocalFsProvider(config.localfs_root)
+    init_remote(provider)
+
+    with pytest.raises(CloudSyncError, match="incremental push requires"):
+        push(config, provider=provider)
+
+
+def test_incremental_push_uploads_only_changes_after_cursor(tmp_path: Path) -> None:
+    db_path = tmp_path / "source.db"
+    key = keygen()
+    old_id = _seed_candidate(db_path, "Old Alice", platform_id="maimai-old")
+    changed_id = _seed_candidate(db_path, "Changed Bob", platform_id="maimai-new")
+    db = TalentDB(db_path)
+    try:
+        db._conn.execute(
+            "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+            ("2000-01-01 00:00:00", old_id),
+        )
+        db._conn.execute(
+            "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+            ("2030-01-01 00:00:00", changed_id),
+        )
+        db._conn.commit()
+    finally:
+        db.close()
+    config = _config(tmp_path, db_path, key=key, export_mode="incremental")
+    provider = LocalFsProvider(config.localfs_root)
+    init_remote(provider)
+    state = load_state(config.state_path)
+    state["last_successful_push_started_at"] = "2029-01-01T00:00:00Z"
+    state["schema"] = "talent_cloud_state_v2"
+    config.state_path.parent.mkdir(parents=True, exist_ok=True)
+    config.state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    result = push(config, provider=provider)
+
+    assert result["uploaded"] is True
+    assert result["tables"]["candidates"] == 1
+    index_files = provider.list_files("bundle-index")
+    index_data = json.loads(Path(index_files[0]["token"]).read_text(encoding="utf-8"))
+    assert index_data["export_mode"] == "incremental"
+    assert index_data["tables"]["candidates"] == 1
+
+
+def test_incremental_push_noops_when_no_rows_changed(tmp_path: Path) -> None:
+    db_path = tmp_path / "source.db"
+    candidate_id = _seed_candidate(db_path, "Alice")
+    db = TalentDB(db_path)
+    try:
+        db._conn.execute(
+            "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+            ("2000-01-01 00:00:00", candidate_id),
+        )
+        db._conn.commit()
+    finally:
+        db.close()
+    config = _config(tmp_path, db_path, export_mode="incremental")
+    provider = LocalFsProvider(config.localfs_root)
+    init_remote(provider)
+    state = load_state(config.state_path)
+    state["schema"] = "talent_cloud_state_v2"
+    state["last_successful_push_started_at"] = "2029-01-01T00:00:00Z"
+    config.state_path.parent.mkdir(parents=True, exist_ok=True)
+    config.state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    result = push(config, provider=provider)
+
+    assert result == {"uploaded": False, "reason": "no_changes", "bundle_id": None}
+    assert provider.list_files("bundle-index") == []
 
 
 def test_push_and_pull_clean_temporary_bundle_files(tmp_path: Path) -> None:
