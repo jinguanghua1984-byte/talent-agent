@@ -220,6 +220,41 @@ def test_compile_feedback_summary_counts_consultant_decisions() -> None:
     assert summary["consultant_decision_counts"] == {"不认可": 1, "认可": 1}
 
 
+def test_compile_feedback_summary_strips_consultant_decisions() -> None:
+    payload = {
+        "role_id": "role",
+        "run_id": "run",
+        "profile_version": "p1",
+        "scorecard_version": "s1",
+        "items": [
+            {
+                "candidate_id": "cand-1",
+                "rank": 1,
+                "grade": "A",
+                "original_score": 90.0,
+                "feedback_label": "accepted",
+                "feedback_stage": "screen",
+                "reason_codes": [],
+                "consultant_decision": " 认可 ",
+            },
+            {
+                "candidate_id": "cand-2",
+                "rank": 2,
+                "grade": "B",
+                "original_score": 80.0,
+                "feedback_label": "rejected",
+                "feedback_stage": "screen",
+                "reason_codes": [],
+                "consultant_decision": " ",
+            },
+        ],
+    }
+
+    summary = compile_feedback_summary(payload)
+
+    assert summary["consultant_decision_counts"] == {"认可": 1}
+
+
 def test_cli_writes_summary_and_calibration_files(tmp_path: Path) -> None:
     feedback_path = tmp_path / "delivery-feedback.json"
     summary_path = tmp_path / "feedback-summary.json"

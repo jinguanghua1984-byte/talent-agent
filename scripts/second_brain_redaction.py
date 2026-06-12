@@ -8,6 +8,8 @@ import re
 SENSITIVE_MARKERS = [
     "cookie",
     "access_token",
+    "access-token",
+    "access token",
     "authorization",
     "trackable_token",
     "profile_url",

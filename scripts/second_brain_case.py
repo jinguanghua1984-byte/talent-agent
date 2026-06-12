@@ -10,7 +10,23 @@ import json
 import re
 
 from scripts.second_brain_models import SourceRef, append_event, build_event
-from scripts.second_brain_redaction import assert_private_case_safe, assert_public_case_safe
+from scripts.second_brain_redaction import (
+    CONTACT_PATTERNS,
+    SENSITIVE_MARKERS,
+    assert_private_case_safe,
+    assert_public_case_safe,
+    redact_candidate_name,
+    redact_company_name,
+)
+
+
+URL_PATTERN = re.compile(r"https?://\S+")
+SENSITIVE_VALUE_PATTERN = re.compile(
+    r"\b("
+    + "|".join(re.escape(marker) for marker in sorted(SENSITIVE_MARKERS, key=len, reverse=True))
+    + r")\b\s*[:=]?\s*\S*",
+    re.IGNORECASE,
+)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -20,8 +36,20 @@ def _read_json(path: Path) -> dict[str, Any]:
     return data
 
 
+def _first_existing(run_root: Path, relative_paths: list[str], label: str) -> Path:
+    for relative_path in relative_paths:
+        path = run_root / relative_path
+        if path.exists():
+            return path
+    raise FileNotFoundError(f"{label} not found under {run_root}")
+
+
 def _read_outreach(run_root: Path) -> tuple[Path, list[dict[str, str]]]:
-    candidates = [run_root / "outreach.csv", run_root / "outreach" / "outreach.csv"]
+    candidates = [
+        run_root / "outreach.csv",
+        run_root / "outreach" / "outreach.csv",
+        run_root / "reports" / "outreach-queue.csv",
+    ]
     for path in candidates:
         if path.exists():
             with path.open(encoding="utf-8-sig", newline="") as handle:
@@ -51,11 +79,60 @@ def _source(path: Path, repo_root: Path, source_type: str, artifact_key: str) ->
     )
 
 
+def _outreach_source(
+    path: Path,
+    repo_root: Path,
+    *,
+    row_index: int,
+    candidate_id: str,
+    run_id: str,
+) -> SourceRef:
+    try:
+        source_path = str(path.relative_to(repo_root))
+    except ValueError:
+        source_path = str(path)
+    line_number = row_index + 2
+    return SourceRef(
+        source_path=source_path,
+        source_type="outreach_csv",
+        artifact_key=f"candidate_id={candidate_id}",
+        line_start=line_number,
+        line_end=line_number,
+        candidate_id=candidate_id,
+        run_id=run_id,
+    )
+
+
 def _source_path(path: Path, repo_root: Path) -> str:
     try:
         return str(path.relative_to(repo_root))
     except ValueError:
         return str(path)
+
+
+def _sanitize_sensitive_text(value: Any) -> str:
+    text = str(value or "")
+    text = SENSITIVE_VALUE_PATTERN.sub("[已脱敏]", text)
+    text = URL_PATTERN.sub("[已脱敏]", text)
+    for pattern in CONTACT_PATTERNS:
+        text = pattern.sub("[已脱敏]", text)
+    return text.strip()
+
+
+def _sanitize_public_text(
+    value: Any,
+    *,
+    candidate_names: list[str],
+    company_names: list[str],
+) -> str:
+    text = _sanitize_sensitive_text(value)
+    for name in candidate_names:
+        if name:
+            text = text.replace(name, redact_candidate_name(name))
+    for company_name in company_names:
+        if company_name:
+            text = text.replace(company_name, redact_company_name(company_name))
+    return text
 
 
 def _public_case_markdown(
@@ -67,9 +144,15 @@ def _public_case_markdown(
     jd_family: str,
     source_paths: list[str],
 ) -> str:
-    decisions = Counter(row.get("consultant_decision") or "待确认" for row in rows)
+    candidate_names = [row.get("name", "") for row in rows]
+    company_names = [row.get("current_company", "") for row in rows]
+    decisions = Counter((row.get("consultant_decision") or "").strip() or "待确认" for row in rows)
     reasons = [
-        row.get("feedback_note", "").strip()
+        _sanitize_public_text(
+            row.get("feedback_note", ""),
+            candidate_names=candidate_names,
+            company_names=company_names,
+        )
         for row in rows
         if row.get("feedback_note", "").strip()
     ]
@@ -77,7 +160,11 @@ def _public_case_markdown(
         f"# Second Brain Case: {client_id} / {jd_family}",
         "",
         "## JD 画像",
-        str(role_profile.get("summary") or role_profile.get("target_role") or "未提供画像摘要"),
+        _sanitize_public_text(
+            role_profile.get("summary") or role_profile.get("target_role") or "未提供画像摘要",
+            candidate_names=candidate_names,
+            company_names=company_names,
+        ),
         "",
         "## Scorecard 摘要",
     ]
@@ -125,9 +212,9 @@ def _private_case_markdown(
                 f"- candidate_id: `{row.get('candidate_id')}`",
                 f"- 当前公司: {row.get('current_company') or ''}",
                 f"- 职位: {row.get('current_title') or ''}",
-                f"- 推荐理由: {row.get('recommendation_reason') or ''}",
-                f"- 顾问判断: {row.get('consultant_decision') or '待确认'}",
-                f"- feedback_note: {row.get('feedback_note') or ''}",
+                f"- 推荐理由: {_sanitize_sensitive_text(row.get('recommendation_reason'))}",
+                f"- 顾问判断: {(row.get('consultant_decision') or '').strip() or '待确认'}",
+                f"- feedback_note: {_sanitize_sensitive_text(row.get('feedback_note'))}",
                 "",
             ]
         )
@@ -168,8 +255,12 @@ def prepare_case(
 ) -> dict[str, Any]:
     repo = Path(repo_root)
     root = Path(run_root)
-    role_path = root / "role-profile.json"
-    scorecard_path = root / "scorecard.json"
+    role_path = _first_existing(
+        root, ["role-profile.json", "profile/role-profile.json"], "role profile"
+    )
+    scorecard_path = _first_existing(
+        root, ["scorecard.json", "scoring/scorecard.json"], "scorecard"
+    )
     role_profile = _read_json(role_path)
     scorecard = _read_json(scorecard_path)
     outreach_path, rows = _read_outreach(root)
@@ -180,7 +271,11 @@ def prepare_case(
     public_case.parent.mkdir(parents=True, exist_ok=True)
     private_case.parent.mkdir(parents=True, exist_ok=True)
 
-    source_paths = [_source_path(role_path, repo), _source_path(scorecard_path, repo)]
+    source_paths = [
+        _source_path(role_path, repo),
+        _source_path(scorecard_path, repo),
+        _source_path(outreach_path, repo),
+    ]
     public_content = _public_case_markdown(
         role_profile=role_profile,
         scorecard=scorecard,
@@ -225,13 +320,14 @@ def prepare_case(
         source_refs=[_source(scorecard_path, repo, "scorecard_json", "scorecard")],
         payload={"dimensions": scorecard.get("dimensions", [])},
     )
-    for row in rows:
+    for row_index, row in enumerate(rows):
         candidate_id = row.get("candidate_id") or ""
-        source_ref = _source(
+        source_ref = _outreach_source(
             outreach_path,
             repo,
-            "outreach_csv",
-            f"candidate_id={candidate_id}",
+            row_index=row_index,
+            candidate_id=candidate_id,
+            run_id=run_id,
         )
         _append_run_event(
             ledger=ledger,
@@ -257,12 +353,12 @@ def prepare_case(
             source_refs=[source_ref],
             payload={
                 "candidate_id": candidate_id,
-                "consultant_decision": row.get("consultant_decision") or "待确认",
-                "feedback_note": row.get("feedback_note") or "",
+                "consultant_decision": (row.get("consultant_decision") or "").strip()
+                or "待确认",
+                "feedback_note": _sanitize_sensitive_text(row.get("feedback_note")),
             },
         )
-        break
-    decisions = Counter(row.get("consultant_decision") or "待确认" for row in rows)
+    decisions = Counter((row.get("consultant_decision") or "").strip() or "待确认" for row in rows)
     _append_run_event(
         ledger=ledger,
         event_type="batch_feedback_summarized",

@@ -22,6 +22,18 @@ def test_public_case_blocks_profile_url_and_token_marker() -> None:
         assert_public_case_safe(content, candidate_names=[], company_names=[])
 
 
+def test_public_and_private_case_block_access_token_variants() -> None:
+    with pytest.raises(ValueError, match="public case contains sensitive marker: access token"):
+        assert_public_case_safe(
+            "access token=abc123",
+            candidate_names=[],
+            company_names=[],
+        )
+
+    with pytest.raises(ValueError, match="private case contains sensitive marker: access-token"):
+        assert_private_case_safe("access-token=abc123")
+
+
 def test_private_case_allows_name_and_company_but_blocks_contact() -> None:
     content = "张三 当前公司 腾讯 手机号 13800000000"
 

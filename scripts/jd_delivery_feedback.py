@@ -171,8 +171,10 @@ def compile_feedback_summary(feedback: dict[str, Any]) -> dict[str, Any]:
     for item in items:
         reason_counts.update(str(code) for code in item.get("reason_codes") or [])
         decision = item.get("consultant_decision")
-        if isinstance(decision, str) and decision:
-            decision_counts.update([decision])
+        if isinstance(decision, str):
+            normalized_decision = decision.strip()
+            if normalized_decision:
+                decision_counts.update([normalized_decision])
 
     accepted_top_10 = [
         item for item in items if item["rank"] <= 10 and item["feedback_label"] == "认可"

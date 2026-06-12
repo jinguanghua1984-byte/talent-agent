@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import pytest
 
@@ -81,6 +82,52 @@ def test_append_event_writes_standard_jsonl(tmp_path: Path) -> None:
 
     records = load_jsonl(ledger)
     assert records == [event]
+
+
+def test_append_event_preserves_jsonl_when_existing_file_has_no_trailing_newline(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "data" / "second-brain" / "events.jsonl"
+    existing_event = build_event(
+        event_type="jd_profile_created",
+        run_id="run-001",
+        client_id="client_tencent_games",
+        jd_family="multi_modal_algorithm",
+        visibility="public",
+        source_refs=[
+            SourceRef(
+                source_path="data/output/run-001/role-profile.json",
+                source_type="role_profile_json",
+                artifact_key="role_profile",
+            )
+        ],
+        payload={"summary": "多模态算法岗位画像"},
+    )
+    new_event = build_event(
+        event_type="scorecard_created",
+        run_id="run-001",
+        client_id="client_tencent_games",
+        jd_family="multi_modal_algorithm",
+        visibility="public",
+        source_refs=[
+            SourceRef(
+                source_path="data/output/run-001/scorecard.json",
+                source_type="scorecard_json",
+                artifact_key="scorecard",
+            )
+        ],
+        payload={"scorecard_version": "v1"},
+    )
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text(
+        json.dumps(existing_event, ensure_ascii=False, sort_keys=True, allow_nan=False),
+        encoding="utf-8",
+    )
+
+    append_event(ledger, new_event)
+
+    records = load_jsonl(ledger)
+    assert records == [existing_event, new_event]
 
 
 def test_write_json_rejects_non_standard_numbers(tmp_path: Path) -> None:

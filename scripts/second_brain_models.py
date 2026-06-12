@@ -55,11 +55,16 @@ def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
     if not target.exists():
         return []
     records: list[dict[str, Any]] = []
-    for line in target.read_text(encoding="utf-8").splitlines():
+    for line_number, line in enumerate(target.read_text(encoding="utf-8").splitlines(), 1):
         if line.strip():
-            obj = json.loads(line)
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"invalid JSONL record in {target} line {line_number}") from exc
             if not isinstance(obj, dict):
-                raise ValueError(f"JSONL record in {target} is not an object")
+                raise ValueError(
+                    f"JSONL record in {target} line {line_number} is not an object"
+                )
             records.append(obj)
     return records
 
@@ -135,6 +140,11 @@ def append_event(ledger_path: str | Path, event: dict[str, Any]) -> None:
     validate_event(event)
     target = Path(ledger_path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() and target.stat().st_size > 0:
+        with target.open("rb+") as handle:
+            handle.seek(target.stat().st_size - 1)
+            if handle.read(1) != b"\n":
+                handle.write(b"\n")
     with target.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True, allow_nan=False))
         handle.write("\n")
