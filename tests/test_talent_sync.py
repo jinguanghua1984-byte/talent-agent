@@ -363,6 +363,94 @@ def test_export_incremental_bundle_includes_recent_tombstones(
     assert tombstones[0]["reason"] == "local_delete"
 
 
+def test_incremental_bundle_manifest_records_cursor_metadata(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "incremental.zip"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest(
+            {
+                "name": "Alice",
+                "current_company": "Acme",
+                "platform_id": "maimai-1",
+            },
+            platform="maimai",
+        )
+        db._conn.execute(
+            "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+            ("2030-01-01 00:00:00", candidate_id),
+        )
+        db._conn.commit()
+    finally:
+        db.close()
+
+    export_bundle(
+        db_path,
+        bundle_path,
+        mode="incremental",
+        since="2029-01-01T00:00:00Z",
+    )
+
+    with zipfile.ZipFile(bundle_path) as bundle:
+        manifest = json.loads(bundle.read("manifest.json").decode("utf-8"))
+    assert manifest["export_mode"] == "incremental"
+    assert manifest["base_cursor"] == "2029-01-01 00:00:00"
+    assert manifest["cursor_started_at"].endswith("+00:00")
+    assert manifest["candidate_count"] == 1
+
+
+def test_export_cli_accepts_incremental_since_argument(tmp_path: Path) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "cli-incremental.zip"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest(
+            {
+                "name": "Alice",
+                "current_company": "Acme",
+                "platform_id": "maimai-1",
+            },
+            platform="maimai",
+        )
+        db._conn.execute(
+            "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+            ("2030-01-01 00:00:00", candidate_id),
+        )
+        db._conn.commit()
+    finally:
+        db.close()
+
+    result = sync_main(
+        [
+            "export",
+            "--db",
+            str(db_path),
+            "--out",
+            str(bundle_path),
+            "--mode",
+            "incremental",
+            "--since",
+            "2029-01-01T00:00:00Z",
+        ]
+    )
+
+    assert result == 0
+    assert bundle_path.exists()
+    assert verify_bundle(bundle_path)["ok"] is True
+
+
+def test_export_incremental_requires_since_or_candidate_file(tmp_path: Path) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "invalid-incremental.zip"
+    db = TalentDB(db_path)
+    db.close()
+
+    with pytest.raises(ValueError, match="incremental export requires"):
+        export_bundle(db_path, bundle_path, mode="incremental")
+
+
 def test_sync_bundle_round_trips_cross_channel_audit_tables(tmp_path: Path):
     source_db = tmp_path / "source.db"
     target_db = tmp_path / "target.db"

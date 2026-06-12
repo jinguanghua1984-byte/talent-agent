@@ -18,6 +18,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.talent_db import TalentDB
+from scripts.talent_db import _normalize_sync_timestamp
 from scripts.talent_db import merge_candidate_payload as _merge_candidate_payload
 from scripts.talent_sync_models import (
     BUNDLE_SCHEMA_VERSION,
@@ -49,6 +50,7 @@ def export_bundle(
     mode: str = "full",
     include_wechat_files: bool = False,
     since: str | None = None,
+    candidate_sync_ids: set[str] | list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """导出可校验的全量 bundle。
 
@@ -57,17 +59,28 @@ def export_bundle(
     """
     if mode not in {"full", "incremental"}:
         raise ValueError(f"Unsupported export mode: {mode}")
+    if mode == "incremental" and since is None and candidate_sync_ids is None:
+        raise ValueError(
+            "incremental export requires --since or --candidate-sync-ids-file"
+        )
     target_path = Path(bundle_path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
+    cursor_started_at = datetime.now(UTC).replace(microsecond=0).isoformat()
 
     db = TalentDB(db_path)
     try:
         source_node_id = db._node_id()
-        table_rows = db.export_sync_rows(since=since if mode == "incremental" else None)
+        table_rows = db.export_sync_rows(
+            candidate_sync_ids=candidate_sync_ids,
+            since=since if mode == "incremental" else None,
+        )
     finally:
         db.close()
 
     table_counts = {table: len(rows) for table, rows in table_rows.items()}
+    base_cursor = None
+    if mode == "incremental" and since is not None:
+        base_cursor = _normalize_sync_timestamp(since)
     manifest = BundleManifest(
         bundle_schema_version=BUNDLE_SCHEMA_VERSION,
         export_mode=mode,
@@ -76,6 +89,9 @@ def export_bundle(
         created_at=datetime.now(UTC).replace(microsecond=0).isoformat(),
         tables=table_counts,
         attachments={"wechat_timelines": False},
+        base_cursor=base_cursor,
+        cursor_started_at=cursor_started_at if mode == "incremental" else None,
+        candidate_count=table_counts.get("candidates", 0),
     )
 
     payloads: dict[str, bytes] = {}
@@ -1002,12 +1018,34 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_candidate_sync_ids_file(path: str | Path | None) -> set[str] | None:
+    if path is None:
+        return None
+    sync_ids: set[str] = set()
+    with Path(path).open("r", encoding="utf-8-sig") as file:
+        for line in file:
+            text = line.strip()
+            if not text:
+                continue
+            if text.startswith("{"):
+                row = json.loads(text)
+                sync_id = row.get("sync_id") or row.get("candidate_sync_id")
+                if sync_id:
+                    sync_ids.add(str(sync_id))
+                continue
+            sync_ids.add(text)
+    return sync_ids
+
+
 def cmd_export(args: argparse.Namespace) -> int:
+    candidate_sync_ids = _read_candidate_sync_ids_file(args.candidate_sync_ids_file)
     summary = export_bundle(
         args.db,
         args.out,
-        mode="full",
+        mode=args.mode,
         include_wechat_files=args.include_wechat_files,
+        since=args.since,
+        candidate_sync_ids=candidate_sync_ids,
     )
     print(
         "导出完成：bundle={bundle_path}，模式={mode}，候选人={candidate_count}".format(
@@ -1062,9 +1100,21 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--db", default="data/talent.db", help="人才库路径，默认 data/talent.db")
     status.set_defaults(func=cmd_status)
 
-    export = subparsers.add_parser("export", help="导出全量同步 bundle")
+    export = subparsers.add_parser("export", help="导出同步 bundle")
     export.add_argument("--db", default="data/talent.db", help="人才库路径，默认 data/talent.db")
     export.add_argument("--out", required=True, help="bundle 输出路径")
+    export.add_argument(
+        "--mode",
+        choices=("full", "incremental"),
+        default="full",
+        help="导出模式：full 全量，incremental 增量",
+    )
+    export.add_argument("--since", default=None, help="增量导出的起始时间")
+    export.add_argument(
+        "--candidate-sync-ids-file",
+        default=None,
+        help="每行一个 candidate sync_id，或 JSONL 中包含 sync_id/candidate_sync_id",
+    )
     export.add_argument(
         "--include-wechat-files",
         action="store_true",
