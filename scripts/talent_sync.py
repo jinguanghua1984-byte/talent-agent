@@ -48,13 +48,14 @@ def export_bundle(
     bundle_path: str | Path,
     mode: str = "full",
     include_wechat_files: bool = False,
+    since: str | None = None,
 ) -> dict[str, Any]:
     """导出可校验的全量 bundle。
 
     `include_wechat_files` 当前仅作为后续附件打包的占位参数；
     MVP 只导出 JSONL 索引，因此 manifest 只记录实际包含的附件状态。
     """
-    if mode != "full":
+    if mode not in {"full", "incremental"}:
         raise ValueError(f"Unsupported export mode: {mode}")
     target_path = Path(bundle_path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -62,7 +63,7 @@ def export_bundle(
     db = TalentDB(db_path)
     try:
         source_node_id = db._node_id()
-        table_rows = db.export_sync_rows()
+        table_rows = db.export_sync_rows(since=since if mode == "incremental" else None)
     finally:
         db.close()
 

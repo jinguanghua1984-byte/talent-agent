@@ -6,8 +6,8 @@
 
 ### Talent DB 增量同步 P1
 
-- [ ] 补齐候选人级 `sync_updated_at` 水位，确保候选人和关联数据写入都会刷新同步时间。
-- [ ] 实现候选人闭包增量 bundle 导出，保留全量 bootstrap 行为。
+- [x] 补齐候选人级 `sync_updated_at` 水位，确保候选人和关联数据写入都会刷新同步时间。
+- [x] 实现候选人闭包增量 bundle 导出，保留全量 bootstrap 行为。
 - [ ] 扩展云同步 state、full bootstrap 和增量 push/pull 门禁。
 - [ ] 更新跨 PC 文件同步和飞书 Drive 云同步文档。
 - [ ] 运行聚焦测试、全量测试和 diff check，归档 Review。

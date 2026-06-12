@@ -7,6 +7,7 @@ import math
 import re
 import sqlite3
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -2840,22 +2841,59 @@ class TalentDB:
         bucket = "merged" if existed else "created"
         summary[bucket][table] += 1
 
-    def export_sync_rows(self) -> dict[str, list[dict[str, Any]]]:
-        return {
-            "candidates": self._export_candidates(),
-            "candidate_details": self._export_candidate_details(),
-            "source_profiles": self._export_source_profiles(),
-            "candidate_identity_matches": self._export_identity_matches(),
-            "candidate_field_values": self._export_field_values(),
-            "candidate_wechat_timelines": self._export_wechat_timelines(),
-            "score_events": self._export_score_events(),
-            "match_scores": self._export_match_scores(),
-            "tombstones": self._export_tombstones(),
-        }
-
-    def _export_candidates(self) -> list[dict[str, Any]]:
+    def _candidate_sync_ids_changed_since(self, since: str | None) -> set[str] | None:
+        normalized_since = _normalize_sync_timestamp(since)
+        if normalized_since is None:
+            return None
         rows = self._conn.execute(
             """
+            SELECT sync_id
+            FROM candidates
+            WHERE sync_updated_at >= ?
+              AND sync_id IS NOT NULL
+              AND sync_id != ''
+            ORDER BY sync_id
+            """,
+            (normalized_since,),
+        ).fetchall()
+        return {str(row["sync_id"]) for row in rows}
+
+    def export_sync_rows(
+        self,
+        candidate_sync_ids: set[str] | list[str] | tuple[str, ...] | None = None,
+        since: str | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        selected_sync_ids: set[str] | None
+        if candidate_sync_ids is not None:
+            selected_sync_ids = {
+                str(sync_id) for sync_id in candidate_sync_ids if sync_id
+            }
+        else:
+            selected_sync_ids = self._candidate_sync_ids_changed_since(since)
+
+        return {
+            "candidates": self._export_candidates(selected_sync_ids),
+            "candidate_details": self._export_candidate_details(selected_sync_ids),
+            "source_profiles": self._export_source_profiles(selected_sync_ids),
+            "candidate_identity_matches": self._export_identity_matches(
+                selected_sync_ids
+            ),
+            "candidate_field_values": self._export_field_values(selected_sync_ids),
+            "candidate_wechat_timelines": self._export_wechat_timelines(
+                selected_sync_ids
+            ),
+            "score_events": self._export_score_events(selected_sync_ids),
+            "match_scores": self._export_match_scores(selected_sync_ids),
+            "tombstones": self._export_tombstones(selected_sync_ids, since=since),
+        }
+
+    def _export_candidates(
+        self,
+        candidate_sync_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clause, params = _sync_id_where_clause("sync_id", candidate_sync_ids)
+        rows = self._conn.execute(
+            f"""
             SELECT
                 sync_id, sync_origin_node_id, sync_updated_at,
                 name, gender, age, city, work_years, education,
@@ -2865,8 +2903,10 @@ class TalentDB:
                 data_level, overall_score, score_version,
                 created_at, updated_at
             FROM candidates
+            {where_clause}
             ORDER BY sync_id
-            """
+            """,
+            params,
         ).fetchall()
         return [
             _export_row(
@@ -2876,9 +2916,16 @@ class TalentDB:
             for row in rows
         ]
 
-    def _export_candidate_details(self) -> list[dict[str, Any]]:
+    def _export_candidate_details(
+        self,
+        candidate_sync_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clause, params = _sync_id_where_clause(
+            "candidates.sync_id",
+            candidate_sync_ids,
+        )
         rows = self._conn.execute(
-            """
+            f"""
             SELECT
                 candidate_details.sync_id,
                 candidates.sync_id AS candidate_sync_id,
@@ -2889,8 +2936,10 @@ class TalentDB:
                 candidate_details.summary
             FROM candidate_details
             JOIN candidates ON candidates.id = candidate_details.candidate_id
+            {where_clause}
             ORDER BY candidate_details.sync_id
-            """
+            """,
+            params,
         ).fetchall()
         return [
             _export_row(
@@ -2905,9 +2954,16 @@ class TalentDB:
             for row in rows
         ]
 
-    def _export_source_profiles(self) -> list[dict[str, Any]]:
+    def _export_source_profiles(
+        self,
+        candidate_sync_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clause, params = _sync_id_where_clause(
+            "candidates.sync_id",
+            candidate_sync_ids,
+        )
         rows = self._conn.execute(
-            """
+            f"""
             SELECT
                 source_profiles.sync_id,
                 candidates.sync_id AS candidate_sync_id,
@@ -2918,17 +2974,26 @@ class TalentDB:
                 source_profiles.fetched_at
             FROM source_profiles
             JOIN candidates ON candidates.id = source_profiles.candidate_id
+            {where_clause}
             ORDER BY source_profiles.sync_id
-            """
+            """,
+            params,
         ).fetchall()
         return [
             _export_row(row, json_fields={"raw_profile": None})
             for row in rows
         ]
 
-    def _export_identity_matches(self) -> list[dict[str, Any]]:
+    def _export_identity_matches(
+        self,
+        candidate_sync_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clause, params = _sync_id_where_clause(
+            "candidates.sync_id",
+            candidate_sync_ids,
+        )
         rows = self._conn.execute(
-            """
+            f"""
             SELECT
                 candidate_identity_matches.sync_id,
                 candidates.sync_id AS candidate_sync_id,
@@ -2949,17 +3014,26 @@ class TalentDB:
                 candidate_identity_matches.updated_at
             FROM candidate_identity_matches
             LEFT JOIN candidates ON candidates.id = candidate_identity_matches.candidate_id
+            {where_clause}
             ORDER BY candidate_identity_matches.sync_id
-            """
+            """,
+            params,
         ).fetchall()
         return [
             _export_row(row, json_fields={"score_breakdown": None})
             for row in rows
         ]
 
-    def _export_field_values(self) -> list[dict[str, Any]]:
+    def _export_field_values(
+        self,
+        candidate_sync_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clause, params = _sync_id_where_clause(
+            "candidates.sync_id",
+            candidate_sync_ids,
+        )
         rows = self._conn.execute(
-            """
+            f"""
             SELECT
                 candidate_field_values.sync_id,
                 candidates.sync_id AS candidate_sync_id,
@@ -2976,17 +3050,26 @@ class TalentDB:
             JOIN candidates ON candidates.id = candidate_field_values.candidate_id
             LEFT JOIN source_profiles
               ON source_profiles.id = candidate_field_values.source_profile_id
+            {where_clause}
             ORDER BY candidate_field_values.sync_id
-            """
+            """,
+            params,
         ).fetchall()
         return [
             _export_row(row, json_fields={"field_value": None})
             for row in rows
         ]
 
-    def _export_wechat_timelines(self) -> list[dict[str, Any]]:
+    def _export_wechat_timelines(
+        self,
+        candidate_sync_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clause, params = _sync_id_where_clause(
+            "candidates.sync_id",
+            candidate_sync_ids,
+        )
         rows = self._conn.execute(
-            """
+            f"""
             SELECT
                 candidate_wechat_timelines.sync_id,
                 candidates.sync_id AS candidate_sync_id,
@@ -3000,14 +3083,23 @@ class TalentDB:
                 candidate_wechat_timelines.synced_at
             FROM candidate_wechat_timelines
             JOIN candidates ON candidates.id = candidate_wechat_timelines.candidate_id
+            {where_clause}
             ORDER BY candidate_wechat_timelines.sync_id
-            """
+            """,
+            params,
         ).fetchall()
         return [_export_row(row) for row in rows]
 
-    def _export_score_events(self) -> list[dict[str, Any]]:
+    def _export_score_events(
+        self,
+        candidate_sync_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clause, params = _sync_id_where_clause(
+            "candidates.sync_id",
+            candidate_sync_ids,
+        )
         rows = self._conn.execute(
-            """
+            f"""
             SELECT
                 score_events.sync_id,
                 candidates.sync_id AS candidate_sync_id,
@@ -3018,17 +3110,26 @@ class TalentDB:
                 score_events.computed_at
             FROM score_events
             JOIN candidates ON candidates.id = score_events.candidate_id
+            {where_clause}
             ORDER BY score_events.sync_id
-            """
+            """,
+            params,
         ).fetchall()
         return [
             _export_row(row, json_fields={"trigger_detail": None})
             for row in rows
         ]
 
-    def _export_match_scores(self) -> list[dict[str, Any]]:
+    def _export_match_scores(
+        self,
+        candidate_sync_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        where_clause, params = _sync_id_where_clause(
+            "candidates.sync_id",
+            candidate_sync_ids,
+        )
         rows = self._conn.execute(
-            """
+            f"""
             SELECT
                 match_scores.sync_id,
                 candidates.sync_id AS candidate_sync_id,
@@ -3040,21 +3141,46 @@ class TalentDB:
                 match_scores.created_at
             FROM match_scores
             JOIN candidates ON candidates.id = match_scores.candidate_id
+            {where_clause}
             ORDER BY match_scores.sync_id
-            """
+            """,
+            params,
         ).fetchall()
         return [
             _export_row(row, json_fields={"dimensions": None})
             for row in rows
         ]
 
-    def _export_tombstones(self) -> list[dict[str, Any]]:
+    def _export_tombstones(
+        self,
+        candidate_sync_ids: set[str] | None = None,
+        since: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if candidate_sync_ids is not None:
+            if candidate_sync_ids:
+                placeholders = ", ".join("?" for _ in candidate_sync_ids)
+                clauses.append(
+                    "(NOT (entity_type = 'candidate') OR entity_sync_id IN "
+                    f"({placeholders}))"
+                )
+                params.extend(sorted(candidate_sync_ids))
+            else:
+                clauses.append("entity_type = 'candidate'")
+        normalized_since = _normalize_sync_timestamp(since)
+        if normalized_since is not None:
+            clauses.append("deleted_at >= ?")
+            params.append(normalized_since)
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = self._conn.execute(
-            """
+            f"""
             SELECT entity_type, entity_sync_id, deleted_at, source_node_id, reason
             FROM sync_tombstones
+            {where_clause}
             ORDER BY entity_type, entity_sync_id
-            """
+            """,
+            tuple(params),
         ).fetchall()
         return [_export_row(row) for row in rows]
 
@@ -3387,6 +3513,34 @@ def _export_row(
     for field_name, default in (json_fields or {}).items():
         data[field_name] = _json_loads(data.get(field_name), default, field_name)
     return data
+
+
+def _normalize_sync_timestamp(value: str | None) -> str | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return str(value)
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(UTC).replace(tzinfo=None)
+    return parsed.replace(microsecond=0).isoformat(sep=" ")
+
+
+def _sync_id_where_clause(
+    column: str,
+    sync_ids: set[str] | None,
+    prefix: str = "WHERE",
+) -> tuple[str, tuple[Any, ...]]:
+    if sync_ids is None:
+        return "", ()
+    if not sync_ids:
+        return f"{prefix} 1 = 0", ()
+    placeholders = ", ".join("?" for _ in sync_ids)
+    return f"{prefix} {column} IN ({placeholders})", tuple(sorted(sync_ids))
 
 
 def _map_sync_id(mapping: dict[str, int], sync_id: Any, local_id: int) -> None:
