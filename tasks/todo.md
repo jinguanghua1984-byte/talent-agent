@@ -70,6 +70,7 @@ Review：2026-06-11 已按用户确认将黄玉岩、刘骁、张志达、张一
 
 ## Recent Done
 
+- 2026-06-12：gbrain 第二大脑 P0 foundation 已接入；新增 second-brain event/case/query/gbrain/evaluation/CLI 模块，JD feedback 支持 `consultant_decision`，JD delivery workflow 记录 shadow calibration 和 post-run case generation 合同；focused tests、相关 JD tests、架构测试、全量测试和 diff check 均通过；完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-12：已完成当前全部更新提交并推送；推送前本地 `main` 领先 `origin/main` 两个提交：`5f729f1 Design gbrain second brain P0`、`8083654 Plan gbrain second brain P0`，已推送到远端并确认 `HEAD` 与 `origin/main` 一致，完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-10：多模态视频算法研究员 BOSS 寻访已按用户要求停止并完成脉脉匹配交接准备；campaign `multimodal-video-algorithm-boss-maimai-real-contact-2026-06-09` 刷新到 `386` 张列表卡、`137` 条详情、`32` 次真实触达、`19` 个实名；`validate-executor` passed（36 条 approved queue、127 条 executor attempts、无 issues）；已导出 `structured/maimai-match-targets.jsonl`（19 个实名 target，13 个缺实名不进自动匹配）并新增 `reports/maimai-handoff-prep.md`，完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-10：优化 BOSS 多模态/视频类寻访通用筛选策略已完成；在 BOSS sourcing 合同和 BOSS-Maimai 交接中新增明确视频/多模态信号优先于视觉/图像/图形边界词的规则，默认 `strategy.json` 增加 positive/negative/override 信号；新增合同测试覆盖余先生类“视频算法+语音/视频/图形求职目标”可进入 contact_hold、搜索/广告/推荐/NLP/语音/纯视觉仍排除、已触达 hold 边界候选可进入脉脉补充；验证 `19 passed`，完整记录已归档到 `tasks/archive/2026-06.md`。
