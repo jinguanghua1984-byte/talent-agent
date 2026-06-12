@@ -39,6 +39,7 @@ from scripts.talent_sync_models import CONFIRM_SYNC_TEXT, canonical_json
 
 
 DEFAULT_MAX_UPLOAD_BYTES = 18 * 1024 * 1024
+_BLOCKING_CANDIDATE_CONFLICT_FIELDS = {"name"}
 
 
 def _load_local_dotenv() -> None:
@@ -426,8 +427,18 @@ def push(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
     }
 
 
-def _has_conflicts(plan: dict[str, Any]) -> bool:
-    return any(count > 0 for count in plan.get("conflicts", {}).values())
+def _has_blocking_conflicts(plan: dict[str, Any]) -> bool:
+    if int(plan.get("conflicts", {}).get("candidates", 0) or 0) <= 0:
+        return False
+    conflict_fields = plan.get("_sync_conflict_fields")
+    if conflict_fields is None:
+        return True
+    if not conflict_fields:
+        return True
+    return any(
+        str(field) in _BLOCKING_CANDIDATE_CONFLICT_FIELDS
+        for field in conflict_fields
+    )
 
 
 def _copy_db_snapshot(source_path: Path, target_path: Path) -> None:
@@ -450,12 +461,35 @@ def _preview_import_bundle(bundle_path: Path, db_path: Path, work_dir: Path) -> 
     with tempfile.TemporaryDirectory(prefix="talent-cloud-preview-", dir=str(work_dir)) as dirname:
         preview_db = Path(dirname) / "preview.db"
         _copy_db_snapshot(db_path, preview_db)
-        return import_bundle(
+        result = import_bundle(
             bundle_path,
             preview_db,
             apply=True,
             confirm=CONFIRM_SYNC_TEXT,
         )
+        result["_sync_conflict_fields"] = _sync_conflict_fields(preview_db)
+        return result
+
+
+def _sync_conflict_fields(db_path: Path) -> list[str]:
+    if not db_path.exists():
+        return []
+    conn = sqlite3.connect(str(db_path))
+    try:
+        rows = conn.execute(
+            """
+            SELECT field_name
+            FROM sync_conflicts
+            WHERE entity_type = 'candidate'
+              AND status = 'open'
+            ORDER BY field_name
+            """
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    finally:
+        conn.close()
+    return [str(row[0]) for row in rows]
 
 
 def _download_indexes(provider: CloudProvider, work_dir: Path) -> list[dict[str, Any]]:
@@ -540,11 +574,11 @@ def pull(config: CloudSyncConfig, provider: CloudProvider | None = None) -> dict
                 blocked.append({"bundle_id": bundle_id, "reason": "verify_failed", "errors": verification["errors"]})
                 continue
             plan = plan_import(plain_path, config.db_path)
-            if _has_conflicts(plan):
+            if _has_blocking_conflicts(plan):
                 blocked.append({"bundle_id": bundle_id, "reason": "conflicts", "plan": plan})
                 continue
             preview = _preview_import_bundle(plain_path, config.db_path, temp_dir / "preview")
-            if _has_conflicts(preview):
+            if _has_blocking_conflicts(preview):
                 blocked.append({"bundle_id": bundle_id, "reason": "conflicts", "plan": preview})
                 continue
             if config.auto_apply:

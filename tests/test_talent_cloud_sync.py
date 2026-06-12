@@ -472,6 +472,56 @@ def test_pull_stops_on_conflict_without_auto_apply(tmp_path: Path) -> None:
     assert _candidate_names(target_db) == ["Alicia"]
 
 
+def test_pull_applies_field_conflicts_and_records_sync_conflict(
+    tmp_path: Path,
+) -> None:
+    key = keygen()
+    source_db = tmp_path / "source.db"
+    target_db = tmp_path / "target.db"
+    source_candidate_id = _seed_candidate(
+        source_db,
+        "Alice",
+        platform_id="maimai-same",
+    )
+    target_candidate_id = _seed_candidate(
+        target_db,
+        "Alice",
+        platform_id="maimai-same",
+    )
+    source = TalentDB(source_db)
+    try:
+        source.update_candidate(source_candidate_id, {"city": "Shanghai"})
+    finally:
+        source.close()
+    target = TalentDB(target_db)
+    try:
+        target.update_candidate(target_candidate_id, {"city": "Beijing"})
+    finally:
+        target.close()
+    source_config = _config(tmp_path / "source", source_db, key=key, export_mode="full")
+    target_config = _config(tmp_path / "target", target_db, key=key, export_mode="full")
+    target_config = dataclasses.replace(
+        target_config,
+        localfs_root=source_config.localfs_root,
+    )
+    provider = LocalFsProvider(source_config.localfs_root)
+    init_remote(provider)
+    push(source_config, provider=provider)
+
+    result = pull(target_config, provider=provider)
+
+    assert result["applied"] == 1
+    assert result["blocked"] == []
+    conn = sqlite3.connect(str(target_db))
+    try:
+        open_conflict_count = conn.execute(
+            "SELECT COUNT(*) FROM sync_conflicts WHERE status = 'open'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert open_conflict_count >= 1
+
+
 def test_sync_is_idempotent_for_repeated_runs(tmp_path: Path) -> None:
     source_db = tmp_path / "source.db"
     target_db = tmp_path / "target.db"
