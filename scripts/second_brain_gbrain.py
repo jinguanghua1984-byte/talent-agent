@@ -33,6 +33,33 @@ def export_bundle(*, repo_root: str | Path, out_path: str | Path) -> Path:
     return target
 
 
+def export_source_tree(*, repo_root: str | Path, out_dir: str | Path) -> Path:
+    repo = Path(repo_root)
+    target = Path(out_dir)
+    cases_out = target / "cases"
+    events_out = target / "events"
+    cases_out.mkdir(parents=True, exist_ok=True)
+    events_out.mkdir(parents=True, exist_ok=True)
+
+    public_case_dir = repo / "docs" / "second-brain" / "cases"
+    if public_case_dir.exists():
+        for path in sorted(public_case_dir.glob("*.md")):
+            if path.is_file():
+                (cases_out / path.name).write_text(
+                    path.read_text(encoding="utf-8"),
+                    encoding="utf-8",
+                )
+
+    events_path = repo / "data" / "second-brain" / "events.jsonl"
+    if events_path.exists():
+        (events_out / "events.jsonl").write_text(
+            events_path.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+
+    return target
+
+
 def _unavailable_event(
     repo: Path,
     bundle_path: Path,
