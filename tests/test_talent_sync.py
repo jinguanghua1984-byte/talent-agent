@@ -327,6 +327,8 @@ def test_export_incremental_bundle_contains_changed_candidate_closure(
     assert len(details) == 1
     assert len(sources) == 1
     assert len(scores) == 1
+    assert details[0]["candidate_sync_id"] == candidates[0]["sync_id"]
+    assert sources[0]["candidate_sync_id"] == candidates[0]["sync_id"]
     assert scores[0]["candidate_sync_id"] == candidates[0]["sync_id"]
 
 
@@ -360,6 +362,68 @@ def test_export_incremental_bundle_includes_recent_tombstones(
     assert summary["tables"]["tombstones"] == 1
     tombstones = _read_bundle_jsonl(bundle_path, "data/tombstones.jsonl")
     assert tombstones[0]["entity_type"] == "candidate"
+    assert tombstones[0]["reason"] == "local_delete"
+
+
+def test_export_incremental_bundle_includes_mixed_recent_tombstones(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.db"
+    bundle_path = tmp_path / "incremental-mixed-delete.zip"
+    db = TalentDB(db_path)
+    try:
+        old_candidate_id = db.ingest(
+            {
+                "name": "Old Alice",
+                "current_company": "Old Co",
+                "platform_id": "maimai-old",
+            },
+            platform="maimai",
+        )
+        changed_candidate_id = db.ingest(
+            {
+                "name": "Changed Bob",
+                "current_company": "New Co",
+                "platform_id": "maimai-new",
+            },
+            platform="maimai",
+        )
+        deleted_candidate_id = db.ingest(
+            {
+                "name": "Deleted Carol",
+                "current_company": "Gone Co",
+                "platform_id": "maimai-deleted",
+            },
+            platform="maimai",
+        )
+        db._conn.execute(
+            "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+            ("2000-01-01 00:00:00", old_candidate_id),
+        )
+        db._conn.execute(
+            "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+            ("2030-01-01 00:00:00", changed_candidate_id),
+        )
+        db._conn.commit()
+        db.delete_candidate(deleted_candidate_id)
+        db._conn.execute(
+            "UPDATE sync_tombstones SET deleted_at = ? WHERE reason = ?",
+            ("2030-01-02 00:00:00", "local_delete"),
+        )
+        db._conn.commit()
+    finally:
+        db.close()
+
+    summary = export_bundle(
+        db_path,
+        bundle_path,
+        mode="incremental",
+        since="2029-01-01T00:00:00Z",
+    )
+
+    assert summary["tables"]["candidates"] == 1
+    assert summary["tables"]["tombstones"] == 1
+    tombstones = _read_bundle_jsonl(bundle_path, "data/tombstones.jsonl")
     assert tombstones[0]["reason"] == "local_delete"
 
 

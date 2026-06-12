@@ -3158,18 +3158,27 @@ class TalentDB:
     ) -> list[dict[str, Any]]:
         clauses: list[str] = []
         params: list[Any] = []
+        normalized_since = _normalize_sync_timestamp(since)
         if candidate_sync_ids is not None:
             if candidate_sync_ids:
                 placeholders = ", ".join("?" for _ in candidate_sync_ids)
-                clauses.append(
-                    "(NOT (entity_type = 'candidate') OR entity_sync_id IN "
-                    f"({placeholders}))"
-                )
-                params.extend(sorted(candidate_sync_ids))
+                if normalized_since is not None:
+                    clauses.append(
+                        "(deleted_at >= ? OR "
+                        "(entity_type = 'candidate' AND entity_sync_id IN "
+                        f"({placeholders})))"
+                    )
+                    params.append(normalized_since)
+                    params.extend(sorted(candidate_sync_ids))
+                else:
+                    clauses.append(
+                        "(NOT (entity_type = 'candidate') OR entity_sync_id IN "
+                        f"({placeholders}))"
+                    )
+                    params.extend(sorted(candidate_sync_ids))
             else:
                 clauses.append("entity_type = 'candidate'")
-        normalized_since = _normalize_sync_timestamp(since)
-        if normalized_since is not None:
+        if normalized_since is not None and not candidate_sync_ids:
             clauses.append("deleted_at >= ?")
             params.append(normalized_since)
         where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
