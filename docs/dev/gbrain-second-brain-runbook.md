@@ -1,23 +1,23 @@
-# GBrain Second Brain Runbook
+# GBrain 第二大脑运行手册
 
-## Boundary
+## 边界
 
-- Talent-Agent repo artifacts are the fact source.
-- GBrain is a derived, rebuildable index/synthesis layer.
-- JD delivery must not fail because GBrain is unavailable.
-- Current adoption decision is `keep_optional_adapter`.
-- Private case import requires explicit access-policy approval.
+- Talent-Agent repo 产物是事实来源。
+- GBrain 是 derived、可重建的 index/synthesis layer。
+- JD delivery 不得因为 GBrain 不可用而失败。
+- 当前采用决策是 `keep_optional_adapter`。
+- 导入 private cases 需要明确的 access-policy approval。
 
-## Current Pilot Result
+## 当前 Pilot 结果
 
-- GBrain version tested: `0.42.40.0`
-- Local engine tested: PGLite with `--no-embedding`
-- Search mode tested: `conservative`
-- Import result: Markdown public case import worked.
-- Query result: natural-language Chinese and English queries returned `No results` without embeddings.
-- Decision: keep local fallback primary; do not make GBrain the JD calibration default until an embedding-enabled pilot proves better recall and citations.
+- 已测试 GBrain 版本：`0.42.40.0`
+- 已测试本地 engine：PGLite，使用 `--no-embedding`
+- 已测试 search mode：`conservative`
+- 导入结果：Markdown public case import 可用。
+- Query 结果：没有 embeddings 时，自然语言中文和英文 query 返回 `No results`。
+- 决策：保持本地 fallback 为主路径；在启用 embeddings 的 pilot 证明更好的召回和引用质量前，不把 GBrain 设为 JD calibration 默认路径。
 
-## Local Setup
+## 本地 Setup
 
 ```bash
 export PATH="$HOME/.bun/bin:$PATH"
@@ -25,7 +25,7 @@ gbrain --version
 gbrain doctor --json
 ```
 
-For isolated smoke tests:
+隔离 smoke test：
 
 ```bash
 HOME="$(pwd)/artifacts/gbrain-pilot/smoke/home" gbrain init --pglite --no-embedding
@@ -33,9 +33,9 @@ HOME="$(pwd)/artifacts/gbrain-pilot/smoke/home" gbrain config set search.mode co
 HOME="$(pwd)/artifacts/gbrain-pilot/smoke/home" gbrain doctor --json
 ```
 
-## Source Export
+## Source 导出
 
-Use only the safe source-tree exporter for GBrain pilots:
+GBrain pilot 只能使用安全的 source-tree exporter：
 
 ```bash
 .venv/bin/python - <<'PY'
@@ -45,19 +45,19 @@ export_source_tree(repo_root=Path("."), out_dir=Path("artifacts/gbrain-pilot/bra
 PY
 ```
 
-The exporter includes:
+Exporter 包含：
 
 - `docs/second-brain/cases/*.md`
-- public events from `data/second-brain/events.jsonl`
+- `data/second-brain/events.jsonl` 中的 public events
 
-The exporter excludes:
+Exporter 排除：
 
 - `data/second-brain/private-cases/`
 - private events
 - `data/talent.db`
-- raw platform captures, cookies, contact details, profile URLs, and tokens
+- raw platform captures、cookies、contact details、profile URLs 和 tokens
 
-## Import And Query
+## 导入与查询
 
 ```bash
 HOME="$(pwd)/artifacts/gbrain-pilot/smoke/home" gbrain import "$(pwd)/artifacts/gbrain-pilot/brain" --no-embed
@@ -65,25 +65,25 @@ HOME="$(pwd)/artifacts/gbrain-pilot/smoke/home" gbrain search "client tencent ga
 HOME="$(pwd)/artifacts/gbrain-pilot/smoke/home" gbrain query "multi modal algorithm historical feedback"
 ```
 
-Expected with no embeddings:
+无 embeddings 时的预期：
 
-- exact slug/title search may work;
-- natural-language query may return `No results`;
-- this is not enough to replace local fallback.
+- 精确 slug/title search 可能可用；
+- 自然语言 query 可能返回 `No results`；
+- 这不足以替代本地 fallback。
 
-## Troubleshooting
+## 故障处理
 
-- Missing binary: keep using local fallback; adapter reports `gbrain_unavailable`.
-- Missing embedding provider: initialize with `--no-embedding`, but do not expect good natural-language recall.
-- Search mode prompt: use `conservative` for low-cost pilots unless the user explicitly approves another mode.
-- Private data concern: stop and inspect the exported source tree before import.
-- JSONL events not searchable: convert public event summaries to Markdown before expecting GBrain import to index them.
+- 缺少 binary：继续使用本地 fallback；adapter 报告 `gbrain_unavailable`。
+- 缺少 embedding provider：用 `--no-embedding` 初始化，但不要期待好的自然语言召回。
+- Search mode prompt：低成本 pilot 使用 `conservative`，除非用户明确批准其它模式。
+- Private data concern：停止并检查导出的 source tree，再执行 import。
+- JSONL events 不可搜索：在期待 GBrain import 索引事件前，先把 public event summaries 转成 Markdown。
 
-## Next Adoption Gate
+## 下一次采用门禁
 
-Before making GBrain the preferred JD calibration path, run a second pilot with a dedicated embedding provider and prove:
+在把 GBrain 设为优先 JD calibration 路径之前，需要用专用 embedding provider 跑第二次 pilot，并证明：
 
-- natural-language Chinese calibration queries retrieve relevant cases;
-- outputs include useful citations/source references;
-- gap analysis is better than local fallback;
-- no private case/event data is imported.
+- 自然语言中文 calibration queries 能召回相关 cases；
+- 输出包含有用的 citations/source references；
+- gap analysis 优于本地 fallback；
+- 没有 private case/event data 被导入。
