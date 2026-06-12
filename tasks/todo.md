@@ -6,7 +6,7 @@
 
 ### GBrain 开源选型闭环与真实适配验证
 
-- [ ] 确认当前 second-brain P0 与 GBrain 上游能力差距，形成 evidence-backed adoption decision。
+- [x] 确认当前 second-brain P0 与 GBrain 上游能力差距，形成 evidence-backed adoption decision。
 - [ ] 本机/隔离环境验证 GBrain 安装、doctor、import/search/think 或记录明确阻断。
 - [ ] 用 Talent-Agent redacted case artifacts 做 pilot，对比 GBrain 与本地 fallback 的查询质量。
 - [ ] 根据 pilot 结果调整 adapter/query/workflow/docs，保持 JD delivery 非阻塞。

@@ -98,3 +98,23 @@ Use public or redacted sources only:
 Proceed with the pilot, but keep GBrain optional. Do not integrate it deeper into JD delivery until the pilot demonstrates that it returns better historical calibration than current local fallback and does so with reliable source references.
 
 The next decision gate is installation approval. If GBrain is already installed, run the smoke test in an isolated `HOME`. If it is missing, ask before installing Bun or GBrain globally.
+
+## Local Smoke Result
+
+- `bun --version`: `1.3.14`
+- `gbrain --version`: `gbrain 0.42.40.0`
+- Install mode: `curl -fsSL https://bun.sh/install | bash`, then `bun install -g github:garrytan/gbrain`
+- Install note: Bun installed to `~/.bun/bin/bun` and added `~/.bun/bin` to `~/.zshrc`; GBrain installed globally through Bun.
+- Bun install warning: one postinstall script was blocked by Bun; GBrain CLI still executed.
+- Isolated smoke home: `artifacts/gbrain-pilot/smoke/home`
+- `gbrain init --pglite`: failed without embedding provider and suggested `--no-embedding`, which confirms upstream now gates embedding setup.
+- `gbrain init --pglite --no-embedding`: passed; created local PGLite brain under the isolated smoke home.
+- Init detected `ANTHROPIC_API_KEY` and selected Anthropic models for expansion/chat, but embedding setup remained deferred.
+- Schema migration: initialized schema version 1 to 115 with 110 migrations applied.
+- `gbrain doctor --json`: parsed successfully; status was `warnings`.
+- Doctor summary: 76 checks total, 69 `ok`, 7 `warn`.
+- Doctor warnings: retrieval-reflex policy skill not installed, pgvector check unavailable, no embeddings yet, JSONB integrity check unavailable, missing ZeroEntropy key for configured embedding model, zero takes, and an available schema pack successor.
+- `gbrain stats`: passed on empty brain; `Pages=0`, `Chunks=0`, `Embedded=0`, `Links=0`, `Tags=0`, `Timeline=0`.
+- Search mode: GBrain tentatively set `conservative` because no OpenAI key was configured. The upstream installer explicitly requires operator confirmation before continuing with search mode changes.
+
+Smoke-test conclusion: local GBrain can be installed and initialized in an isolated PGLite home without embedding keys, which is enough to proceed to a low-cost import/search pilot after the operator confirms search mode. The next gate is search mode selection; do not import Talent-Agent artifacts before that confirmation.
