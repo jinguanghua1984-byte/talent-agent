@@ -1,5 +1,6 @@
 import zipfile
 from pathlib import Path
+import json
 
 from scripts.second_brain_gbrain import export_bundle, import_gbrain
 from scripts.second_brain_models import load_jsonl
@@ -52,6 +53,31 @@ def test_export_source_tree_includes_public_cases_and_events_without_private_cas
     assert (out_dir / "cases" / "public.md").exists()
     assert (out_dir / "events" / "events.jsonl").exists()
     assert not (out_dir / "private-cases").exists()
+
+
+def test_export_source_tree_filters_private_events(tmp_path: Path) -> None:
+    (tmp_path / "data" / "second-brain").mkdir(parents=True)
+    events = [
+        {"event_type": "batch_feedback_summarized", "visibility": "public"},
+        {"event_type": "consultant_feedback_received", "visibility": "private"},
+    ]
+    (tmp_path / "data" / "second-brain" / "events.jsonl").write_text(
+        "\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n",
+        encoding="utf-8",
+    )
+
+    from scripts.second_brain_gbrain import export_source_tree
+
+    out_dir = export_source_tree(repo_root=tmp_path, out_dir=tmp_path / "brain")
+
+    exported = [
+        json.loads(line)
+        for line in (out_dir / "events" / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert exported == [events[0]]
 
 
 def test_import_gbrain_records_unavailable_when_binary_missing(tmp_path: Path) -> None:

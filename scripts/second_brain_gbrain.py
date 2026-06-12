@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import json
 import shutil
 import subprocess
 import zipfile
@@ -52,10 +53,18 @@ def export_source_tree(*, repo_root: str | Path, out_dir: str | Path) -> Path:
 
     events_path = repo / "data" / "second-brain" / "events.jsonl"
     if events_path.exists():
-        (events_out / "events.jsonl").write_text(
-            events_path.read_text(encoding="utf-8"),
-            encoding="utf-8",
-        )
+        public_lines: list[str] = []
+        for line in events_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            if isinstance(event, dict) and event.get("visibility") == "public":
+                public_lines.append(json.dumps(event, ensure_ascii=False, sort_keys=True))
+        if public_lines:
+            (events_out / "events.jsonl").write_text(
+                "\n".join(public_lines) + "\n",
+                encoding="utf-8",
+            )
 
     return target
 
