@@ -4,18 +4,6 @@
 
 ## Active Task
 
-### GBrain 开源选型闭环与真实适配验证
-
-- [x] 确认当前 second-brain P0 与 GBrain 上游能力差距，形成 evidence-backed adoption decision。
-- [x] 本机/隔离环境验证 GBrain 安装、doctor 和 search mode 门禁。
-- [x] 用 Talent-Agent redacted case artifacts 做 pilot，对比 GBrain 与本地 fallback 的查询质量。
-- [x] 根据 pilot 结果调整 adapter/query/workflow/docs，保持 JD delivery 非阻塞。
-- [ ] 运行聚焦测试、全量测试和 diff check，归档 Review。
-
-边界：先做开源选型闭环和本地 pilot，不把 GBrain 设为正式硬依赖；不导入 private case 到 public/shared source；不在仓库或聊天中保存 API key；不写 `data/talent.db`。执行计划见 `docs/superpowers/plans/2026-06-12-gbrain-open-source-adoption-closure.md`。
-
-验证方式：`gbrain --version` / `gbrain doctor --json` / pilot import-query 证据；聚焦测试覆盖 `tests/test_second_brain_gbrain.py tests/test_second_brain_query.py tests/test_second_brain_cli.py`；完成后运行 `.venv/bin/python -m pytest tests -q` 和 `git diff --check`。
-
 ### 多模态视频算法研究员 Campaign DB 同步主库与增量包
 
 - [x] 校验 campaign DB 已有 5 个确认绑定候选人，主库同步前状态可读。
@@ -82,6 +70,7 @@ Review：2026-06-11 已按用户确认将黄玉岩、刘骁、张志达、张一
 
 ## Recent Done
 
+- 2026-06-12：GBrain 开源选型闭环已完成；本地安装 `gbrain 0.42.40.0` 并用隔离 PGLite/no-embedding/conservative 模式完成 smoke 与 redacted pilot，结论为 `keep_optional_adapter`；新增 adoption ADR、pilot report、runbook、安全 source-tree export，并把 JD delivery contract 固定为非阻塞 fallback 主路径；完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-12：已按只读对照手工吸收 `.worktrees/codex/gbrain-second-brain-p0` 的局部细节；补齐 canonical JD 产物路径、case 脱敏、outreach 行级 source refs、JSONL 缺尾换行保护、`access token` marker 变体和 consultant decision 空白归一化；未 merge/cherry-pick 整个 worktree，完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-12：gbrain 第二大脑 P0 foundation 已接入；新增 second-brain event/case/query/gbrain/evaluation/CLI 模块，JD feedback 支持 `consultant_decision`，JD delivery workflow 记录 shadow calibration 和 post-run case generation 合同；focused tests、相关 JD tests、架构测试、全量测试和 diff check 均通过；完整记录已归档到 `tasks/archive/2026-06.md`。
 - 2026-06-12：已完成当前全部更新提交并推送；推送前本地 `main` 领先 `origin/main` 两个提交：`5f729f1 Design gbrain second brain P0`、`8083654 Plan gbrain second brain P0`，已推送到远端并确认 `HEAD` 与 `origin/main` 一致，完整记录已归档到 `tasks/archive/2026-06.md`。
