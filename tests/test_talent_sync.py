@@ -1,5 +1,6 @@
 import hashlib
 import json
+import sqlite3
 import zipfile
 from pathlib import Path
 
@@ -49,6 +50,130 @@ def _rewrite_bundle_jsonl(
     with zipfile.ZipFile(target_path, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
         for name in sorted(payloads):
             bundle.writestr(name, payloads[name])
+
+
+def _candidate_sync_updated_at(db_path: Path, candidate_id: int) -> str:
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row = conn.execute(
+            "SELECT sync_updated_at FROM candidates WHERE id = ?",
+            (candidate_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    return str(row[0])
+
+
+def _reset_candidate_sync_updated_at(
+    db: TalentDB,
+    candidate_id: int,
+    value: str = "2000-01-01 00:00:00",
+) -> None:
+    db._conn.execute(
+        "UPDATE candidates SET sync_updated_at = ? WHERE id = ?",
+        (value, candidate_id),
+    )
+    db._conn.commit()
+
+
+def test_candidate_update_refreshes_sync_updated_at(tmp_path: Path) -> None:
+    db_path = tmp_path / "source.db"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest(
+            {
+                "name": "Alice",
+                "current_company": "Acme",
+                "platform_id": "maimai-1",
+            },
+            platform="maimai",
+        )
+        _reset_candidate_sync_updated_at(db, candidate_id)
+
+        db.update_candidate(candidate_id, {"city": "Shanghai"})
+    finally:
+        db.close()
+
+    assert _candidate_sync_updated_at(db_path, candidate_id) > "2000-01-01 00:00:00"
+
+
+def test_candidate_child_writes_refresh_parent_sync_updated_at(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.db"
+    db = TalentDB(db_path)
+    try:
+        candidate_id = db.ingest(
+            {
+                "name": "Alice",
+                "current_company": "Acme",
+                "platform_id": "maimai-1",
+            },
+            platform="maimai",
+        )
+        source_profile_id = db.get_sources(candidate_id)[0].id
+
+        _reset_candidate_sync_updated_at(db, candidate_id)
+        db.record_identity_match(
+            {
+                "candidate_id": candidate_id,
+                "source_platform": "boss",
+                "source_candidate_key": "boss-1",
+                "target_platform": "maimai",
+                "target_platform_id": "maimai-1",
+                "target_profile_url": "https://maimai.cn/profile/detail?dstu=maimai-1",
+                "query_text": "Alice Acme",
+                "query_level": "person",
+                "confidence": 0.95,
+                "score_breakdown": {"name": 0.98},
+                "match_status": "confirmed",
+                "decision_reason": "same person",
+            }
+        )
+        after_identity = _candidate_sync_updated_at(db_path, candidate_id)
+        assert after_identity > "2000-01-01 00:00:00"
+
+        _reset_candidate_sync_updated_at(db, candidate_id)
+        db.record_field_value(
+            {
+                "candidate_id": candidate_id,
+                "field_name": "current_title",
+                "platform": "maimai",
+                "source_profile_id": source_profile_id,
+                "field_value": {"value": "AI Engineer"},
+                "confidence": 0.9,
+                "merge_decision": "keep_primary",
+            }
+        )
+        after_field = _candidate_sync_updated_at(db_path, candidate_id)
+        assert after_field > "2000-01-01 00:00:00"
+
+        _reset_candidate_sync_updated_at(db, candidate_id)
+        db.add_wechat_timeline(
+            candidate_id,
+            {
+                "chat_name": "Alice Followup",
+                "markdown_path": "wechat/alice.md",
+                "message_count": 3,
+            },
+        )
+        after_wechat = _candidate_sync_updated_at(db_path, candidate_id)
+        assert after_wechat > "2000-01-01 00:00:00"
+
+        _reset_candidate_sync_updated_at(db, candidate_id)
+        db.save_match_score(
+            candidate_id,
+            "jd-1",
+            "final",
+            88,
+            {"skill": 90},
+            "strong match",
+        )
+        after_match = _candidate_sync_updated_at(db_path, candidate_id)
+        assert after_match > "2000-01-01 00:00:00"
+    finally:
+        db.close()
 
 
 def test_canonical_json_is_order_stable():

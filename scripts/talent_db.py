@@ -464,6 +464,17 @@ class TalentDB:
             (self._new_sync_id("candidate"), self._node_id(), candidate_id),
         )
 
+    def _touch_candidate_sync(self, candidate_id: int) -> None:
+        self._conn.execute(
+            """
+            UPDATE candidates
+            SET updated_at = datetime('now'),
+                sync_updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (candidate_id,),
+        )
+
     def _backfill_sync_ids(self) -> None:
         entity_tables = (
             ("candidate_details", "candidate_id", "detail"),
@@ -926,14 +937,21 @@ class TalentDB:
             self._conn.execute(
                 f"""
                 UPDATE candidates
-                SET {set_clause}, updated_at = datetime('now')
+                SET {set_clause},
+                    updated_at = datetime('now'),
+                    sync_updated_at = datetime('now')
                 WHERE id = ?
                 """,
                 (*updates.values(), existing_id),
             )
         else:
             self._conn.execute(
-                "UPDATE candidates SET updated_at = datetime('now') WHERE id = ?",
+                """
+                UPDATE candidates
+                SET updated_at = datetime('now'),
+                    sync_updated_at = datetime('now')
+                WHERE id = ?
+                """,
                 (existing_id,),
             )
 
@@ -1181,6 +1199,8 @@ class TalentDB:
                     self._new_sync_id("identity_match"),
                 ),
             )
+            if candidate_id is not None:
+                self._touch_candidate_sync(int(candidate_id))
         return int(cursor.lastrowid)
 
     def identity_matches(
@@ -1249,6 +1269,7 @@ class TalentDB:
                     self._new_sync_id("field_value"),
                 ),
             )
+            self._touch_candidate_sync(candidate_id)
         return int(cursor.lastrowid)
 
     def field_values(
@@ -1308,10 +1329,7 @@ class TalentDB:
                     self._new_sync_id("wechat_timeline"),
                 ),
             )
-            self._conn.execute(
-                "UPDATE candidates SET updated_at = datetime('now') WHERE id = ?",
-                (candidate_id,),
-            )
+            self._touch_candidate_sync(candidate_id)
         return self._get_wechat_timeline(int(cursor.lastrowid))
 
     def get_wechat_timelines(self, candidate_id: int) -> list[WechatTimeline]:
@@ -1361,6 +1379,7 @@ class TalentDB:
                 params.append(value)
 
         assignments.append("updated_at = datetime('now')")
+        assignments.append("sync_updated_at = datetime('now')")
         params.append(candidate_id)
 
         with self._conn:
@@ -1475,7 +1494,8 @@ class TalentDB:
                 UPDATE candidates
                 SET overall_score = ?,
                     score_version = score_version + 1,
-                    updated_at = datetime('now')
+                    updated_at = datetime('now'),
+                    sync_updated_at = datetime('now')
                 WHERE id = ?
                 """,
                 (new_score, candidate_id),
@@ -1541,6 +1561,7 @@ class TalentDB:
                     self._new_sync_id("match_score"),
                 ),
             )
+            self._touch_candidate_sync(candidate_id)
 
     def get_match_scores(
         self,
@@ -3173,16 +3194,15 @@ class TalentDB:
             self._conn.execute(
                 """
                 UPDATE candidates
-                SET data_level = 'detailed', updated_at = datetime('now')
+                SET data_level = 'detailed',
+                    updated_at = datetime('now'),
+                    sync_updated_at = datetime('now')
                 WHERE id = ?
                 """,
                 (candidate_id,),
             )
         else:
-            self._conn.execute(
-                "UPDATE candidates SET updated_at = datetime('now') WHERE id = ?",
-                (candidate_id,),
-            )
+            self._touch_candidate_sync(candidate_id)
 
     def add_company_alias(self, canonical: str, alias: str) -> None:
         with self._conn:
